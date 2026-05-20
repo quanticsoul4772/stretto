@@ -1,0 +1,5 @@
+synth
+gen_sin_table
+sin_table.h
+*.o
+/tmp/*.wav
