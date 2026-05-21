@@ -12,6 +12,17 @@
 #define ENV_PEAK             32767
 
 static uint32_t prng_state = 0xCAFEBABEu;
+static uint16_t fm_mod_depth = 1500;
+
+void voice_set_mod_depth(uint16_t d) {
+    if (d < 100) d = 100;
+    if (d > 8000) d = 8000;
+    fm_mod_depth = d;
+}
+
+uint16_t voice_get_mod_depth(void) {
+    return fm_mod_depth;
+}
 
 static int16_t prng_noise(void) {
     uint32_t x = prng_state;
@@ -53,7 +64,7 @@ void voice_trigger(Voice *v, uint8_t note, uint8_t type) {
         v->u.fm.phase_m   = 0;
         v->u.fm.inc_c     = note_phase_inc[note];
         v->u.fm.inc_m     = note_phase_inc[note] * 2;
-        v->u.fm.mod_depth = 6000;
+        v->u.fm.mod_depth = fm_mod_depth;
     }
 }
 
@@ -140,10 +151,12 @@ int16_t voice_step(Voice *v) {
     int32_t hp = shaped - v->svf_lp - ((v->svf_bp * q) >> 8);
     int32_t bp = v->svf_bp + ((hp * f) >> 8);
     int32_t lp = v->svf_lp + ((bp * f) >> 8);
-    v->svf_bp = (int16_t)bp;
-    v->svf_lp = (int16_t)lp;
+    v->svf_bp = bp;
+    v->svf_lp = lp;
 
-    return v->svf_lp;
+    if (lp > 32767) lp = 32767;
+    else if (lp < -32768) lp = -32768;
+    return (int16_t)lp;
 }
 
 static Voice *pool;
@@ -176,4 +189,12 @@ int16_t voice_pool_mix(void) {
     int32_t sum = 0;
     for (int i = 0; i < N_VOICES; i++) sum += voice_step(&pool[i]);
     return (int16_t)(sum >> 3);
+}
+
+uint32_t voice_pool_active_mask(void) {
+    uint32_t mask = 0;
+    for (int i = 0; i < N_VOICES; i++) {
+        if (pool[i].env_phase != ENV_OFF) mask |= (1u << i);
+    }
+    return mask;
 }

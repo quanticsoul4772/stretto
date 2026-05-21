@@ -41,7 +41,7 @@ main.o: main.c arena.h voice.h gen.h
 	gcc $(CFLAGS) -c main.c -o main.o
 
 synth: $(OBJS)
-	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -o synth
+	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -lasound -o synth
 	strip -s -R .comment synth
 
 clean:

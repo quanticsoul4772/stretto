@@ -7,6 +7,7 @@
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <termios.h>
+#include <alsa/asoundlib.h>
 
 #include "arena.h"
 #include "voice.h"
@@ -20,51 +21,6 @@
 
 static struct termios saved_termios;
 static int termios_saved = 0;
-
-#define SNDRV_PCM_IOCTL_HW_PARAMS _IOWR('A', 0x11, char)
-#define SNDRV_PCM_IOCTL_SW_PARAMS _IOWR('A', 0x13, char)
-#define SNDRV_PCM_IOCTL_PREPARE   _IO('A', 0x40)
-#define SNDRV_PCM_IOCTL_WRITEI_FRAMES _IOW('A', 0x50, char)
-
-#define SNDRV_PCM_FORMAT_S16_LE 2
-#define SNDRV_PCM_ACCESS_RW_INTERLEAVED 3
-
-typedef struct {
-    unsigned int flags;
-    unsigned int masks[3];
-    unsigned int mintervals[5][2];
-    unsigned int intervals[4][2];
-    unsigned int rmask;
-    unsigned int cmask;
-    unsigned int info;
-    unsigned int msbits;
-    unsigned int rate_num;
-    unsigned int rate_den;
-    unsigned long long fifo_size;
-    unsigned char reserved[64];
-} snd_pcm_hw_params_t;
-
-typedef struct {
-    int tstamp_mode;
-    unsigned int period_step;
-    unsigned int sleep_min;
-    unsigned int avail_min;
-    unsigned int xfer_align;
-    unsigned long long start_threshold;
-    unsigned long long stop_threshold;
-    unsigned long long silence_threshold;
-    unsigned long long silence_size;
-    unsigned long long boundary;
-    unsigned int proto;
-    unsigned int tstamp_type;
-    unsigned char reserved[56];
-} snd_pcm_sw_params_t;
-
-typedef struct {
-    int16_t *buf;
-    unsigned long frames;
-    int result;
-} snd_xferi_t;
 
 static void render_chunk(int16_t *out, uint32_t frames) {
     for (uint32_t i = 0; i < frames; i++) {
@@ -88,19 +44,40 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     if (ws[0] == 0) ws[0] = 24;
 
     uint32_t w = ws[1] > 120 ? 120 : ws[1];
-    uint32_t h = ws[0] > 1 ? ws[0] - 1 : 23;
+    uint32_t h = ws[0] > 2 ? ws[0] - 2 : 22;
     if (w > frames) w = frames;
 
-    write(1, "\x1b[H\x1b[?25l", 10);
+    int32_t peak = 0;
+    for (uint32_t i = 0; i < frames; i++) {
+        int32_t a = buf[i] < 0 ? -buf[i] : buf[i];
+        if (a > peak) peak = a;
+    }
+
+    write(1, "\x1b[H\x1b[?25l\x1b[2K", 14);
+
+    uint32_t mask = voice_pool_active_mask();
+    char s[40];
+    int p = 0;
+    s[p++] = 'M'; s[p++] = ':';
+    unsigned v = voice_get_mod_depth();
+    char t[6]; int n = 0;
+    do { t[n++] = '0' + v % 10; v /= 10; } while (v);
+    while (n > 0) s[p++] = t[--n];
+    s[p++] = ' '; s[p++] = 'V'; s[p++] = ':';
+    for (int i = 0; i < N_VOICES; i++) s[p++] = (mask & (1u << i)) ? '*' : '.';
+    write(1, s, p);
+    write(1, "\r\n", 2);
+    (void)peak;
 
     char line[120];
     for (uint32_t r = 0; r < h; r++) {
-        int32_t t = 32767 - (int32_t)((r * 65536u) / h);
+        int32_t t = 8000 - (int32_t)((r * 16000u) / h);
         for (uint32_t c = 0; c < w; c++) {
             int16_t s = buf[(c * frames) / w];
             int32_t a = s < 0 ? -s : s;
-            line[c] = (a > t) ? (a > 30000 ? '@' : a > 25000 ? '#' : a > 20000 ? '*' : a > 15000 ? '+' : a > 10000 ? '-' : '.') : ' ';
+            line[c] = (a > t) ? (a > 7000 ? '@' : a > 5000 ? '#' : a > 3500 ? '*' : a > 2500 ? '+' : a > 1500 ? '-' : '.') : ' ';
         }
+        write(1, "\x1b[2K", 4);
         write(1, line, w);
         if (r < h - 1) write(1, "\r\n", 2);
     }
@@ -170,57 +147,26 @@ static void play_alsa(void) {
     int flags = fcntl(0, F_GETFL, 0);
     fcntl(0, F_SETFL, flags | O_NONBLOCK);
 
-    int fd = open("/dev/snd/pcmC0D0p", O_WRONLY);
-    if (fd < 0) {
-        fprintf(stderr, "open /dev/snd/pcmC0D0p: %s\n", strerror(errno));
+    snd_pcm_t *pcm;
+    int err = snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK, 0);
+    if (err < 0) {
+        fprintf(stderr, "alsa: %s\n", snd_strerror(err));
         exit(1);
     }
-
-    snd_pcm_hw_params_t hw_params;
-    memset(&hw_params, 0, sizeof(hw_params));
-    hw_params.flags = 0;
-    hw_params.masks[0] = (1u << SNDRV_PCM_ACCESS_RW_INTERLEAVED);
-    hw_params.masks[1] = (1u << SNDRV_PCM_FORMAT_S16_LE);
-    hw_params.masks[2] = 0;
-    hw_params.intervals[0][0] = 1;
-    hw_params.intervals[0][1] = 1;
-    hw_params.intervals[1][0] = SAMPLE_RATE;
-    hw_params.intervals[1][1] = SAMPLE_RATE;
-    hw_params.intervals[2][0] = BUFFER_FRAMES;
-    hw_params.intervals[2][1] = BUFFER_FRAMES;
-    hw_params.intervals[3][0] = BUFFER_FRAMES * 4;
-    hw_params.intervals[3][1] = BUFFER_FRAMES * 4;
-
-    if (ioctl(fd, SNDRV_PCM_IOCTL_HW_PARAMS, &hw_params) < 0) {
-        fprintf(stderr, "ioctl HW_PARAMS: %s\n", strerror(errno));
-        exit(1);
-    }
-
-    snd_pcm_sw_params_t sw_params;
-    memset(&sw_params, 0, sizeof(sw_params));
-    sw_params.start_threshold = BUFFER_FRAMES;
-    sw_params.avail_min = BUFFER_FRAMES;
-    sw_params.boundary = BUFFER_FRAMES * 16;
-
-    if (ioctl(fd, SNDRV_PCM_IOCTL_SW_PARAMS, &sw_params) < 0) {
-        fprintf(stderr, "ioctl SW_PARAMS: %s\n", strerror(errno));
-        exit(1);
-    }
-
-    if (ioctl(fd, SNDRV_PCM_IOCTL_PREPARE) < 0) {
-        fprintf(stderr, "ioctl PREPARE: %s\n", strerror(errno));
+    err = snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED,
+                             1, SAMPLE_RATE, 1, LATENCY_US);
+    if (err < 0) {
+        fprintf(stderr, "alsa: %s\n", snd_strerror(err));
         exit(1);
     }
 
     int16_t *buf = arena_alloc(BUFFER_FRAMES * sizeof(int16_t));
-    snd_xferi_t xferi;
-    xferi.buf = buf;
-    xferi.frames = BUFFER_FRAMES;
 
     for (;;) {
         render_chunk(buf, BUFFER_FRAMES);
-        if (ioctl(fd, SNDRV_PCM_IOCTL_WRITEI_FRAMES, &xferi) < 0) {
-            fprintf(stderr, "ioctl WRITEI: %s\n", strerror(errno));
+        snd_pcm_sframes_t frames = snd_pcm_writei(pcm, buf, BUFFER_FRAMES);
+        if (frames < 0) {
+            fprintf(stderr, "alsa: %s\n", snd_strerror((int)frames));
             exit(1);
         }
 
@@ -231,8 +177,15 @@ static void play_alsa(void) {
             if (ch == ' ') gen_force_mutate();
             else if (ch == '+') gen_set_tempo(-10);
             else if (ch == '-') gen_set_tempo(+10);
+            else if (ch == '[') {
+                uint16_t d = voice_get_mod_depth();
+                voice_set_mod_depth(d > 200 ? d - 200 : 100);
+            }
+            else if (ch == ']') {
+                voice_set_mod_depth(voice_get_mod_depth() + 200);
+            }
             else if (ch == 'q') {
-                close(fd);
+                snd_pcm_close(pcm);
                 restore_terminal();
                 exit(0);
             }

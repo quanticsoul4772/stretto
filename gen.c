@@ -150,3 +150,7 @@ void gen_set_tempo(int delta_pct) {
     if (new_val > 20000) new_val = 20000;
     samples_per_step = (uint32_t)new_val;
 }
+
+uint32_t gen_get_step_samples(void) { return samples_per_step; }
+uint32_t gen_get_bar(void) { return bar_count; }
+uint8_t  gen_get_step(void) { return (uint8_t)(step_count % BAR_STEPS); }
