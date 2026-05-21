@@ -11,6 +11,11 @@
 #define ENV_SUSTAIN_LEVEL    16384
 #define ENV_PEAK             32767
 
+/* SVF (2-pole Chamberlin) parameters. f=200, q=100 with >>8 shift
+   gives ~5.6 kHz cutoff and Q ~ 2.56 at 44.1 kHz sample rate. */
+#define SVF_F  200
+#define SVF_Q  100
+
 static uint32_t prng_state = 0xCAFEBABEu;
 static uint16_t fm_mod_depth = 1500;
 
@@ -156,11 +161,9 @@ int16_t voice_step(Voice *v) {
     uint16_t env = env_step(v);
     int16_t shaped = (int16_t)(((int32_t)raw * env) >> 15);
 
-    int32_t f = 200;
-    int32_t q = 100;
-    int32_t hp = shaped - v->svf_lp - ((v->svf_bp * q) >> 8);
-    int32_t bp = v->svf_bp + ((hp * f) >> 8);
-    int32_t lp = v->svf_lp + ((bp * f) >> 8);
+    int32_t hp = shaped - v->svf_lp - ((v->svf_bp * SVF_Q) >> 8);
+    int32_t bp = v->svf_bp + ((hp * SVF_F) >> 8);
+    int32_t lp = v->svf_lp + ((bp * SVF_F) >> 8);
     v->svf_bp = bp;
     v->svf_lp = lp;
 
