@@ -112,6 +112,16 @@ static uint8_t markov[7][7] = {
 static uint16_t mutate_lfo_phase = 0;
 static uint8_t  bars_until_mutate = MUTATE_DEFAULT;
 static uint8_t  cur_degree = 0;
+/* Counter-melody runs an independent Markov walk and Euclidean pattern
+   alongside the main melody. Pitches are shifted up one octave so the
+   two lines stay distinguishable in register. */
+static uint8_t  cur_degree_counter = 4;     /* start on dominant for harmonic interest */
+static uint8_t  eucl_k_counter     = 4;
+/* Voice-leading anchor: rough pitch center of the previous chord trigger.
+   New chord pitches octave-shift toward this so chord-to-chord motion is
+   stepwise rather than leaping. Anchored to a mid-range value to prevent
+   long-term drift. */
+static uint8_t  prev_chord_center  = 67;
 static uint32_t ca_row     = 0x12345678u;
 static uint32_t ca_harm    = 0x87654321u;
 static uint8_t  eucl_k_a   = 3;
@@ -195,6 +205,12 @@ static void mutate(void) {
         if (p > 240) p = 240;
         gate_prob = (uint8_t)p;
     }
+
+    /* Re-roll the counter-melody Euclidean k periodically so the
+       counter-melody pattern shifts independently of the main melody. */
+    if (((r >> 28) & 1u) == 0u) {
+        eucl_k_counter = (uint8_t)(2u + ((r >> 18) % 7u));
+    }
 }
 
 /* Read the current dynamic mutation interval from the triangle LFO.
@@ -213,6 +229,9 @@ static uint8_t dynamic_mutate_interval(void) {
 
 void gen_init(void) {
     cur_degree         = 0;
+    cur_degree_counter = 4;
+    eucl_k_counter     = 4;
+    prev_chord_center  = 67;
     cur_scale          = 0;
     ca_row             = 0x12345678u;
     ca_harm            = 0x87654321u;
@@ -280,16 +299,38 @@ void gen_step(void) {
 
         /* Chord trigger: 4 evenly-spaced events per bar (substeps 0,
            12, 24, 36). The "4" side of the 3-against-4 polyrhythm.
-           Voicing pattern rotates per bar to keep harmonic variety. */
+           Voicing pattern rotates per bar to keep harmonic variety,
+           and each new chord pitch is octave-shifted toward the
+           previous chord's center for smoother voice leading. */
         if (substep_in_bar == 0u || substep_in_bar == 12u ||
             substep_in_bar == 24u || substep_in_bar == 36u) {
             const ChordNote *pat = CHORD_PATTERNS[bar_count % N_CHORD_PATTERNS];
+            uint16_t sum = 0;
+            uint8_t count = 0;
             for (int i = 0; i < 3; i++) {
                 uint8_t d = (uint8_t)pat[i].degree;
                 if (active_mask & (1u << d)) {
-                    uint8_t note = SCALES[cur_scale][d] + (uint8_t)(pat[i].octave * 12);
-                    voice_pool_trigger_role(note, VOICE_FM, ROLE_CHORD);
+                    int note = (int)SCALES[cur_scale][d]
+                             + (int)pat[i].octave * 12;
+                    /* Voice-lead: octave-shift so pitch sits within
+                       +/-8 semitones of the previous chord's center. */
+                    while (note > (int)prev_chord_center + 8) note -= 12;
+                    while (note < (int)prev_chord_center - 8) note += 12;
+                    if (note < 24)  note += 12;
+                    if (note > 96)  note -= 12;
+                    voice_pool_trigger_role((uint8_t)note, VOICE_FM, ROLE_CHORD);
+                    sum += (uint16_t)note;
+                    count++;
                 }
+            }
+            if (count > 0) {
+                /* Update chord center, anchored toward 67 to prevent
+                   long-term octave drift. */
+                uint8_t new_center = (uint8_t)(sum / count);
+                prev_chord_center = (uint8_t)(((uint16_t)prev_chord_center * 3u
+                                             + (uint16_t)new_center) >> 2);
+                if (prev_chord_center < 55) prev_chord_center = 55;
+                if (prev_chord_center > 79) prev_chord_center = 79;
             }
         }
 
@@ -298,6 +339,9 @@ void gen_step(void) {
            Euclidean lookup uses step_in_bar = substep / 3, range 0..15. */
         if (substep_in_bar % MELODY_SUBSTRIDE == 0u) {
             uint32_t step_in_bar = substep_in_bar / MELODY_SUBSTRIDE;
+
+            /* Main melody: Euclidean E(k_a) | E(k_b), Markov walk on
+               cur_degree, probability-gated. */
             uint16_t hits = (uint16_t)(euclid_table[eucl_k_a] | euclid_table[eucl_k_b]);
             unsigned int hit = (unsigned int)((hits >> (15 - step_in_bar)) & 1u);
             if (hit && ((prng() & 0xFFu) < (uint32_t)gate_prob)) {
@@ -305,6 +349,20 @@ void gen_step(void) {
                 uint8_t note = SCALES[cur_scale][cur_degree];
                 uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
                 voice_pool_trigger_role(note, type, ROLE_MELODY);
+            }
+
+            /* Counter-melody: independent Euclidean (eucl_k_counter)
+               and independent Markov walk on cur_degree_counter.
+               Pitched +12 semitones so it sits above the main line
+               and the two voices stay distinguishable. Shares the
+               melody voice slots - the two lines occasionally steal
+               from each other, acceptable for an ambient texture. */
+            uint16_t cnt_hits = (uint16_t)euclid_table[eucl_k_counter];
+            unsigned int cnt_hit = (unsigned int)((cnt_hits >> (15 - step_in_bar)) & 1u);
+            if (cnt_hit && ((prng() & 0xFFu) < (uint32_t)gate_prob)) {
+                cur_degree_counter = markov_next(cur_degree_counter, active_mask);
+                uint8_t note = (uint8_t)(SCALES[cur_scale][cur_degree_counter] + 12);
+                voice_pool_trigger_role(note, VOICE_FM, ROLE_MELODY);
             }
         }
 
