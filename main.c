@@ -22,10 +22,13 @@
 static struct termios saved_termios;
 static int termios_saved = 0;
 
+/* Fills 2*frames int16 samples in interleaved L,R,L,R,... order. */
 static void render_chunk(int16_t *out, uint32_t frames) {
     for (uint32_t i = 0; i < frames; i++) {
         gen_step();
-        out[i] = voice_pool_mix();
+        Stereo s = voice_pool_mix();
+        out[2 * i]     = s.l;
+        out[2 * i + 1] = s.r;
     }
 }
 
@@ -64,11 +67,13 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     (void)!write(1, s, p);
     (void)!write(1, "\r\n", 2);
 
+    /* buf is interleaved stereo (L,R,L,R,...); draw the L channel by
+       stepping with stride 2. */
     char line[120];
     for (uint32_t r = 0; r < h; r++) {
         int32_t thresh = 8000 - (int32_t)((r * 16000u) / h);
         for (uint32_t c = 0; c < w; c++) {
-            int16_t samp = buf[(c * frames) / w];
+            int16_t samp = buf[2 * ((c * frames) / w)];
             int32_t a = samp < 0 ? -samp : samp;
             line[c] = (a > thresh) ? (a > 7000 ? '@' : a > 5000 ? '#' : a > 3500 ? '*' : a > 2500 ? '+' : a > 1500 ? '-' : '.') : ' ';
         }
@@ -79,14 +84,16 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
 }
 
 static void write_wav_header(FILE *f, uint32_t num_samples) {
-    uint32_t data_size   = num_samples * 2u;
+    /* num_samples is per-channel frame count; stereo writes 4 bytes
+       per frame (2 channels * 2 bytes). */
+    uint32_t data_size   = num_samples * 4u;
     uint32_t file_size   = data_size + 36u;
     uint32_t fmt_size    = 16u;
     uint16_t audio_fmt   = 1u;
-    uint16_t n_chan      = 1u;
+    uint16_t n_chan      = 2u;
     uint32_t sample_rate = SAMPLE_RATE;
-    uint32_t byte_rate   = SAMPLE_RATE * 2u;
-    uint16_t block_align = 2u;
+    uint32_t byte_rate   = SAMPLE_RATE * 4u;
+    uint16_t block_align = 4u;
     uint16_t bits        = 16u;
 
     fwrite("RIFF",     1, 4, f);
@@ -111,12 +118,12 @@ static void render_wav(int seconds, const char *path) {
     }
     uint32_t total = (uint32_t)SAMPLE_RATE * (uint32_t)seconds;
     write_wav_header(f, total);
-    int16_t *buf = arena_alloc(BUFFER_FRAMES * sizeof(int16_t));
+    int16_t *buf = arena_alloc(BUFFER_FRAMES * 2 * sizeof(int16_t));
     uint32_t remaining = total;
     while (remaining > 0) {
         uint32_t n = remaining > BUFFER_FRAMES ? BUFFER_FRAMES : remaining;
         render_chunk(buf, n);
-        fwrite(buf, 2, n, f);
+        fwrite(buf, 2, n * 2, f);
         remaining -= n;
     }
     fclose(f);
@@ -152,13 +159,13 @@ static void play_alsa(void) {
         exit(1);
     }
     err = snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED,
-                             1, SAMPLE_RATE, 1, LATENCY_US);
+                             2, SAMPLE_RATE, 1, LATENCY_US);
     if (err < 0) {
         fprintf(stderr, "alsa: %s\n", snd_strerror(err));
         exit(1);
     }
 
-    int16_t *buf = arena_alloc(BUFFER_FRAMES * sizeof(int16_t));
+    int16_t *buf = arena_alloc(BUFFER_FRAMES * 2 * sizeof(int16_t));
 
     for (;;) {
         render_chunk(buf, BUFFER_FRAMES);
