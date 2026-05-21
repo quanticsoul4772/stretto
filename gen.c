@@ -4,8 +4,9 @@
 #include <stdint.h>
 
 #define BAR_STEPS         16
-#define SAMPLES_PER_STEP  5512u    /* ~125 ms = 120 BPM 16th notes */
 #define MUTATE_BARS       4u
+
+static uint32_t samples_per_step = 5512u;    /* ~125 ms = 120 BPM 16th notes */
 
 static uint32_t gen_prng_state = 0xDEADBEEFu;
 static uint32_t prng(void) {
@@ -134,7 +135,18 @@ void gen_step(void) {
         }
 
         step_count++;
-        next_step += SAMPLES_PER_STEP;
+        next_step += samples_per_step;
     }
     sample_clock++;
+}
+
+void gen_force_mutate(void) {
+    mutate();
+}
+
+void gen_set_tempo(int delta_pct) {
+    int32_t new_val = (int32_t)samples_per_step + ((int32_t)samples_per_step * delta_pct) / 100;
+    if (new_val < 2000) new_val = 2000;
+    if (new_val > 20000) new_val = 20000;
+    samples_per_step = (uint32_t)new_val;
 }
