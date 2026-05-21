@@ -13,13 +13,15 @@
 #define BAR_SUBSTEPS      48u
 #define MELODY_SUBSTRIDE   3u   /* one melody slot every 3 substeps */
 
-/* PLAN.md called for mutation every 16 bars. At our 2-second bar
-   (48 substeps * 1837 samples / 44100), 16 bars is ~32 s between
-   mutations - too slow to feel evolving in a short listening window
-   and never fires inside the 16-second regression render. Reduced
-   to 4 bars (~8 s); still ~450 mutations per hour, plenty of
-   variation at long timescales. */
-#define MUTATE_BARS       4u
+/* Mutation interval is dynamic. A slow LFO drives the interval
+   between MUTATE_MIN bars (busy section) and MUTATE_MAX bars (calm
+   section). LFO period of 128 bars (~4.3 min at 2 s bars) gives
+   long-form ambient swells of activity. Starting interval (used
+   until the first mutation fires) is MUTATE_DEFAULT. */
+#define MUTATE_MIN         1u
+#define MUTATE_MAX         16u
+#define MUTATE_DEFAULT     4u
+#define MUTATE_LFO_INC     512u    /* 65536 / 512 = 128-bar period */
 
 /* 48 substeps * 1837 samples = 88176 samples = 2.00 s per bar
    (matches the old 16 steps * 5512). Tempo control scales this. */
@@ -93,8 +95,9 @@ static const ChordNote CHORD_PATTERNS[N_CHORD_PATTERNS][3] = {
        on a single degree.
      - Tonic (row 0) opens out broadly to all degrees except itself,
        slight bias to dominant (deg 4) for V-I framing.
-   These weights are MUTATED at runtime by mutate() once per
-   MUTATE_BARS, so the matrix drifts; the initial values are just a
+   These weights are MUTATED at runtime by mutate() at a dynamic
+   interval (1-16 bars, modulated by a slow triangle LFO over ~4
+   minutes) so the matrix drifts; the initial values are just a
    musical seed. */
 static uint8_t markov[7][7] = {
     { 0, 4, 3, 2, 4, 1, 2 },
@@ -106,6 +109,8 @@ static uint8_t markov[7][7] = {
     { 5, 1, 0, 1, 2, 2, 0 },
 };
 
+static uint16_t mutate_lfo_phase = 0;
+static uint8_t  bars_until_mutate = MUTATE_DEFAULT;
 static uint8_t  cur_degree = 0;
 static uint32_t ca_row     = 0x12345678u;
 static uint32_t ca_harm    = 0x87654321u;
@@ -192,19 +197,35 @@ static void mutate(void) {
     }
 }
 
+/* Read the current dynamic mutation interval from the triangle LFO.
+   Range: MUTATE_MIN (~1 bar, busy section) to MUTATE_MAX (~16 bars,
+   calm section). LFO period is 128 bars (~4.3 min at default tempo). */
+static uint8_t dynamic_mutate_interval(void) {
+    uint16_t tri = (mutate_lfo_phase < 32768u)
+                   ? mutate_lfo_phase
+                   : (uint16_t)(65535u - mutate_lfo_phase);
+    uint32_t v = (uint32_t)MUTATE_MIN
+               + ((uint32_t)tri * (MUTATE_MAX - MUTATE_MIN + 1u)) / 32768u;
+    if (v < MUTATE_MIN) v = MUTATE_MIN;
+    if (v > MUTATE_MAX) v = MUTATE_MAX;
+    return (uint8_t)v;
+}
+
 void gen_init(void) {
-    cur_degree     = 0;
-    cur_scale      = 0;
-    ca_row         = 0x12345678u;
-    ca_harm        = 0x87654321u;
-    eucl_k_a       = 3;
-    eucl_k_b       = 5;
-    bar_count      = 0;
-    substep_count     = 0;
-    sample_clock   = 0;
-    next_step      = 0;
-    gate_prob      = 200;
-    gen_prng_state = 0xDEADBEEFu;
+    cur_degree         = 0;
+    cur_scale          = 0;
+    ca_row             = 0x12345678u;
+    ca_harm            = 0x87654321u;
+    eucl_k_a           = 3;
+    eucl_k_b           = 5;
+    bar_count          = 0;
+    substep_count      = 0;
+    sample_clock       = 0;
+    next_step          = 0;
+    gate_prob          = 200;
+    mutate_lfo_phase   = 0;
+    bars_until_mutate  = MUTATE_DEFAULT;
+    gen_prng_state     = 0xDEADBEEFu;
 }
 
 void gen_step(void) {
@@ -215,7 +236,14 @@ void gen_step(void) {
             ca_row = ca_step(ca_row, RULE_110);
             if (ca_row == 0) ca_row = 0x12345678u;
             bar_count++;
-            if (bar_count % MUTATE_BARS == 0) mutate();
+            /* Advance the mutation LFO once per bar, then count down
+               toward the next mutation. When the counter reaches 0,
+               fire and reload from the current dynamic interval. */
+            mutate_lfo_phase += MUTATE_LFO_INC;
+            if (--bars_until_mutate == 0u) {
+                mutate();
+                bars_until_mutate = dynamic_mutate_interval();
+            }
         }
 
         /* ca_harm advances 4 times per bar - every 12 substeps. */
