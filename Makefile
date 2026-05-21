@@ -2,8 +2,9 @@ CFLAGS = -Os -flto -fuse-linker-plugin -ffast-math \
          -ffunction-sections -fdata-sections -fno-plt \
          -fno-asynchronous-unwind-tables -fno-stack-protector \
          -fno-pic -Qn
-LDFLAGS = -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,norelro \
+LDFLAGS = -Wl,--gc-sections -Wl,-z,norelro \
           -Wl,--hash-style=sysv -no-pie
+SMOL = /tmp/smol/smold.py
 
 HEADERS = sin_table.h env_table.h note_table.h euclid_table.h
 GENS    = gen_sin_table gen_env_table gen_note_table gen_euclid_table
@@ -40,11 +41,11 @@ main.o: main.c arena.h voice.h gen.h
 	gcc $(CFLAGS) -c main.c -o main.o
 
 synth: $(OBJS)
-	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -lasound -o synth
-	strip -s -R .comment -R .note* synth
+	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -o synth
+	strip -s -R .comment synth
 
 clean:
-	rm -f synth $(GENS) $(HEADERS) *.o
+	rm -f synth synth.lto.o $(GENS) $(HEADERS) *.o
 
 size: synth
 	@SIZE=$$(stat -c%s synth); \

@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define KS_MAX_LEN 512
-#define N_VOICES   4
+#define N_VOICES   8
 
 enum { VOICE_OFF = 0, VOICE_KS, VOICE_FM };
 enum { ENV_OFF = 0, ENV_A, ENV_D, ENV_R };
@@ -16,6 +16,8 @@ typedef struct {
     uint8_t  _pad;
     uint16_t env_amp;
     uint16_t env_time;
+    int16_t  svf_lp;
+    int16_t  svf_bp;
     union {
         struct {
             int16_t  buf[KS_MAX_LEN];

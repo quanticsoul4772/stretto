@@ -28,6 +28,8 @@ void voice_init(Voice *v) {
     v->env_phase = ENV_OFF;
     v->env_amp = 0;
     v->env_time = 0;
+    v->svf_lp = 0;
+    v->svf_bp = 0;
 }
 
 void voice_trigger(Voice *v, uint8_t note, uint8_t type) {
@@ -36,6 +38,8 @@ void voice_trigger(Voice *v, uint8_t note, uint8_t type) {
     v->env_phase = ENV_A;
     v->env_time = 0;
     v->env_amp = 0;
+    v->svf_lp = 0;
+    v->svf_bp = 0;
 
     if (type == VOICE_KS) {
         v->u.ks.len = note_ks_len[note];
@@ -129,7 +133,17 @@ int16_t voice_step(Voice *v) {
     if (v->env_phase == ENV_OFF) return 0;
     int16_t raw = (v->type == VOICE_KS) ? ks_step(v) : fm_step(v);
     uint16_t env = env_step(v);
-    return (int16_t)(((int32_t)raw * env) >> 15);
+    int16_t shaped = (int16_t)(((int32_t)raw * env) >> 15);
+
+    int32_t f = 200;
+    int32_t q = 100;
+    int32_t hp = shaped - v->svf_lp - ((v->svf_bp * q) >> 8);
+    int32_t bp = v->svf_bp + ((hp * f) >> 8);
+    int32_t lp = v->svf_lp + ((bp * f) >> 8);
+    v->svf_bp = (int16_t)bp;
+    v->svf_lp = (int16_t)lp;
+
+    return v->svf_lp;
 }
 
 static Voice *pool;
@@ -161,5 +175,5 @@ void voice_pool_trigger(uint8_t note, uint8_t type) {
 int16_t voice_pool_mix(void) {
     int32_t sum = 0;
     for (int i = 0; i < N_VOICES; i++) sum += voice_step(&pool[i]);
-    return (int16_t)(sum >> 2);
+    return (int16_t)(sum >> 3);
 }
