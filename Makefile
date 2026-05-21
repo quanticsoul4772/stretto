@@ -2,7 +2,7 @@ CFLAGS = -Os -flto -fuse-linker-plugin -ffast-math \
          -ffunction-sections -fdata-sections -fno-plt \
          -fno-asynchronous-unwind-tables -fno-stack-protector \
          -fno-pic -Qn
-LDFLAGS = -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,norelro \
+LDFLAGS = -Wl,--gc-sections -Wl,-z,norelro \
           -Wl,--hash-style=sysv -no-pie
 SMOL = /tmp/smol/smold.py
 
@@ -42,7 +42,7 @@ main.o: main.c arena.h voice.h gen.h
 
 synth: $(OBJS)
 	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -o synth
-	strip -s -R .comment -R .note* synth
+	strip -s -R .comment synth
 
 clean:
 	rm -f synth synth.lto.o $(GENS) $(HEADERS) *.o
