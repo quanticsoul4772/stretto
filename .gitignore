@@ -1,4 +1,9 @@
 synth
+synth.packed
+synth.unpacked
+synth.orig
+synth.xz
+synth_xz.h
 gen_sin_table
 gen_env_table
 gen_note_table
@@ -9,3 +14,5 @@ note_table.h
 euclid_table.h
 *.o
 /tmp/*.wav
+start.c
+stub.c
