@@ -188,6 +188,25 @@ static void reverb_adjust_wet(int delta) {
     reverb_wet = (uint16_t)v;
 }
 
+/* Soft cubic saturation: y = x - x^3 / 2^31. Linear for small x,
+   compresses peaks smoothly. At full-scale int16 input (~32767) the
+   output is ~50%; at typical signal levels (10-20% of full scale)
+   the change is sub-1%. Adds gentle analog-tape-like warmth to
+   peaks without affecting the quiet-signal character. */
+static inline int16_t soft_sat(int16_t x) {
+    int64_t x3 = (int64_t)x * x * x;
+    int32_t cubic = (int32_t)(x3 >> 31);
+    int32_t y = (int32_t)x - cubic;
+    return sat16(y);
+}
+
+static void saturate_process(int16_t *buf, uint32_t frames) {
+    for (uint32_t i = 0; i < frames; i++) {
+        buf[2 * i]     = soft_sat(buf[2 * i]);
+        buf[2 * i + 1] = soft_sat(buf[2 * i + 1]);
+    }
+}
+
 /* In-place stereo delay processing on an interleaved L,R,L,R buffer. */
 static void delay_process(int16_t *buf, uint32_t frames) {
     for (uint32_t i = 0; i < frames; i++) {
@@ -227,9 +246,10 @@ static void delay_adjust_feedback(int delta) {
 }
 
 /* Fills 2*frames int16 samples in interleaved L,R,L,R,... order, with
-   the master-bus reverb then delay applied in place. Reverb first so
-   each delay echo carries the reverb tail with it (a "wet repeat"
-   character common in ambient music). */
+   the master-bus effects chain applied in place:
+     voice mix -> reverb -> delay -> soft saturation -> output
+   Saturation last so any peaks that reverb or delay add are smoothed
+   before going to the device. */
 static void render_chunk(int16_t *out, uint32_t frames) {
     for (uint32_t i = 0; i < frames; i++) {
         gen_step();
@@ -239,6 +259,7 @@ static void render_chunk(int16_t *out, uint32_t frames) {
     }
     reverb_process(out, frames);
     delay_process(out, frames);
+    saturate_process(out, frames);
 }
 
 static void restore_terminal(void) {
