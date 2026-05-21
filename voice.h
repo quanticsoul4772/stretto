@@ -16,8 +16,8 @@ typedef struct {
     uint8_t  _pad;
     uint16_t env_amp;
     uint16_t env_time;
-    int16_t  svf_lp;
-    int16_t  svf_bp;
+    int32_t  svf_lp;
+    int32_t  svf_bp;
     union {
         struct {
             int16_t  buf[KS_MAX_LEN];
@@ -41,5 +41,9 @@ int16_t voice_step(Voice *v);
 void    voice_pool_init(void);
 void    voice_pool_trigger(uint8_t note, uint8_t type);
 int16_t voice_pool_mix(void);
+
+void     voice_set_mod_depth(uint16_t d);
+uint16_t voice_get_mod_depth(void);
+uint32_t voice_pool_active_mask(void);
 
 #endif

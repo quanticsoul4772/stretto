@@ -44,19 +44,40 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     if (ws[0] == 0) ws[0] = 24;
 
     uint32_t w = ws[1] > 120 ? 120 : ws[1];
-    uint32_t h = ws[0] > 1 ? ws[0] - 1 : 23;
+    uint32_t h = ws[0] > 2 ? ws[0] - 2 : 22;
     if (w > frames) w = frames;
 
-    write(1, "\x1b[H\x1b[?25l", 10);
+    int32_t peak = 0;
+    for (uint32_t i = 0; i < frames; i++) {
+        int32_t a = buf[i] < 0 ? -buf[i] : buf[i];
+        if (a > peak) peak = a;
+    }
+
+    write(1, "\x1b[H\x1b[?25l\x1b[2K", 14);
+
+    uint32_t mask = voice_pool_active_mask();
+    char s[40];
+    int p = 0;
+    s[p++] = 'M'; s[p++] = ':';
+    unsigned v = voice_get_mod_depth();
+    char t[6]; int n = 0;
+    do { t[n++] = '0' + v % 10; v /= 10; } while (v);
+    while (n > 0) s[p++] = t[--n];
+    s[p++] = ' '; s[p++] = 'V'; s[p++] = ':';
+    for (int i = 0; i < N_VOICES; i++) s[p++] = (mask & (1u << i)) ? '*' : '.';
+    write(1, s, p);
+    write(1, "\r\n", 2);
+    (void)peak;
 
     char line[120];
     for (uint32_t r = 0; r < h; r++) {
-        int32_t t = 32767 - (int32_t)((r * 65536u) / h);
+        int32_t t = 8000 - (int32_t)((r * 16000u) / h);
         for (uint32_t c = 0; c < w; c++) {
             int16_t s = buf[(c * frames) / w];
             int32_t a = s < 0 ? -s : s;
-            line[c] = (a > t) ? (a > 30000 ? '@' : a > 25000 ? '#' : a > 20000 ? '*' : a > 15000 ? '+' : a > 10000 ? '-' : '.') : ' ';
+            line[c] = (a > t) ? (a > 7000 ? '@' : a > 5000 ? '#' : a > 3500 ? '*' : a > 2500 ? '+' : a > 1500 ? '-' : '.') : ' ';
         }
+        write(1, "\x1b[2K", 4);
         write(1, line, w);
         if (r < h - 1) write(1, "\r\n", 2);
     }
@@ -156,6 +177,13 @@ static void play_alsa(void) {
             if (ch == ' ') gen_force_mutate();
             else if (ch == '+') gen_set_tempo(-10);
             else if (ch == '-') gen_set_tempo(+10);
+            else if (ch == '[') {
+                uint16_t d = voice_get_mod_depth();
+                voice_set_mod_depth(d > 200 ? d - 200 : 100);
+            }
+            else if (ch == ']') {
+                voice_set_mod_depth(voice_get_mod_depth() + 200);
+            }
             else if (ch == 'q') {
                 snd_pcm_close(pcm);
                 restore_terminal();
