@@ -141,11 +141,21 @@ static int16_t ks_step(Voice *v) {
 }
 
 static int16_t fm_step(Voice *v) {
+    /* Re-use the per-voice pan LFO to also detune the carrier and
+       modulator frequencies. Same scale on both so the FM ratio
+       stays constant. Peak excursion: lfo (+/-24576) * inc / 2^23 ~=
+       inc * 0.29%, about 5 cents at LFO peak - subtle chorus
+       motion. Uses int64 for the multiply to avoid overflow on
+       higher-pitched notes. */
+    int16_t lfo = sin_table[v->lfo_phase >> 22];
+    int32_t det_m = (int32_t)(((int64_t)v->u.fm.inc_m * lfo) >> 23);
+    int32_t det_c = (int32_t)(((int64_t)v->u.fm.inc_c * lfo) >> 23);
+
     int16_t mod = sin_table[v->u.fm.phase_m >> 22];
-    v->u.fm.phase_m += v->u.fm.inc_m;
+    v->u.fm.phase_m += (uint32_t)((int32_t)v->u.fm.inc_m + det_m);
     uint32_t phase_with_mod = v->u.fm.phase_c + ((uint32_t)((int32_t)mod * v->u.fm.mod_depth) << 6);
     int16_t out = sin_table[phase_with_mod >> 22];
-    v->u.fm.phase_c += v->u.fm.inc_c;
+    v->u.fm.phase_c += (uint32_t)((int32_t)v->u.fm.inc_c + det_c);
     return out;
 }
 
