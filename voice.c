@@ -33,19 +33,27 @@ static int16_t prng_noise(void) {
     return (int16_t)(x >> 16);
 }
 
+/* Per-role parameters: BASS, CHORD, MELODY */
+static const uint16_t role_mod_depth[3]  = {  200, 1500, 1500 };
+static const uint8_t  role_fm_ratio[3]   = {    1,    2,    2 };
+static const uint16_t role_attack[3]     = { 2205,  882,  220 }; /* 50 / 20 / 5 ms */
+static const uint16_t role_release[3]    = {44100,26460,26460 }; /* 1000 / 600 / 600 ms */
+
 void voice_init(Voice *v) {
     v->type = VOICE_OFF;
     v->note = 0;
     v->env_phase = ENV_OFF;
+    v->role = ROLE_MELODY;
     v->env_amp = 0;
     v->env_time = 0;
     v->svf_lp = 0;
     v->svf_bp = 0;
 }
 
-void voice_trigger(Voice *v, uint8_t note, uint8_t type) {
+void voice_trigger(Voice *v, uint8_t note, uint8_t type, uint8_t role) {
     v->type = type;
     v->note = note;
+    v->role = role;
     v->env_phase = ENV_A;
     v->env_time = 0;
     v->env_amp = 0;
@@ -63,8 +71,8 @@ void voice_trigger(Voice *v, uint8_t note, uint8_t type) {
         v->u.fm.phase_c   = 0;
         v->u.fm.phase_m   = 0;
         v->u.fm.inc_c     = note_phase_inc[note];
-        v->u.fm.inc_m     = note_phase_inc[note] * 2;
-        v->u.fm.mod_depth = fm_mod_depth;
+        v->u.fm.inc_m     = note_phase_inc[note] * role_fm_ratio[role];
+        v->u.fm.mod_depth = (role == ROLE_MELODY) ? fm_mod_depth : role_mod_depth[role];
     }
 }
 
@@ -92,14 +100,16 @@ static int16_t fm_step(Voice *v) {
 
 static uint16_t env_step(Voice *v) {
     uint32_t amp = v->env_amp;
+    uint16_t attack_n  = role_attack[v->role];
+    uint16_t release_n = role_release[v->role];
 
     switch (v->env_phase) {
         case ENV_A: {
-            uint32_t idx = ((uint32_t)v->env_time * 255u) / ENV_ATTACK_SAMPLES;
+            uint32_t idx = ((uint32_t)v->env_time * 255u) / attack_n;
             if (idx > 255u) idx = 255u;
             amp = ((uint32_t)env_table[idx] * ENV_PEAK) / 255u;
             v->env_time++;
-            if (v->env_time >= ENV_ATTACK_SAMPLES) {
+            if (v->env_time >= attack_n) {
                 v->env_phase = ENV_D;
                 v->env_time = 0;
                 amp = ENV_PEAK;
@@ -120,12 +130,12 @@ static uint16_t env_step(Voice *v) {
             break;
         }
         case ENV_R: {
-            uint32_t idx = ((uint32_t)v->env_time * 255u) / ENV_RELEASE_SAMPLES;
+            uint32_t idx = ((uint32_t)v->env_time * 255u) / release_n;
             if (idx > 255u) idx = 255u;
             uint32_t curve = 255u - env_table[idx];
             amp = ((uint32_t)ENV_SUSTAIN_LEVEL * curve) / 255u;
             v->env_time++;
-            if (v->env_time >= ENV_RELEASE_SAMPLES) {
+            if (v->env_time >= release_n) {
                 v->env_phase = ENV_OFF;
                 v->type = VOICE_OFF;
                 amp = 0;
@@ -166,13 +176,17 @@ void voice_pool_init(void) {
     for (int i = 0; i < N_VOICES; i++) voice_init(&pool[i]);
 }
 
-static int pick_slot(void) {
-    for (int i = 0; i < N_VOICES; i++) {
+/* Voice slot ranges per role: bass = 0..1, chord = 2..4, melody = 5..7. */
+static const uint8_t role_slot_start[3] = { 0, 2, 5 };
+static const uint8_t role_slot_end[3]   = { 2, 5, 8 };
+
+static int pick_slot_range(uint8_t lo, uint8_t hi) {
+    for (int i = lo; i < hi; i++) {
         if (pool[i].env_phase == ENV_OFF) return i;
     }
-    int chosen = 0;
+    int chosen = lo;
     uint16_t min_amp = 0xFFFFu;
-    for (int i = 0; i < N_VOICES; i++) {
+    for (int i = lo; i < hi; i++) {
         if (pool[i].env_phase == ENV_R && pool[i].env_amp < min_amp) {
             min_amp = pool[i].env_amp;
             chosen = i;
@@ -182,7 +196,12 @@ static int pick_slot(void) {
 }
 
 void voice_pool_trigger(uint8_t note, uint8_t type) {
-    voice_trigger(&pool[pick_slot()], note, type);
+    voice_trigger(&pool[pick_slot_range(0, N_VOICES)], note, type, ROLE_MELODY);
+}
+
+void voice_pool_trigger_role(uint8_t note, uint8_t type, uint8_t role) {
+    int slot = pick_slot_range(role_slot_start[role], role_slot_end[role]);
+    voice_trigger(&pool[slot], note, type, role);
 }
 
 int16_t voice_pool_mix(void) {
