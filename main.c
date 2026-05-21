@@ -198,7 +198,17 @@ int main(int argc, char **argv) {
             fprintf(stderr, "usage: %s --render <seconds> <output.wav>\n", argv[0]);
             exit(1);
         }
-        render_wav(atoi(argv[2]), argv[3]);
+        char *end;
+        long seconds = strtol(argv[2], &end, 10);
+        if (*argv[2] == '\0' || *end != '\0') {
+            fprintf(stderr, "render: seconds must be an integer, got \"%s\"\n", argv[2]);
+            exit(1);
+        }
+        if (seconds < 1 || seconds > 3600) {
+            fprintf(stderr, "render: seconds must be in 1..3600, got %ld\n", seconds);
+            exit(1);
+        }
+        render_wav((int)seconds, argv[3]);
         fprintf(stderr, "arena: %zu/%d bytes used\n", arena_used(), HEAP_BYTES);
     } else if (argc == 1) {
         play_alsa();
