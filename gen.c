@@ -127,11 +127,31 @@ void gen_step(void) {
         uint16_t hits = (uint16_t)(euclid_table[eucl_k_a] | euclid_table[eucl_k_b]);
         unsigned int hit = (unsigned int)((hits >> (15 - step_in_bar)) & 1u);
 
+        /* Bass trigger: once at the start of each bar. */
+        if (step_in_bar == 0) {
+            uint8_t bass_deg = (bar_count & 1u) ? 4u : 0u;
+            uint8_t bass_note = (uint8_t)(SCALE[bass_deg] - 12);
+            voice_pool_trigger_role(bass_note, VOICE_FM, ROLE_BASS);
+        }
+
+        /* Chord trigger: at steps 0 and 8, fire a triad (root, 3rd, 5th)
+           filtered by active_mask. */
+        if (step_in_bar == 0 || step_in_bar == 8) {
+            static const uint8_t triad[3] = { 0u, 2u, 4u };
+            for (int i = 0; i < 3; i++) {
+                uint8_t d = triad[i];
+                if (active_mask & (1u << d)) {
+                    voice_pool_trigger_role(SCALE[d], VOICE_FM, ROLE_CHORD);
+                }
+            }
+        }
+
+        /* Melody trigger: existing Euclidean rhythm, restricted to melody slots. */
         if (hit) {
             cur_degree = markov_next(cur_degree, active_mask);
             uint8_t note = SCALE[cur_degree];
             uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
-            voice_pool_trigger(note, type);
+            voice_pool_trigger_role(note, type, ROLE_MELODY);
         }
 
         step_count++;
