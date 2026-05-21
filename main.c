@@ -162,8 +162,17 @@ static void play_alsa(void) {
         render_chunk(buf, BUFFER_FRAMES);
         snd_pcm_sframes_t frames = snd_pcm_writei(pcm, buf, BUFFER_FRAMES);
         if (frames < 0) {
-            fprintf(stderr, "alsa: %s\n", snd_strerror((int)frames));
-            exit(1);
+            /* Attempt recovery from xruns (EPIPE), suspends (ESTRPIPE),
+               and interrupts. snd_pcm_recover handles those internally;
+               for anything else it returns the original error. */
+            int rc = snd_pcm_recover(pcm, (int)frames, 1);
+            if (rc < 0) {
+                fprintf(stderr, "alsa: %s\n", snd_strerror(rc));
+                exit(1);
+            }
+            /* Recovered. Skip this buffer's oscilloscope update to keep
+               the gen state advancing; the next iteration will catch up. */
+            continue;
         }
 
         draw_oscilloscope(buf, BUFFER_FRAMES);
