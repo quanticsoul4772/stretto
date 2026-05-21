@@ -17,6 +17,9 @@ typedef struct {
     uint8_t  role;
     uint16_t env_amp;
     uint16_t env_time;
+    /* SVF state is int32, not int16. At Q ~ 2.56 (q=100, damp=q/256),
+       resonance can ring the filter state to roughly 2.5x input
+       amplitude; int16 would wrap and produce broadband clicks. */
     int32_t  svf_lp;
     int32_t  svf_bp;
     union {
