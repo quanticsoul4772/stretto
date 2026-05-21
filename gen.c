@@ -3,17 +3,27 @@
 #include "euclid_table.h"
 #include <stdint.h>
 
-#define BAR_STEPS         16
+/* Substep grid for true 3-against-4 polyrhythm. 48 = LCM(3, 4, 16):
+     bass fires at 3 evenly-spaced positions (every 16 substeps)
+     chord fires at 4 evenly-spaced positions (every 12 substeps)
+     melody continues on a 16-step Euclidean grid (every 3 substeps)
+   All three lock at substep 0 of each bar, then diverge across the
+   bar. The 3:4 cross-rhythm is heard as the bass and chord events
+   interlock - a classical polyrhythm pattern. */
+#define BAR_SUBSTEPS      48u
+#define MELODY_SUBSTRIDE   3u   /* one melody slot every 3 substeps */
 
 /* PLAN.md called for mutation every 16 bars. At our 2-second bar
-   (16 steps * 5512 samples / 44100), 16 bars is ~32 s between
+   (48 substeps * 1837 samples / 44100), 16 bars is ~32 s between
    mutations - too slow to feel evolving in a short listening window
    and never fires inside the 16-second regression render. Reduced
    to 4 bars (~8 s); still ~450 mutations per hour, plenty of
    variation at long timescales. */
 #define MUTATE_BARS       4u
 
-static uint32_t samples_per_step = 5512u;    /* ~125 ms = 120 BPM 16th notes */
+/* 48 substeps * 1837 samples = 88176 samples = 2.00 s per bar
+   (matches the old 16 steps * 5512). Tempo control scales this. */
+static uint32_t samples_per_substep = 1837u;
 
 static uint32_t gen_prng_state = 0xDEADBEEFu;
 static uint32_t prng(void) {
@@ -102,7 +112,7 @@ static uint32_t ca_harm    = 0x87654321u;
 static uint8_t  eucl_k_a   = 3;
 static uint8_t  eucl_k_b   = 5;
 static uint32_t bar_count  = 0;
-static uint32_t step_count = 0;
+static uint32_t substep_count = 0;
 static uint32_t sample_clock = 0;
 static uint32_t next_step  = 0;
 /* Per-hit probability gate for the melody trigger. A Euclidean step
@@ -190,7 +200,7 @@ void gen_init(void) {
     eucl_k_a       = 3;
     eucl_k_b       = 5;
     bar_count      = 0;
-    step_count     = 0;
+    substep_count     = 0;
     sample_clock   = 0;
     next_step      = 0;
     gate_prob      = 200;
@@ -199,16 +209,17 @@ void gen_init(void) {
 
 void gen_step(void) {
     if (sample_clock == next_step) {
-        uint32_t step_in_bar = step_count % BAR_STEPS;
+        uint32_t substep_in_bar = substep_count % BAR_SUBSTEPS;
 
-        if (step_in_bar == 0) {
+        if (substep_in_bar == 0) {
             ca_row = ca_step(ca_row, RULE_110);
             if (ca_row == 0) ca_row = 0x12345678u;
             bar_count++;
             if (bar_count % MUTATE_BARS == 0) mutate();
         }
 
-        if (step_in_bar % 4 == 0) {
+        /* ca_harm advances 4 times per bar - every 12 substeps. */
+        if (substep_in_bar % 12u == 0u) {
             ca_harm = ca_step(ca_harm, RULE_30);
             if (ca_harm == 0) ca_harm = 0x87654321u;
         }
@@ -218,21 +229,23 @@ void gen_step(void) {
         active_mask = active_mask & (harm_mask | 0x11u);
         if (active_mask == 0) active_mask = 0x01u;
 
-        uint16_t hits = (uint16_t)(euclid_table[eucl_k_a] | euclid_table[eucl_k_b]);
-        unsigned int hit = (unsigned int)((hits >> (15 - step_in_bar)) & 1u);
-
-        /* Bass trigger: once at the start of each bar. */
-        if (step_in_bar == 0) {
-            uint8_t bass_deg = (bar_count & 1u) ? 4u : 0u;
+        /* Bass trigger: 3 evenly-spaced events per bar (substeps 0,
+           16, 32). The "3" side of the 3-against-4 polyrhythm.
+           Alternate degree (root / dominant) per event for a
+           moving line, scaled by bar position via bar_count for
+           variation. */
+        if (substep_in_bar == 0u || substep_in_bar == 16u || substep_in_bar == 32u) {
+            uint8_t bass_step = (uint8_t)(substep_in_bar / 16u);  /* 0..2 within bar */
+            uint8_t bass_deg = ((bar_count + bass_step) & 1u) ? 4u : 0u;
             uint8_t bass_note = (uint8_t)(SCALES[cur_scale][bass_deg] - 12);
             voice_pool_trigger_role(bass_note, VOICE_FM, ROLE_BASS);
         }
 
-        /* Chord trigger: at steps 0 and 8, fire a 3-note voicing from
-           the rotating CHORD_PATTERNS table, filtered by active_mask.
-           Pattern index advances per bar so consecutive chord beats hit
-           different voicings (triad, 7th, sus4, sus2, inversions...). */
-        if (step_in_bar == 0 || step_in_bar == 8) {
+        /* Chord trigger: 4 evenly-spaced events per bar (substeps 0,
+           12, 24, 36). The "4" side of the 3-against-4 polyrhythm.
+           Voicing pattern rotates per bar to keep harmonic variety. */
+        if (substep_in_bar == 0u || substep_in_bar == 12u ||
+            substep_in_bar == 24u || substep_in_bar == 36u) {
             const ChordNote *pat = CHORD_PATTERNS[bar_count % N_CHORD_PATTERNS];
             for (int i = 0; i < 3; i++) {
                 uint8_t d = (uint8_t)pat[i].degree;
@@ -243,18 +256,23 @@ void gen_step(void) {
             }
         }
 
-        /* Melody trigger: Euclidean rhythm gated by per-hit probability.
-           A hit only fires if (prng % 256) < gate_prob, so some hits
-           drop and the melody breathes. */
-        if (hit && ((prng() & 0xFFu) < (uint32_t)gate_prob)) {
-            cur_degree = markov_next(cur_degree, active_mask);
-            uint8_t note = SCALES[cur_scale][cur_degree];
-            uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
-            voice_pool_trigger_role(note, type, ROLE_MELODY);
+        /* Melody trigger: only on substeps aligned with the 16-step
+           Euclidean grid (every MELODY_SUBSTRIDE = 3 substeps). The
+           Euclidean lookup uses step_in_bar = substep / 3, range 0..15. */
+        if (substep_in_bar % MELODY_SUBSTRIDE == 0u) {
+            uint32_t step_in_bar = substep_in_bar / MELODY_SUBSTRIDE;
+            uint16_t hits = (uint16_t)(euclid_table[eucl_k_a] | euclid_table[eucl_k_b]);
+            unsigned int hit = (unsigned int)((hits >> (15 - step_in_bar)) & 1u);
+            if (hit && ((prng() & 0xFFu) < (uint32_t)gate_prob)) {
+                cur_degree = markov_next(cur_degree, active_mask);
+                uint8_t note = SCALES[cur_scale][cur_degree];
+                uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
+                voice_pool_trigger_role(note, type, ROLE_MELODY);
+            }
         }
 
-        step_count++;
-        next_step += samples_per_step;
+        substep_count++;
+        next_step += samples_per_substep;
     }
     sample_clock++;
 }
@@ -264,15 +282,20 @@ void gen_force_mutate(void) {
 }
 
 void gen_set_tempo(int delta_pct) {
-    int32_t new_val = (int32_t)samples_per_step + ((int32_t)samples_per_step * delta_pct) / 100;
-    if (new_val < 2000) new_val = 2000;
-    if (new_val > 20000) new_val = 20000;
-    samples_per_step = (uint32_t)new_val;
+    int32_t new_val = (int32_t)samples_per_substep
+                    + ((int32_t)samples_per_substep * delta_pct) / 100;
+    /* Range: ~700 (faster) .. ~7000 (slower), keeping the bar between
+       ~0.75 s and ~7.5 s. */
+    if (new_val < 700)  new_val = 700;
+    if (new_val > 7000) new_val = 7000;
+    samples_per_substep = (uint32_t)new_val;
 }
 
-uint32_t gen_get_step_samples(void) { return samples_per_step; }
+uint32_t gen_get_step_samples(void) { return samples_per_substep; }
 uint32_t gen_get_bar(void) { return bar_count; }
-uint8_t  gen_get_step(void) { return (uint8_t)(step_count % BAR_STEPS); }
+/* Report the melody-step position (0..15) for backward-compatible
+   status display: 48 substeps maps to 16 melody steps. */
+uint8_t  gen_get_step(void) { return (uint8_t)((substep_count % BAR_SUBSTEPS) / MELODY_SUBSTRIDE); }
 uint8_t  gen_get_scale(void) { return cur_scale; }
 uint8_t  gen_get_gate(void) { return gate_prob; }
 
