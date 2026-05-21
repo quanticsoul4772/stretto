@@ -16,7 +16,7 @@
 
 ### Synth features
 - True Bjorklund Euclidean rhythm patterns replace the floor-distributed approximation. `gen_euclid_table.c` emits the canonical tresillo, cinquillo, etc. masks. Popcount of each E(k,16) mask verified equal to k.
-- Multi-scale rotation: D Dorian, D Lydian, D Phrygian. Auto-rotates every 32 bars; `s` key cycles manually. Status row shows current scale.
+- Multi-scale support: six modes (D Dorian, D Lydian, D Phrygian, D Locrian, D Harmonic Minor, D Mixolydian). The `s` key cycles between them in live mode. Scale never changes automatically. Status row shows current scale.
 - Per-voice roles: bass (slots 0–1), chord (slots 2–4), melody (slots 5–7). Each role has its own envelope timings, FM parameters, and pitch offset. Voice stealing constrained to a role's range.
   - Bass: FM 1:1 ratio, mod_depth 200, attack 50 ms, release 1 s, pitch −12.
   - Chord: triad on degrees 0/2/4 from active mask, fired at steps 0 and 8.

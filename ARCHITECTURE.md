@@ -108,7 +108,7 @@ lp += bp * f1
 
 A single sample clock drives everything. `gen_step` is called once per output sample by `render_chunk`. It compares `sample_clock` to `next_step` and on each step boundary:
 
-1. If start of bar: advance `ca_row` (Rule 110), increment `bar_count`. Every `MUTATE_BARS` (4) bars call `mutate()`. Every `SCALE_ROTATE_BARS` (32) bars rotate `cur_scale`.
+1. If start of bar: advance `ca_row` (Rule 110), increment `bar_count`. Every `MUTATE_BARS` (4) bars call `mutate()`. The current scale (`cur_scale`) never changes automatically; only the `s` key in live mode cycles it.
 2. Every 4 steps: advance `ca_harm` (Rule 30).
 3. Compute `active_mask = (ca_row & 0x7F) & (ca_harm_mask | 0x11)` — degrees allowed this bar.
 4. Compute Euclidean `hits = euclid_table[eucl_k_a] | euclid_table[eucl_k_b]`. Determine if step is a hit.

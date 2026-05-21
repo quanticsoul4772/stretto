@@ -35,7 +35,7 @@ M:<mod_depth> S:<scale> V:<8 voice activity dots>
 ```
 
 - `M` — current FM modulation depth (100–8000, default 1500).
-- `S` — current scale: `D` Dorian, `L` Lydian, `P` Phrygian. Auto-rotates every 32 bars (~64 s).
+- `S` — current scale (`D` Dorian / `L` Lydian / `P` Phrygian / `l` Locrian / `H` Harmonic minor / `M` Mixolydian). Press `s` to cycle.
 - `V` — eight characters, one per voice. `*` means the voice is firing or sustaining; `.` means it is silent.
 
 ### Live keyboard controls
@@ -85,7 +85,7 @@ Voice stealing is constrained to a role's reserved slot range so the bass never 
 
 ### Generative layer
 
-- **Scales**: D Dorian, D Lydian, D Phrygian. Auto-rotates every 32 bars; `s` key cycles manually. Markov runs on degree indices so a single matrix applies to any 7-note scale.
+- **Scales**: D Dorian, D Lydian, D Phrygian, D Locrian, D Harmonic Minor, D Mixolydian. The `s` key cycles between them; scale never changes automatically. Markov runs on degree indices so a single matrix applies to any 7-note scale.
 - **Rule 110 cellular automaton** (`ca_row`, 32-bit). Low 7 bits select which scale degrees are active for the current bar.
 - **Rule 30 CA** (`ca_harm`) advances every 4 steps and ANDs into the active mask to introduce harmonic variation. Pairing 110 with 30 avoids the long repeats of 110 alone and the pure randomness of 30 alone.
 - **Markov chain** (7×7 weights) picks the next melody degree from the active mask. Initial weights are hand-tuned: stepwise motion weighted, leading-tone and dominant cadences favour tonic. Weights mutate at runtime.

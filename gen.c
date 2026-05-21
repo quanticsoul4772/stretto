@@ -46,9 +46,6 @@ static const uint8_t SCALES[N_SCALES][7] = {
 };
 static uint8_t cur_scale = 0;
 
-/* Auto-rotate every N bars (~64 s at default tempo). */
-#define SCALE_ROTATE_BARS 32u
-
 /* Chord voicings: each entry is (degree, octave_offset). Three notes
    per voicing fits the three chord voice slots (2..4). Patterns cycle
    per bar to add harmonic variety beyond the basic root-3rd-5th triad.
@@ -209,9 +206,6 @@ void gen_step(void) {
             if (ca_row == 0) ca_row = 0x12345678u;
             bar_count++;
             if (bar_count % MUTATE_BARS == 0) mutate();
-            if (bar_count % SCALE_ROTATE_BARS == 0) {
-                cur_scale = (uint8_t)((cur_scale + 1u) % N_SCALES);
-            }
         }
 
         if (step_in_bar % 4 == 0) {
