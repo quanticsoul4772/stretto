@@ -32,7 +32,7 @@ static void render_chunk(int16_t *out, uint32_t frames) {
 static void restore_terminal(void) {
     if (termios_saved) {
         tcsetattr(0, TCSANOW, &saved_termios);
-        write(1, "\x1b[?25h\n", 8);
+        (void)!write(1, "\x1b[?25h\n", 8);
     }
 }
 
@@ -47,13 +47,7 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     uint32_t h = ws[0] > 2 ? ws[0] - 2 : 22;
     if (w > frames) w = frames;
 
-    int32_t peak = 0;
-    for (uint32_t i = 0; i < frames; i++) {
-        int32_t a = buf[i] < 0 ? -buf[i] : buf[i];
-        if (a > peak) peak = a;
-    }
-
-    write(1, "\x1b[H\x1b[?25l\x1b[2K", 14);
+    (void)!write(1, "\x1b[H\x1b[?25l\x1b[2K", 14);
 
     uint32_t mask = voice_pool_active_mask();
     char s[40];
@@ -65,9 +59,8 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     while (n > 0) s[p++] = t[--n];
     s[p++] = ' '; s[p++] = 'V'; s[p++] = ':';
     for (int i = 0; i < N_VOICES; i++) s[p++] = (mask & (1u << i)) ? '*' : '.';
-    write(1, s, p);
-    write(1, "\r\n", 2);
-    (void)peak;
+    (void)!write(1, s, p);
+    (void)!write(1, "\r\n", 2);
 
     char line[120];
     for (uint32_t r = 0; r < h; r++) {
@@ -77,9 +70,9 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
             int32_t a = s < 0 ? -s : s;
             line[c] = (a > t) ? (a > 7000 ? '@' : a > 5000 ? '#' : a > 3500 ? '*' : a > 2500 ? '+' : a > 1500 ? '-' : '.') : ' ';
         }
-        write(1, "\x1b[2K", 4);
-        write(1, line, w);
-        if (r < h - 1) write(1, "\r\n", 2);
+        (void)!write(1, "\x1b[2K", 4);
+        (void)!write(1, line, w);
+        if (r < h - 1) (void)!write(1, "\r\n", 2);
     }
 }
 
@@ -145,7 +138,10 @@ static void play_alsa(void) {
     }
 
     int flags = fcntl(0, F_GETFL, 0);
-    fcntl(0, F_SETFL, flags | O_NONBLOCK);
+    if (flags < 0 || fcntl(0, F_SETFL, flags | O_NONBLOCK) < 0) {
+        fprintf(stderr, "fcntl: %s\n", strerror(errno));
+        exit(1);
+    }
 
     snd_pcm_t *pcm;
     int err = snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK, 0);
