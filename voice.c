@@ -1,13 +1,14 @@
 #include "voice.h"
+#include "arena.h"
 #include "sin_table.h"
 #include "env_table.h"
 #include "note_table.h"
 #include <stdint.h>
 
-#define ENV_ATTACK_SAMPLES   220     /* ~5 ms  */
-#define ENV_DECAY_SAMPLES    8820    /* ~200 ms */
-#define ENV_RELEASE_SAMPLES  26460   /* ~600 ms */
-#define ENV_SUSTAIN_LEVEL    16384   /* 50% of peak */
+#define ENV_ATTACK_SAMPLES   220
+#define ENV_DECAY_SAMPLES    8820
+#define ENV_RELEASE_SAMPLES  26460
+#define ENV_SUSTAIN_LEVEL    16384
 #define ENV_PEAK             32767
 
 static uint32_t prng_state = 0xCAFEBABEu;
@@ -129,4 +130,36 @@ int16_t voice_step(Voice *v) {
     int16_t raw = (v->type == VOICE_KS) ? ks_step(v) : fm_step(v);
     uint16_t env = env_step(v);
     return (int16_t)(((int32_t)raw * env) >> 15);
+}
+
+static Voice *pool;
+
+void voice_pool_init(void) {
+    pool = arena_alloc(N_VOICES * sizeof(Voice));
+    for (int i = 0; i < N_VOICES; i++) voice_init(&pool[i]);
+}
+
+static int pick_slot(void) {
+    for (int i = 0; i < N_VOICES; i++) {
+        if (pool[i].env_phase == ENV_OFF) return i;
+    }
+    int chosen = 0;
+    uint16_t min_amp = 0xFFFFu;
+    for (int i = 0; i < N_VOICES; i++) {
+        if (pool[i].env_phase == ENV_R && pool[i].env_amp < min_amp) {
+            min_amp = pool[i].env_amp;
+            chosen = i;
+        }
+    }
+    return chosen;
+}
+
+void voice_pool_trigger(uint8_t note, uint8_t type) {
+    voice_trigger(&pool[pick_slot()], note, type);
+}
+
+int16_t voice_pool_mix(void) {
+    int32_t sum = 0;
+    for (int i = 0; i < N_VOICES; i++) sum += voice_step(&pool[i]);
+    return (int16_t)(sum >> 2);
 }
