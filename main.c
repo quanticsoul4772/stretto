@@ -17,6 +17,16 @@
 #define BUFFER_FRAMES  1024
 #define LATENCY_US     100000
 
+/* Master-bus stereo delay. Two independent mono buffers (one per
+   channel), 250 ms long at 44.1 kHz. Standard feed-forward + feedback
+   topology: output = dry + tap*wet; delay-buffer-write = dry + tap*fb. */
+#define DELAY_SAMPLES  11025u
+static int16_t *delay_l;
+static int16_t *delay_r;
+static uint32_t delay_idx = 0;
+static uint16_t delay_wet      = 100;  /* 0..256, mix amount */
+static uint16_t delay_feedback = 140;  /* 0..200, capped to avoid runaway */
+
 #define TIOCGWINSZ     0x5413
 
 static struct termios saved_termios;
@@ -32,6 +42,8 @@ static const char HELP_TEXT[] =
     "  [  /  ]    FM mod_depth  down / up\r\n"
     "  s          cycle scale  D L P l H M\r\n"
     "  g  /  G    gate probability  down / up\r\n"
+    "  d  /  D    delay wet mix  down / up\r\n"
+    "  f  /  F    delay feedback  down / up\r\n"
     "  ?          toggle this help\r\n"
     "  q          quit\r\n"
     "\r\n"
@@ -45,7 +57,61 @@ static void clear_screen(void) {
     (void)!write(1, "\x1b[H\x1b[2J", 7);
 }
 
-/* Fills 2*frames int16 samples in interleaved L,R,L,R,... order. */
+static void delay_init(void) {
+    delay_l = arena_alloc(DELAY_SAMPLES * sizeof(int16_t));
+    delay_r = arena_alloc(DELAY_SAMPLES * sizeof(int16_t));
+    /* arena_alloc does not zero; clear so the first echoes are silence. */
+    memset(delay_l, 0, DELAY_SAMPLES * sizeof(int16_t));
+    memset(delay_r, 0, DELAY_SAMPLES * sizeof(int16_t));
+    delay_idx = 0;
+}
+
+static inline int16_t sat16(int32_t v) {
+    if (v >  32767) return  32767;
+    if (v < -32768) return -32768;
+    return (int16_t)v;
+}
+
+/* In-place stereo delay processing on an interleaved L,R,L,R buffer. */
+static void delay_process(int16_t *buf, uint32_t frames) {
+    for (uint32_t i = 0; i < frames; i++) {
+        int32_t dry_l = buf[2 * i];
+        int32_t dry_r = buf[2 * i + 1];
+        int32_t tap_l = delay_l[delay_idx];
+        int32_t tap_r = delay_r[delay_idx];
+
+        int32_t out_l = dry_l + ((tap_l * (int32_t)delay_wet) >> 8);
+        int32_t out_r = dry_r + ((tap_r * (int32_t)delay_wet) >> 8);
+
+        int32_t fb_l = dry_l + ((tap_l * (int32_t)delay_feedback) >> 8);
+        int32_t fb_r = dry_r + ((tap_r * (int32_t)delay_feedback) >> 8);
+
+        delay_l[delay_idx] = sat16(fb_l);
+        delay_r[delay_idx] = sat16(fb_r);
+
+        if (++delay_idx >= DELAY_SAMPLES) delay_idx = 0;
+
+        buf[2 * i]     = sat16(out_l);
+        buf[2 * i + 1] = sat16(out_r);
+    }
+}
+
+static void delay_adjust_wet(int delta) {
+    int v = (int)delay_wet + delta;
+    if (v < 0)   v = 0;
+    if (v > 256) v = 256;
+    delay_wet = (uint16_t)v;
+}
+
+static void delay_adjust_feedback(int delta) {
+    int v = (int)delay_feedback + delta;
+    if (v < 0)   v = 0;
+    if (v > 200) v = 200;     /* cap to avoid feedback runaway */
+    delay_feedback = (uint16_t)v;
+}
+
+/* Fills 2*frames int16 samples in interleaved L,R,L,R,... order, with
+   the master-bus delay applied in place. */
 static void render_chunk(int16_t *out, uint32_t frames) {
     for (uint32_t i = 0; i < frames; i++) {
         gen_step();
@@ -53,6 +119,7 @@ static void render_chunk(int16_t *out, uint32_t frames) {
         out[2 * i]     = s.l;
         out[2 * i + 1] = s.r;
     }
+    delay_process(out, frames);
 }
 
 static void restore_terminal(void) {
@@ -235,6 +302,10 @@ static void play_alsa(void) {
             else if (ch == 's') gen_cycle_scale();
             else if (ch == 'g') gen_adjust_gate(-16);
             else if (ch == 'G') gen_adjust_gate(+16);
+            else if (ch == 'd') delay_adjust_wet(-16);
+            else if (ch == 'D') delay_adjust_wet(+16);
+            else if (ch == 'f') delay_adjust_feedback(-16);
+            else if (ch == 'F') delay_adjust_feedback(+16);
             else if (ch == 'q') {
                 snd_pcm_close(pcm);
                 restore_terminal();
@@ -247,6 +318,7 @@ static void play_alsa(void) {
 int main(int argc, char **argv) {
     voice_pool_init();
     gen_init();
+    delay_init();
 
     if (argc >= 2 && strcmp(argv[1], "--render") == 0) {
         if (argc != 4) {
