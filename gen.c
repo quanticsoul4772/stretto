@@ -33,6 +33,7 @@ static uint8_t markov[7][7] = {
 
 static uint8_t  cur_degree = 0;
 static uint32_t ca_row     = 0x12345678u;
+static uint32_t ca_harm    = 0x87654321u;
 static uint8_t  eucl_k_a   = 3;
 static uint8_t  eucl_k_b   = 5;
 static uint32_t bar_count  = 0;
@@ -40,17 +41,17 @@ static uint32_t step_count = 0;
 static uint32_t sample_clock = 0;
 static uint32_t next_step  = 0;
 
-/* Rule 110 lookup: bit p of 0x6E (= 01101110b) gives output for input pattern p */
 #define RULE_110 0x6Eu
+#define RULE_30  0x1Eu
 
-static uint32_t rule110_step(uint32_t row) {
+static uint32_t ca_step(uint32_t row, uint8_t rule) {
     uint32_t next = 0;
     for (int i = 0; i < 32; i++) {
         unsigned int left   = (row >> ((i + 1) & 31)) & 1u;
         unsigned int center = (row >> i) & 1u;
         unsigned int right  = (row >> ((i + 31) & 31)) & 1u;
         unsigned int p = (left << 2) | (center << 1) | right;
-        if ((RULE_110 >> p) & 1u) next |= (1u << i);
+        if ((rule >> p) & 1u) next |= (1u << i);
     }
     return next;
 }
@@ -91,6 +92,7 @@ static void mutate(void) {
 void gen_init(void) {
     cur_degree     = 0;
     ca_row         = 0x12345678u;
+    ca_harm        = 0x87654321u;
     eucl_k_a       = 3;
     eucl_k_b       = 5;
     bar_count      = 0;
@@ -105,13 +107,20 @@ void gen_step(void) {
         uint32_t step_in_bar = step_count % BAR_STEPS;
 
         if (step_in_bar == 0) {
-            ca_row = rule110_step(ca_row);
+            ca_row = ca_step(ca_row, RULE_110);
             if (ca_row == 0) ca_row = 0x12345678u;
             bar_count++;
             if (bar_count % MUTATE_BARS == 0) mutate();
         }
 
+        if (step_in_bar % 4 == 0) {
+            ca_harm = ca_step(ca_harm, RULE_30);
+            if (ca_harm == 0) ca_harm = 0x87654321u;
+        }
+
         uint8_t active_mask = (uint8_t)(ca_row & 0x7Fu);
+        uint8_t harm_mask = (uint8_t)((ca_harm >> 8) & 0x7Fu);
+        active_mask = active_mask & (harm_mask | 0x11u);
         if (active_mask == 0) active_mask = 0x01u;
 
         uint16_t hits = (uint16_t)(euclid_table[eucl_k_a] | euclid_table[eucl_k_b]);
