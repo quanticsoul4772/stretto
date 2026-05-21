@@ -2,8 +2,8 @@
 set -e
 cd "$(dirname "$0")/.."
 
-./synth --render 8 /tmp/a.wav >/dev/null 2>&1
-./synth --render 8 /tmp/b.wav >/dev/null 2>&1
+./synth --render 16 /tmp/a.wav >/dev/null 2>&1
+./synth --render 16 /tmp/b.wav >/dev/null 2>&1
 
 if ! cmp -s /tmp/a.wav /tmp/b.wav; then
     echo "FAIL: determinism (renders differ)"
@@ -12,8 +12,8 @@ if ! cmp -s /tmp/a.wav /tmp/b.wav; then
     exit 1
 fi
 
-if [ -f golden/arpeggio_8s.sha256 ]; then
-    EXPECTED=$(cat golden/arpeggio_8s.sha256)
+if [ -f golden/regression_16s.sha256 ]; then
+    EXPECTED=$(cat golden/regression_16s.sha256)
     ACTUAL=$(sha256sum /tmp/a.wav | awk '{print $1}')
     if [ "$ACTUAL" != "$EXPECTED" ]; then
         echo "FAIL: golden mismatch"

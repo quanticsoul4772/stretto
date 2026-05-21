@@ -5,10 +5,10 @@ CFLAGS = -Os -flto -fuse-linker-plugin -ffast-math \
 LDFLAGS = -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,norelro \
           -Wl,--hash-style=sysv -no-pie
 
-HEADERS = sin_table.h env_table.h note_table.h
-GENS    = gen_sin_table gen_env_table gen_note_table
-OBJS    = arena.o voice.o main.o
-SIZE_TARGET = 24576
+HEADERS = sin_table.h env_table.h note_table.h euclid_table.h
+GENS    = gen_sin_table gen_env_table gen_note_table gen_euclid_table
+OBJS    = arena.o voice.o gen.o main.o
+SIZE_TARGET = 32768
 
 all: synth
 
@@ -18,6 +18,8 @@ gen_env_table: gen_env_table.c
 	gcc -O2 gen_env_table.c -o gen_env_table -lm
 gen_note_table: gen_note_table.c
 	gcc -O2 gen_note_table.c -o gen_note_table -lm
+gen_euclid_table: gen_euclid_table.c
+	gcc -O2 gen_euclid_table.c -o gen_euclid_table
 
 sin_table.h: gen_sin_table
 	./gen_sin_table > sin_table.h
@@ -25,12 +27,16 @@ env_table.h: gen_env_table
 	./gen_env_table > env_table.h
 note_table.h: gen_note_table
 	./gen_note_table > note_table.h
+euclid_table.h: gen_euclid_table
+	./gen_euclid_table > euclid_table.h
 
 arena.o: arena.c arena.h
 	gcc $(CFLAGS) -c arena.c -o arena.o
-voice.o: voice.c voice.h $(HEADERS)
+voice.o: voice.c voice.h arena.h $(HEADERS)
 	gcc $(CFLAGS) -c voice.c -o voice.o
-main.o: main.c arena.h voice.h
+gen.o: gen.c gen.h voice.h euclid_table.h
+	gcc $(CFLAGS) -c gen.c -o gen.o
+main.o: main.c arena.h voice.h gen.h
 	gcc $(CFLAGS) -c main.c -o main.o
 
 synth: $(OBJS)
@@ -52,10 +58,10 @@ test: synth
 
 golden: synth
 	@mkdir -p golden
-	./synth --render 8 /tmp/golden_render.wav
-	@sha256sum /tmp/golden_render.wav | awk '{print $$1}' > golden/arpeggio_8s.sha256
-	@echo "golden/arpeggio_8s.sha256 updated:"
-	@cat golden/arpeggio_8s.sha256
+	./synth --render 16 /tmp/golden_render.wav
+	@sha256sum /tmp/golden_render.wav | awk '{print $$1}' > golden/regression_16s.sha256
+	@echo "golden/regression_16s.sha256 updated:"
+	@cat golden/regression_16s.sha256
 
 play: synth
 	./synth

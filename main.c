@@ -6,54 +6,16 @@
 
 #include "arena.h"
 #include "voice.h"
+#include "gen.h"
 
-#define SAMPLE_RATE     44100
-#define BUFFER_FRAMES   1024
-#define LATENCY_US      100000
-#define NOTE_INTERVAL   11025
-
-static const uint8_t ARPEGGIO[] = { 60, 64, 67, 72 };
-#define ARP_LEN 4
-
-static Voice    *voices;
-static uint32_t  sample_clock = 0;
-static uint32_t  arp_idx = 0;
-static uint32_t  next_trigger = 0;
-
-static int pick_voice(void) {
-    for (int i = 0; i < N_VOICES; i++) {
-        if (voices[i].env_phase == ENV_OFF) return i;
-    }
-    int chosen = 0;
-    uint16_t min_amp = 0xFFFF;
-    for (int i = 0; i < N_VOICES; i++) {
-        if (voices[i].env_phase == ENV_R && voices[i].env_amp < min_amp) {
-            min_amp = voices[i].env_amp;
-            chosen = i;
-        }
-    }
-    return chosen;
-}
-
-static void seq_tick(void) {
-    if (sample_clock == next_trigger) {
-        uint8_t note = ARPEGGIO[arp_idx % ARP_LEN];
-        uint8_t type = (arp_idx & 1u) ? VOICE_FM : VOICE_KS;
-        voice_trigger(&voices[pick_voice()], note, type);
-        arp_idx++;
-        next_trigger += NOTE_INTERVAL;
-    }
-}
+#define SAMPLE_RATE    44100
+#define BUFFER_FRAMES  1024
+#define LATENCY_US     100000
 
 static void render_chunk(int16_t *out, uint32_t frames) {
     for (uint32_t i = 0; i < frames; i++) {
-        seq_tick();
-        int32_t sum = 0;
-        for (int v = 0; v < N_VOICES; v++) {
-            sum += voice_step(&voices[v]);
-        }
-        out[i] = (int16_t)(sum >> 2);
-        sample_clock++;
+        gen_step();
+        out[i] = voice_pool_mix();
     }
 }
 
@@ -126,8 +88,8 @@ static void play_alsa(void) {
 }
 
 int main(int argc, char **argv) {
-    voices = arena_alloc(N_VOICES * sizeof(Voice));
-    for (int i = 0; i < N_VOICES; i++) voice_init(&voices[i]);
+    voice_pool_init();
+    gen_init();
 
     if (argc >= 2 && strcmp(argv[1], "--render") == 0) {
         if (argc != 4) {
