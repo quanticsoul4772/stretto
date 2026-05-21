@@ -229,16 +229,25 @@ void gen_step(void) {
         active_mask = active_mask & (harm_mask | 0x11u);
         if (active_mask == 0) active_mask = 0x01u;
 
-        /* Bass trigger: 3 evenly-spaced events per bar (substeps 0,
-           16, 32). The "3" side of the 3-against-4 polyrhythm.
-           Alternate degree (root / dominant) per event for a
-           moving line, scaled by bar position via bar_count for
-           variation. */
-        if (substep_in_bar == 0u || substep_in_bar == 16u || substep_in_bar == 32u) {
-            uint8_t bass_step = (uint8_t)(substep_in_bar / 16u);  /* 0..2 within bar */
-            uint8_t bass_deg = ((bar_count + bass_step) & 1u) ? 4u : 0u;
-            uint8_t bass_note = (uint8_t)(SCALES[cur_scale][bass_deg] - 12);
-            voice_pool_trigger_role(bass_note, VOICE_FM, ROLE_BASS);
+        /* Bass trigger: 4 events per bar at unequal spacing for a
+           bouncing feel. Beats 1 and 3 (substeps 0, 24) anchor the
+           tempo; offbeats at the "and of 2" and "and of 4" (substeps
+           18, 42) anticipate beats 3 and the next bar 1 - a classic
+           dub / reggae bass groove.
+             spacing: 18, 6, 18, 6 (long-short alternating)
+           Pitch alternates root/fifth per event so the line moves
+           rather than thudding the same note. Bar parity swaps the
+           order so consecutive bars do not duplicate. */
+        static const uint8_t bass_substeps[4]  = { 0u, 18u, 24u, 42u };
+        static const uint8_t bass_deg_a[4]     = { 0u, 4u, 0u, 4u };  /* root-fifth-root-fifth */
+        static const uint8_t bass_deg_b[4]     = { 4u, 0u, 4u, 0u };  /* mirrored */
+        for (int i = 0; i < 4; i++) {
+            if (substep_in_bar == bass_substeps[i]) {
+                const uint8_t *degs = (bar_count & 1u) ? bass_deg_b : bass_deg_a;
+                uint8_t bass_note = (uint8_t)(SCALES[cur_scale][degs[i]] - 12);
+                voice_pool_trigger_role(bass_note, VOICE_FM, ROLE_BASS);
+                break;
+            }
         }
 
         /* Chord trigger: 4 evenly-spaced events per bar (substeps 0,
