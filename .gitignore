@@ -1,5 +1,9 @@
 synth
 gen_sin_table
+gen_env_table
+gen_note_table
 sin_table.h
+env_table.h
+note_table.h
 *.o
 /tmp/*.wav
