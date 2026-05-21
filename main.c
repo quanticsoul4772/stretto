@@ -27,6 +27,36 @@ static uint32_t delay_idx = 0;
 static uint16_t delay_wet      = 100;  /* 0..256, mix amount */
 static uint16_t delay_feedback = 140;  /* 0..200, capped to avoid runaway */
 
+/* Schroeder reverb: 4 parallel comb filters whose outputs are summed
+   and then passed through 2 series all-pass filters per channel. The
+   classic prime-number delay choices (Schroeder 1962) avoid metallic
+   resonance. L and R channels use slightly different delays so the
+   reverb tail keeps stereo separation. */
+#define REV_C1L 1557
+#define REV_C2L 1617
+#define REV_C3L 1491
+#define REV_C4L 1422
+#define REV_C1R 1580
+#define REV_C2R 1601
+#define REV_C3R 1486
+#define REV_C4R 1442
+#define REV_AP1L 225
+#define REV_AP2L 556
+#define REV_AP1R 226
+#define REV_AP2R 564
+
+static int16_t *rev_c1l, *rev_c2l, *rev_c3l, *rev_c4l;
+static int16_t *rev_c1r, *rev_c2r, *rev_c3r, *rev_c4r;
+static int16_t *rev_ap1l, *rev_ap2l;
+static int16_t *rev_ap1r, *rev_ap2r;
+static uint16_t i_c1l, i_c2l, i_c3l, i_c4l;
+static uint16_t i_c1r, i_c2r, i_c3r, i_c4r;
+static uint16_t i_ap1l, i_ap2l, i_ap1r, i_ap2r;
+
+static uint16_t reverb_wet = 60;   /* 0..256, mix amount */
+#define COMB_G 180                 /* ~0.70 in 8.8 fixed, RT60 ~1.5 s */
+#define AP_G   180                 /* ~0.70 */
+
 #define TIOCGWINSZ     0x5413
 
 static struct termios saved_termios;
@@ -44,6 +74,7 @@ static const char HELP_TEXT[] =
     "  g  /  G    gate probability  down / up\r\n"
     "  d  /  D    delay wet mix  down / up\r\n"
     "  f  /  F    delay feedback  down / up\r\n"
+    "  r  /  R    reverb wet mix  down / up\r\n"
     "  ?          toggle this help\r\n"
     "  q          quit\r\n"
     "\r\n"
@@ -57,6 +88,12 @@ static void clear_screen(void) {
     (void)!write(1, "\x1b[H\x1b[2J", 7);
 }
 
+static inline int16_t sat16(int32_t v) {
+    if (v >  32767) return  32767;
+    if (v < -32768) return -32768;
+    return (int16_t)v;
+}
+
 static void delay_init(void) {
     delay_l = arena_alloc(DELAY_SAMPLES * sizeof(int16_t));
     delay_r = arena_alloc(DELAY_SAMPLES * sizeof(int16_t));
@@ -66,10 +103,89 @@ static void delay_init(void) {
     delay_idx = 0;
 }
 
-static inline int16_t sat16(int32_t v) {
-    if (v >  32767) return  32767;
-    if (v < -32768) return -32768;
-    return (int16_t)v;
+static int16_t *alloc_zero(uint32_t n_samples) {
+    int16_t *p = arena_alloc(n_samples * sizeof(int16_t));
+    memset(p, 0, n_samples * sizeof(int16_t));
+    return p;
+}
+
+static void reverb_init(void) {
+    rev_c1l = alloc_zero(REV_C1L);  rev_c1r = alloc_zero(REV_C1R);
+    rev_c2l = alloc_zero(REV_C2L);  rev_c2r = alloc_zero(REV_C2R);
+    rev_c3l = alloc_zero(REV_C3L);  rev_c3r = alloc_zero(REV_C3R);
+    rev_c4l = alloc_zero(REV_C4L);  rev_c4r = alloc_zero(REV_C4R);
+    rev_ap1l = alloc_zero(REV_AP1L); rev_ap1r = alloc_zero(REV_AP1R);
+    rev_ap2l = alloc_zero(REV_AP2L); rev_ap2r = alloc_zero(REV_AP2R);
+    i_c1l = i_c2l = i_c3l = i_c4l = 0;
+    i_c1r = i_c2r = i_c3r = i_c4r = 0;
+    i_ap1l = i_ap2l = i_ap1r = i_ap2r = 0;
+}
+
+/* Comb filter step. y[n] = x[n-D] + g * y[n-D], using delay-line as
+   recirculating buffer. Output is the tap (delayed input), buffer
+   write is input + tap*g. */
+static inline int16_t comb_step(int16_t *buf, uint16_t size, uint16_t *idx, int16_t in) {
+    int32_t tap = buf[*idx];
+    int32_t w = in + ((tap * COMB_G) >> 8);
+    if (w >  32767) w =  32767;
+    if (w < -32768) w = -32768;
+    buf[*idx] = (int16_t)w;
+    *idx = (uint16_t)((*idx + 1) % size);
+    return (int16_t)tap;
+}
+
+/* All-pass filter step. Output passes the same magnitude as input at
+   all frequencies but shifts phases; smooths the dense reflections
+   from the parallel combs into a continuous tail. */
+static inline int16_t ap_step(int16_t *buf, uint16_t size, uint16_t *idx, int16_t in) {
+    int32_t tap = buf[*idx];
+    int32_t y = tap - ((in * AP_G) >> 8);
+    int32_t w = in + ((tap * AP_G) >> 8);
+    if (y >  32767) y =  32767;
+    if (y < -32768) y = -32768;
+    if (w >  32767) w =  32767;
+    if (w < -32768) w = -32768;
+    buf[*idx] = (int16_t)w;
+    *idx = (uint16_t)((*idx + 1) % size);
+    return (int16_t)y;
+}
+
+static void reverb_process(int16_t *buf, uint32_t frames) {
+    for (uint32_t i = 0; i < frames; i++) {
+        int16_t in_l = buf[2 * i];
+        int16_t in_r = buf[2 * i + 1];
+
+        /* 4 parallel combs, averaged. */
+        int32_t sum_l = (int32_t)comb_step(rev_c1l, REV_C1L, &i_c1l, in_l)
+                      + comb_step(rev_c2l, REV_C2L, &i_c2l, in_l)
+                      + comb_step(rev_c3l, REV_C3L, &i_c3l, in_l)
+                      + comb_step(rev_c4l, REV_C4L, &i_c4l, in_l);
+        sum_l >>= 2;
+        int32_t sum_r = (int32_t)comb_step(rev_c1r, REV_C1R, &i_c1r, in_r)
+                      + comb_step(rev_c2r, REV_C2R, &i_c2r, in_r)
+                      + comb_step(rev_c3r, REV_C3R, &i_c3r, in_r)
+                      + comb_step(rev_c4r, REV_C4R, &i_c4r, in_r);
+        sum_r >>= 2;
+
+        /* 2 series all-passes per channel. */
+        int16_t ap_l = ap_step(rev_ap1l, REV_AP1L, &i_ap1l, (int16_t)sum_l);
+                ap_l = ap_step(rev_ap2l, REV_AP2L, &i_ap2l, ap_l);
+        int16_t ap_r = ap_step(rev_ap1r, REV_AP1R, &i_ap1r, (int16_t)sum_r);
+                ap_r = ap_step(rev_ap2r, REV_AP2R, &i_ap2r, ap_r);
+
+        /* Mix wet onto dry. */
+        int32_t out_l = in_l + ((ap_l * (int32_t)reverb_wet) >> 8);
+        int32_t out_r = in_r + ((ap_r * (int32_t)reverb_wet) >> 8);
+        buf[2 * i]     = sat16(out_l);
+        buf[2 * i + 1] = sat16(out_r);
+    }
+}
+
+static void reverb_adjust_wet(int delta) {
+    int v = (int)reverb_wet + delta;
+    if (v < 0)   v = 0;
+    if (v > 256) v = 256;
+    reverb_wet = (uint16_t)v;
 }
 
 /* In-place stereo delay processing on an interleaved L,R,L,R buffer. */
@@ -111,7 +227,9 @@ static void delay_adjust_feedback(int delta) {
 }
 
 /* Fills 2*frames int16 samples in interleaved L,R,L,R,... order, with
-   the master-bus delay applied in place. */
+   the master-bus reverb then delay applied in place. Reverb first so
+   each delay echo carries the reverb tail with it (a "wet repeat"
+   character common in ambient music). */
 static void render_chunk(int16_t *out, uint32_t frames) {
     for (uint32_t i = 0; i < frames; i++) {
         gen_step();
@@ -119,6 +237,7 @@ static void render_chunk(int16_t *out, uint32_t frames) {
         out[2 * i]     = s.l;
         out[2 * i + 1] = s.r;
     }
+    reverb_process(out, frames);
     delay_process(out, frames);
 }
 
@@ -306,6 +425,8 @@ static void play_alsa(void) {
             else if (ch == 'D') delay_adjust_wet(+16);
             else if (ch == 'f') delay_adjust_feedback(-16);
             else if (ch == 'F') delay_adjust_feedback(+16);
+            else if (ch == 'r') reverb_adjust_wet(-16);
+            else if (ch == 'R') reverb_adjust_wet(+16);
             else if (ch == 'q') {
                 snd_pcm_close(pcm);
                 restore_terminal();
@@ -318,6 +439,7 @@ static void play_alsa(void) {
 int main(int argc, char **argv) {
     voice_pool_init();
     gen_init();
+    reverb_init();
     delay_init();
 
     if (argc >= 2 && strcmp(argv[1], "--render") == 0) {
