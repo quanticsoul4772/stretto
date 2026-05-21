@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <errno.h>
+#include <termios.h>
 
 #include "arena.h"
 #include "voice.h"
@@ -14,6 +15,11 @@
 #define SAMPLE_RATE    44100
 #define BUFFER_FRAMES  1024
 #define LATENCY_US     100000
+
+#define TIOCGWINSZ     0x5413
+
+static struct termios saved_termios;
+static int termios_saved = 0;
 
 #define SNDRV_PCM_IOCTL_HW_PARAMS _IOWR('A', 0x11, char)
 #define SNDRV_PCM_IOCTL_SW_PARAMS _IOWR('A', 0x13, char)
@@ -67,6 +73,39 @@ static void render_chunk(int16_t *out, uint32_t frames) {
     }
 }
 
+static void restore_terminal(void) {
+    if (termios_saved) {
+        tcsetattr(0, TCSANOW, &saved_termios);
+        write(1, "\x1b[?25h\n", 8);
+    }
+}
+
+static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
+    unsigned short ws[4];
+    ws[0] = 24; ws[1] = 80;
+    ioctl(1, TIOCGWINSZ, ws);
+    if (ws[1] == 0) ws[1] = 80;
+    if (ws[0] == 0) ws[0] = 24;
+
+    uint32_t w = ws[1] > 120 ? 120 : ws[1];
+    uint32_t h = ws[0] > 1 ? ws[0] - 1 : 23;
+    if (w > frames) w = frames;
+
+    write(1, "\x1b[H\x1b[?25l", 10);
+
+    char line[120];
+    for (uint32_t r = 0; r < h; r++) {
+        int32_t t = 32767 - (int32_t)((r * 65536u) / h);
+        for (uint32_t c = 0; c < w; c++) {
+            int16_t s = buf[(c * frames) / w];
+            int32_t a = s < 0 ? -s : s;
+            line[c] = (a > t) ? (a > 30000 ? '@' : a > 25000 ? '#' : a > 20000 ? '*' : a > 15000 ? '+' : a > 10000 ? '-' : '.') : ' ';
+        }
+        write(1, line, w);
+        if (r < h - 1) write(1, "\r\n", 2);
+    }
+}
+
 static void write_wav_header(FILE *f, uint32_t num_samples) {
     uint32_t data_size   = num_samples * 2u;
     uint32_t file_size   = data_size + 36u;
@@ -112,6 +151,25 @@ static void render_wav(int seconds, const char *path) {
 }
 
 static void play_alsa(void) {
+    if (tcgetattr(0, &saved_termios) < 0) {
+        fprintf(stderr, "tcgetattr: %s\n", strerror(errno));
+        exit(1);
+    }
+    termios_saved = 1;
+    atexit(restore_terminal);
+
+    struct termios raw = saved_termios;
+    raw.c_lflag &= ~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 0;
+    if (tcsetattr(0, TCSANOW, &raw) < 0) {
+        fprintf(stderr, "tcsetattr: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    int flags = fcntl(0, F_GETFL, 0);
+    fcntl(0, F_SETFL, flags | O_NONBLOCK);
+
     int fd = open("/dev/snd/pcmC0D0p", O_WRONLY);
     if (fd < 0) {
         fprintf(stderr, "open /dev/snd/pcmC0D0p: %s\n", strerror(errno));
@@ -164,6 +222,20 @@ static void play_alsa(void) {
         if (ioctl(fd, SNDRV_PCM_IOCTL_WRITEI_FRAMES, &xferi) < 0) {
             fprintf(stderr, "ioctl WRITEI: %s\n", strerror(errno));
             exit(1);
+        }
+
+        draw_oscilloscope(buf, BUFFER_FRAMES);
+
+        char ch;
+        while (read(0, &ch, 1) > 0) {
+            if (ch == ' ') gen_force_mutate();
+            else if (ch == '+') gen_set_tempo(-10);
+            else if (ch == '-') gen_set_tempo(+10);
+            else if (ch == 'q') {
+                close(fd);
+                restore_terminal();
+                exit(0);
+            }
         }
     }
 }
