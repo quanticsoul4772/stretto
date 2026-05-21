@@ -25,8 +25,24 @@ static uint32_t prng(void) {
     return x;
 }
 
-/* D Dorian, one octave */
-static const uint8_t SCALE[7] = { 62, 64, 65, 67, 69, 71, 72 };
+/* Three modes rooted on D, all 7 degrees in one octave starting from
+   D4 (MIDI 62). Markov runs on degree indices (0..6) so the same
+   transition matrix works for any 7-note scale; only the degree-to-
+   MIDI mapping changes when scale switches.
+     0 = Dorian   (D minor with raised 6) - default starting mode
+     1 = Lydian   (D major with raised 4) - brightest, major triad
+                  on degrees 0/2/4
+     2 = Phrygian (D minor with lowered 2) - darkest */
+#define N_SCALES 3
+static const uint8_t SCALES[N_SCALES][7] = {
+    /* Dorian   */ { 62, 64, 65, 67, 69, 71, 72 },
+    /* Lydian   */ { 62, 64, 66, 68, 69, 71, 73 },
+    /* Phrygian */ { 62, 63, 65, 67, 69, 70, 72 },
+};
+static uint8_t cur_scale = 0;
+
+/* Auto-rotate every N bars (~64 s at default tempo). */
+#define SCALE_ROTATE_BARS 32u
 
 /* Markov transition weights for D Dorian (7 scale degrees, indices
    0..6 = tonic, supertonic, mediant, subdominant, dominant,
@@ -127,6 +143,7 @@ static void mutate(void) {
 
 void gen_init(void) {
     cur_degree     = 0;
+    cur_scale      = 0;
     ca_row         = 0x12345678u;
     ca_harm        = 0x87654321u;
     eucl_k_a       = 3;
@@ -147,6 +164,9 @@ void gen_step(void) {
             if (ca_row == 0) ca_row = 0x12345678u;
             bar_count++;
             if (bar_count % MUTATE_BARS == 0) mutate();
+            if (bar_count % SCALE_ROTATE_BARS == 0) {
+                cur_scale = (uint8_t)((cur_scale + 1u) % N_SCALES);
+            }
         }
 
         if (step_in_bar % 4 == 0) {
@@ -165,7 +185,7 @@ void gen_step(void) {
         /* Bass trigger: once at the start of each bar. */
         if (step_in_bar == 0) {
             uint8_t bass_deg = (bar_count & 1u) ? 4u : 0u;
-            uint8_t bass_note = (uint8_t)(SCALE[bass_deg] - 12);
+            uint8_t bass_note = (uint8_t)(SCALES[cur_scale][bass_deg] - 12);
             voice_pool_trigger_role(bass_note, VOICE_FM, ROLE_BASS);
         }
 
@@ -176,7 +196,7 @@ void gen_step(void) {
             for (int i = 0; i < 3; i++) {
                 uint8_t d = triad[i];
                 if (active_mask & (1u << d)) {
-                    voice_pool_trigger_role(SCALE[d], VOICE_FM, ROLE_CHORD);
+                    voice_pool_trigger_role(SCALES[cur_scale][d], VOICE_FM, ROLE_CHORD);
                 }
             }
         }
@@ -184,7 +204,7 @@ void gen_step(void) {
         /* Melody trigger: existing Euclidean rhythm, restricted to melody slots. */
         if (hit) {
             cur_degree = markov_next(cur_degree, active_mask);
-            uint8_t note = SCALE[cur_degree];
+            uint8_t note = SCALES[cur_scale][cur_degree];
             uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
             voice_pool_trigger_role(note, type, ROLE_MELODY);
         }
@@ -209,3 +229,8 @@ void gen_set_tempo(int delta_pct) {
 uint32_t gen_get_step_samples(void) { return samples_per_step; }
 uint32_t gen_get_bar(void) { return bar_count; }
 uint8_t  gen_get_step(void) { return (uint8_t)(step_count % BAR_STEPS); }
+uint8_t  gen_get_scale(void) { return cur_scale; }
+
+void gen_cycle_scale(void) {
+    cur_scale = (uint8_t)((cur_scale + 1u) % N_SCALES);
+}

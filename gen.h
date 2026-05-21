@@ -10,5 +10,7 @@ void gen_set_tempo(int delta_pct);
 uint32_t gen_get_step_samples(void);
 uint32_t gen_get_bar(void);
 uint8_t  gen_get_step(void);
+void     gen_cycle_scale(void);
+uint8_t  gen_get_scale(void);
 
 #endif

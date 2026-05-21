@@ -57,6 +57,8 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     char t[6]; int n = 0;
     do { t[n++] = '0' + v % 10; v /= 10; } while (v);
     while (n > 0) s[p++] = t[--n];
+    s[p++] = ' '; s[p++] = 'S'; s[p++] = ':';
+    s[p++] = "DLP"[gen_get_scale() % 3];
     s[p++] = ' '; s[p++] = 'V'; s[p++] = ':';
     for (int i = 0; i < N_VOICES; i++) s[p++] = (mask & (1u << i)) ? '*' : '.';
     (void)!write(1, s, p);
@@ -189,6 +191,7 @@ static void play_alsa(void) {
             else if (ch == ']') {
                 voice_set_mod_depth(voice_get_mod_depth() + 200);
             }
+            else if (ch == 's') gen_cycle_scale();
             else if (ch == 'q') {
                 snd_pcm_close(pcm);
                 restore_terminal();
