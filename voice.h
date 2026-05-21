@@ -28,6 +28,14 @@ typedef struct {
     uint16_t env_time;
     uint32_t lfo_phase;
     uint32_t lfo_inc;
+    /* Per-voice peak normalization. peak_seen tracks max |output| during
+       the first PEAK_WINDOW samples; gain is recomputed each time a new
+       peak is found so it monotonically decreases as the peak grows.
+       After window, gain stays fixed for the rest of the voice's life. */
+    uint16_t peak_seen;
+    uint16_t gain;            /* 8.8 fixed: 256 = 1.0x, 1024 = 4.0x cap */
+    uint16_t peak_window;     /* samples remaining in the measurement window */
+    uint16_t _norm_pad;
     /* SVF state is int32, not int16. At Q ~ 2.56 (q=100, damp=q/256),
        resonance can ring the filter state to roughly 2.5x input
        amplitude; int16 would wrap and produce broadband clicks. */
