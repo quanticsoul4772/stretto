@@ -2,7 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <alsa/asoundlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <errno.h>
 
 #include "arena.h"
 #include "voice.h"
@@ -11,6 +14,51 @@
 #define SAMPLE_RATE    44100
 #define BUFFER_FRAMES  1024
 #define LATENCY_US     100000
+
+#define SNDRV_PCM_IOCTL_HW_PARAMS _IOWR('A', 0x11, char)
+#define SNDRV_PCM_IOCTL_SW_PARAMS _IOWR('A', 0x13, char)
+#define SNDRV_PCM_IOCTL_PREPARE   _IO('A', 0x40)
+#define SNDRV_PCM_IOCTL_WRITEI_FRAMES _IOW('A', 0x50, char)
+
+#define SNDRV_PCM_FORMAT_S16_LE 2
+#define SNDRV_PCM_ACCESS_RW_INTERLEAVED 3
+
+typedef struct {
+    unsigned int flags;
+    unsigned int masks[3];
+    unsigned int mintervals[5][2];
+    unsigned int intervals[4][2];
+    unsigned int rmask;
+    unsigned int cmask;
+    unsigned int info;
+    unsigned int msbits;
+    unsigned int rate_num;
+    unsigned int rate_den;
+    unsigned long long fifo_size;
+    unsigned char reserved[64];
+} snd_pcm_hw_params_t;
+
+typedef struct {
+    int tstamp_mode;
+    unsigned int period_step;
+    unsigned int sleep_min;
+    unsigned int avail_min;
+    unsigned int xfer_align;
+    unsigned long long start_threshold;
+    unsigned long long stop_threshold;
+    unsigned long long silence_threshold;
+    unsigned long long silence_size;
+    unsigned long long boundary;
+    unsigned int proto;
+    unsigned int tstamp_type;
+    unsigned char reserved[56];
+} snd_pcm_sw_params_t;
+
+typedef struct {
+    int16_t *buf;
+    unsigned long frames;
+    int result;
+} snd_xferi_t;
 
 static void render_chunk(int16_t *out, uint32_t frames) {
     for (uint32_t i = 0; i < frames; i++) {
@@ -64,24 +112,57 @@ static void render_wav(int seconds, const char *path) {
 }
 
 static void play_alsa(void) {
-    snd_pcm_t *pcm;
-    int err = snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK, 0);
-    if (err < 0) {
-        fprintf(stderr, "alsa: %s\n", snd_strerror(err));
+    int fd = open("/dev/snd/pcmC0D0p", O_WRONLY);
+    if (fd < 0) {
+        fprintf(stderr, "open /dev/snd/pcmC0D0p: %s\n", strerror(errno));
         exit(1);
     }
-    err = snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED,
-                             1, SAMPLE_RATE, 1, LATENCY_US);
-    if (err < 0) {
-        fprintf(stderr, "alsa: %s\n", snd_strerror(err));
+
+    snd_pcm_hw_params_t hw_params;
+    memset(&hw_params, 0, sizeof(hw_params));
+    hw_params.flags = 0;
+    hw_params.masks[0] = (1u << SNDRV_PCM_ACCESS_RW_INTERLEAVED);
+    hw_params.masks[1] = (1u << SNDRV_PCM_FORMAT_S16_LE);
+    hw_params.masks[2] = 0;
+    hw_params.intervals[0][0] = 1;
+    hw_params.intervals[0][1] = 1;
+    hw_params.intervals[1][0] = SAMPLE_RATE;
+    hw_params.intervals[1][1] = SAMPLE_RATE;
+    hw_params.intervals[2][0] = BUFFER_FRAMES;
+    hw_params.intervals[2][1] = BUFFER_FRAMES;
+    hw_params.intervals[3][0] = BUFFER_FRAMES * 4;
+    hw_params.intervals[3][1] = BUFFER_FRAMES * 4;
+
+    if (ioctl(fd, SNDRV_PCM_IOCTL_HW_PARAMS, &hw_params) < 0) {
+        fprintf(stderr, "ioctl HW_PARAMS: %s\n", strerror(errno));
         exit(1);
     }
+
+    snd_pcm_sw_params_t sw_params;
+    memset(&sw_params, 0, sizeof(sw_params));
+    sw_params.start_threshold = BUFFER_FRAMES;
+    sw_params.avail_min = BUFFER_FRAMES;
+    sw_params.boundary = BUFFER_FRAMES * 16;
+
+    if (ioctl(fd, SNDRV_PCM_IOCTL_SW_PARAMS, &sw_params) < 0) {
+        fprintf(stderr, "ioctl SW_PARAMS: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    if (ioctl(fd, SNDRV_PCM_IOCTL_PREPARE) < 0) {
+        fprintf(stderr, "ioctl PREPARE: %s\n", strerror(errno));
+        exit(1);
+    }
+
     int16_t *buf = arena_alloc(BUFFER_FRAMES * sizeof(int16_t));
+    snd_xferi_t xferi;
+    xferi.buf = buf;
+    xferi.frames = BUFFER_FRAMES;
+
     for (;;) {
         render_chunk(buf, BUFFER_FRAMES);
-        err = snd_pcm_writei(pcm, buf, BUFFER_FRAMES);
-        if (err < 0) {
-            fprintf(stderr, "alsa: %s\n", snd_strerror(err));
+        if (ioctl(fd, SNDRV_PCM_IOCTL_WRITEI_FRAMES, &xferi) < 0) {
+            fprintf(stderr, "ioctl WRITEI: %s\n", strerror(errno));
             exit(1);
         }
     }
