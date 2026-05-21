@@ -15,7 +15,13 @@
 
 #define SAMPLE_RATE    44100
 #define BUFFER_FRAMES  1024
-#define LATENCY_US     100000
+/* 300 ms ALSA buffer. Native Linux is happy at 100 ms; WSLg's
+   libasound -> pulse plugin -> WSLg -> Windows audio pipeline has
+   variable scheduling jitter on the Windows side that causes
+   underruns (audible as crackles) at the tighter setting. 300 ms
+   absorbs the jitter at the cost of ~200 ms extra live-mode lag.
+   Render mode is unaffected; this is an ALSA-only setting. */
+#define LATENCY_US     300000
 
 /* Master-bus stereo delay. Two independent mono buffers (one per
    channel), 250 ms long at 44.1 kHz. Standard feed-forward + feedback
