@@ -12,5 +12,7 @@ uint32_t gen_get_bar(void);
 uint8_t  gen_get_step(void);
 void     gen_cycle_scale(void);
 uint8_t  gen_get_scale(void);
+void     gen_adjust_gate(int delta);
+uint8_t  gen_get_gate(void);
 
 #endif
