@@ -3,7 +3,10 @@ synth.packed
 synth.unpacked
 synth.orig
 synth.xz
+synth.upx
+synth.test
 synth_xz.h
+voice.c.bak
 gen_sin_table
 gen_env_table
 gen_note_table
