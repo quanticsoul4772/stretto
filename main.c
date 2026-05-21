@@ -66,11 +66,11 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
 
     char line[120];
     for (uint32_t r = 0; r < h; r++) {
-        int32_t t = 8000 - (int32_t)((r * 16000u) / h);
+        int32_t thresh = 8000 - (int32_t)((r * 16000u) / h);
         for (uint32_t c = 0; c < w; c++) {
-            int16_t s = buf[(c * frames) / w];
-            int32_t a = s < 0 ? -s : s;
-            line[c] = (a > t) ? (a > 7000 ? '@' : a > 5000 ? '#' : a > 3500 ? '*' : a > 2500 ? '+' : a > 1500 ? '-' : '.') : ' ';
+            int16_t samp = buf[(c * frames) / w];
+            int32_t a = samp < 0 ? -samp : samp;
+            line[c] = (a > thresh) ? (a > 7000 ? '@' : a > 5000 ? '#' : a > 3500 ? '*' : a > 2500 ? '+' : a > 1500 ? '-' : '.') : ' ';
         }
         (void)!write(1, "\x1b[2K", 4);
         (void)!write(1, line, w);
