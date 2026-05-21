@@ -4,6 +4,13 @@
 #include <stdint.h>
 
 #define BAR_STEPS         16
+
+/* PLAN.md called for mutation every 16 bars. At our 2-second bar
+   (16 steps * 5512 samples / 44100), 16 bars is ~32 s between
+   mutations - too slow to feel evolving in a short listening window
+   and never fires inside the 16-second regression render. Reduced
+   to 4 bars (~8 s); still ~450 mutations per hour, plenty of
+   variation at long timescales. */
 #define MUTATE_BARS       4u
 
 static uint32_t samples_per_step = 5512u;    /* ~125 ms = 120 BPM 16th notes */
@@ -21,7 +28,23 @@ static uint32_t prng(void) {
 /* D Dorian, one octave */
 static const uint8_t SCALE[7] = { 62, 64, 65, 67, 69, 71, 72 };
 
-/* Hand-tuned transition weights; mutated at runtime. */
+/* Markov transition weights for D Dorian (7 scale degrees, indices
+   0..6 = tonic, supertonic, mediant, subdominant, dominant,
+   submediant, leading-tone-flat). Rows are "from" degree, columns
+   "to" degree. Weight = unnormalised probability; markov_next sums
+   weights restricted to the active mask, then walks.
+   Tuning principles for the initial values:
+     - Stepwise motion (cols at +/-1) gets moderate weight (3-4).
+     - Strong cadences favoured: leading tone (deg 6) and dominant
+       (deg 4) bias toward tonic (deg 0) - high column-0 values in
+       rows 4 and 6 (5 each).
+     - No self-transitions (diagonal is 0) - prevents stuck notes
+       on a single degree.
+     - Tonic (row 0) opens out broadly to all degrees except itself,
+       slight bias to dominant (deg 4) for V-I framing.
+   These weights are MUTATED at runtime by mutate() once per
+   MUTATE_BARS, so the matrix drifts; the initial values are just a
+   musical seed. */
 static uint8_t markov[7][7] = {
     { 0, 4, 3, 2, 4, 1, 2 },
     { 5, 0, 3, 2, 1, 1, 0 },
@@ -42,6 +65,18 @@ static uint32_t step_count = 0;
 static uint32_t sample_clock = 0;
 static uint32_t next_step  = 0;
 
+/* Two 1D cellular automata run in parallel, both as 32-bit rows.
+   ca_row uses Rule 110 (class IV, "complex" - long-lived structures
+   on a chaotic background) and contributes the scale-degree mask
+   from its low 7 bits.
+   ca_harm uses Rule 30 (class III, "chaotic" - statistically random
+   bit stream) and contributes a harmonic-context filter that ANDs
+   into the active mask.
+   The pairing avoids two failure modes a single CA would hit:
+     - Rule 110 alone tends to settle into long-period repeats.
+     - Rule 30 alone is too random; no musical coherence.
+   Combined: 110 supplies recurring structure, 30 supplies variation
+   that prevents the structure from repeating verbatim. */
 #define RULE_110 0x6Eu
 #define RULE_30  0x1Eu
 
