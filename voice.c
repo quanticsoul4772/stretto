@@ -44,13 +44,39 @@ static const uint8_t  role_fm_ratio[3]   = {    1,    2,    2 };
 static const uint16_t role_attack[3]     = { 2205,  882,  220 }; /* 50 / 20 / 5 ms */
 static const uint16_t role_release[3]    = {44100,26460,26460 }; /* 1000 / 600 / 600 ms */
 
+/* Per-voice-slot base pan position (0 = full left, 128 = center,
+   255 = full right). Bass slots 0-1 sit at center; chord slots 2-4
+   spread across the field; melody slots 5-7 lean to the outer zones
+   for the widest stage. */
+static const uint8_t slot_base_pan[N_VOICES] = {
+    128, 128,           /* bass: center */
+     72, 128, 184,      /* chord: L, C, R */
+     56, 200,  96,      /* melody: alternating outer */
+};
+
+/* Per-voice-slot LFO increment for slow pan motion. Numbers are
+   uint32 phase-increments at 44.1 kHz; freqs ~0.07-0.18 Hz so the
+   modulation period is several seconds. */
+static const uint32_t slot_lfo_inc[N_VOICES] = {
+     6818,  9738,       /* bass: 0.07, 0.10 Hz */
+    10711,  8276, 12166,/* chord: 0.11, 0.085, 0.125 Hz */
+    14606, 11684, 17527,/* melody: 0.15, 0.12, 0.18 Hz */
+};
+
+/* Pan jitter range per role (centered): bass tight, chord medium,
+   melody wide. */
+static const uint8_t role_pan_jitter[3] = { 16, 32, 48 };
+
 void voice_init(Voice *v) {
     v->type = VOICE_OFF;
     v->note = 0;
     v->env_phase = ENV_OFF;
     v->role = ROLE_MELODY;
+    v->pan = 128;
     v->env_amp = 0;
     v->env_time = 0;
+    v->lfo_phase = 0;
+    v->lfo_inc = 0;
     v->svf_lp = 0;
     v->svf_bp = 0;
 }
@@ -201,12 +227,47 @@ static int pick_slot_range(uint8_t lo, uint8_t hi) {
 void voice_pool_trigger_role(uint8_t note, uint8_t type, uint8_t role) {
     int slot = pick_slot_range(role_slot_start[role], role_slot_end[role]);
     voice_trigger(&pool[slot], note, type, role);
+
+    /* Place this voice on the stage: base pan from its slot, plus a
+       random jitter within the role's range. PRNG state advances here
+       so determinism is preserved across runs of the same binary. */
+    int base = slot_base_pan[slot];
+    int jitter_range = role_pan_jitter[role];
+    int jitter = (int)(prng_noise() >> 8);    /* int16 -> roughly -128..127 */
+    int j = (jitter * jitter_range) / 128;     /* scale to +/- range */
+    int p = base + j;
+    if (p < 0) p = 0;
+    else if (p > 255) p = 255;
+    pool[slot].pan = (uint8_t)p;
+    pool[slot].lfo_phase = 0;
+    pool[slot].lfo_inc = slot_lfo_inc[slot];
 }
 
-int16_t voice_pool_mix(void) {
-    int32_t sum = 0;
-    for (int i = 0; i < N_VOICES; i++) sum += voice_step(&pool[i]);
-    return (int16_t)(sum >> 3);
+Stereo voice_pool_mix(void) {
+    int32_t sum_l = 0;
+    int32_t sum_r = 0;
+    for (int i = 0; i < N_VOICES; i++) {
+        Voice *v = &pool[i];
+        int16_t s = voice_step(v);
+        if (s == 0 && v->env_phase == ENV_OFF) continue;
+
+        /* Slow LFO modulates pan around its base. sin_table entry is
+           +/-24576; >> 9 gives roughly +/-48 pan units of drift. */
+        v->lfo_phase += v->lfo_inc;
+        int lfo = sin_table[v->lfo_phase >> 22];
+        int p = (int)v->pan + (lfo >> 9);
+        if (p < 0) p = 0;
+        else if (p > 255) p = 255;
+
+        /* Linear pan: L gain = (255 - p), R gain = p, divide by 255
+           via >> 8 (treats 255 as 256; -6 dB center is acceptable). */
+        sum_l += ((int32_t)s * (255 - p)) >> 8;
+        sum_r += ((int32_t)s * p) >> 8;
+    }
+    Stereo out;
+    out.l = (int16_t)(sum_l >> 3);
+    out.r = (int16_t)(sum_r >> 3);
+    return out;
 }
 
 uint32_t voice_pool_active_mask(void) {
