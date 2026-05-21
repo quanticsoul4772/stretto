@@ -21,6 +21,28 @@
 
 static struct termios saved_termios;
 static int termios_saved = 0;
+static int help_visible = 0;
+
+static const char HELP_TEXT[] =
+    "\x1b[H\x1b[2J"
+    "  stretto keys\r\n"
+    "  ------------\r\n"
+    "  SPACE  force mutation now\r\n"
+    "  +  /  -    tempo  faster / slower\r\n"
+    "  [  /  ]    FM mod_depth  down / up\r\n"
+    "  s          cycle scale  D > L > P\r\n"
+    "  ?          toggle this help\r\n"
+    "  q          quit\r\n"
+    "\r\n"
+    "  (any key dismisses)\r\n";
+
+static void show_help(void) {
+    (void)!write(1, HELP_TEXT, sizeof(HELP_TEXT) - 1);
+}
+
+static void clear_screen(void) {
+    (void)!write(1, "\x1b[H\x1b[2J", 7);
+}
 
 /* Fills 2*frames int16 samples in interleaved L,R,L,R,... order. */
 static void render_chunk(int16_t *out, uint32_t frames) {
@@ -184,10 +206,20 @@ static void play_alsa(void) {
             continue;
         }
 
-        draw_oscilloscope(buf, BUFFER_FRAMES);
+        if (!help_visible) draw_oscilloscope(buf, BUFFER_FRAMES);
 
         char ch;
         while (read(0, &ch, 1) > 0) {
+            if (ch == '?') {
+                help_visible = !help_visible;
+                if (help_visible) show_help();
+                else clear_screen();
+                continue;
+            }
+            if (help_visible) {
+                help_visible = 0;
+                clear_screen();
+            }
             if (ch == ' ') gen_force_mutate();
             else if (ch == '+') gen_set_tempo(-10);
             else if (ch == '-') gen_set_tempo(+10);
