@@ -31,6 +31,7 @@ static const char HELP_TEXT[] =
     "  +  /  -    tempo  faster / slower\r\n"
     "  [  /  ]    FM mod_depth  down / up\r\n"
     "  s          cycle scale  D L P l H M\r\n"
+    "  g  /  G    gate probability  down / up\r\n"
     "  ?          toggle this help\r\n"
     "  q          quit\r\n"
     "\r\n"
@@ -232,6 +233,8 @@ static void play_alsa(void) {
                 voice_set_mod_depth(voice_get_mod_depth() + 200);
             }
             else if (ch == 's') gen_cycle_scale();
+            else if (ch == 'g') gen_adjust_gate(-16);
+            else if (ch == 'G') gen_adjust_gate(+16);
             else if (ch == 'q') {
                 snd_pcm_close(pcm);
                 restore_terminal();

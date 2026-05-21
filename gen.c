@@ -108,6 +108,11 @@ static uint32_t bar_count  = 0;
 static uint32_t step_count = 0;
 static uint32_t sample_clock = 0;
 static uint32_t next_step  = 0;
+/* Per-hit probability gate for the melody trigger. A Euclidean step
+   only fires a note if (prng() % 256) < gate_prob. 256 = always fire,
+   0 = never fire. Mutated occasionally so density drifts; tunable at
+   runtime via the g / G keys. */
+static uint8_t  gate_prob  = 200;
 
 /* Two 1D cellular automata run in parallel, both as 32-bit rows.
    ca_row uses Rule 110 (class IV, "complex" - long-lived structures
@@ -167,6 +172,17 @@ static void mutate(void) {
     } else {
         eucl_k_b = (uint8_t)(2u + ((r >> 17) % 7u));
     }
+
+    /* Occasionally drift gate_prob so density evolves across the piece.
+       Roughly 25% chance per mutate event, +/-16 around current value,
+       clamped to musical range [64, 240] (25% .. 94%). */
+    if (((r >> 24) & 3u) == 0u) {
+        int delta = (int)((r >> 20) & 0x1Fu) - 16;
+        int p = (int)gate_prob + delta;
+        if (p < 64)  p = 64;
+        if (p > 240) p = 240;
+        gate_prob = (uint8_t)p;
+    }
 }
 
 void gen_init(void) {
@@ -180,6 +196,7 @@ void gen_init(void) {
     step_count     = 0;
     sample_clock   = 0;
     next_step      = 0;
+    gate_prob      = 200;
     gen_prng_state = 0xDEADBEEFu;
 }
 
@@ -232,8 +249,10 @@ void gen_step(void) {
             }
         }
 
-        /* Melody trigger: existing Euclidean rhythm, restricted to melody slots. */
-        if (hit) {
+        /* Melody trigger: Euclidean rhythm gated by per-hit probability.
+           A hit only fires if (prng % 256) < gate_prob, so some hits
+           drop and the melody breathes. */
+        if (hit && ((prng() & 0xFFu) < (uint32_t)gate_prob)) {
             cur_degree = markov_next(cur_degree, active_mask);
             uint8_t note = SCALES[cur_scale][cur_degree];
             uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
@@ -261,7 +280,15 @@ uint32_t gen_get_step_samples(void) { return samples_per_step; }
 uint32_t gen_get_bar(void) { return bar_count; }
 uint8_t  gen_get_step(void) { return (uint8_t)(step_count % BAR_STEPS); }
 uint8_t  gen_get_scale(void) { return cur_scale; }
+uint8_t  gen_get_gate(void) { return gate_prob; }
 
 void gen_cycle_scale(void) {
     cur_scale = (uint8_t)((cur_scale + 1u) % N_SCALES);
+}
+
+void gen_adjust_gate(int delta) {
+    int p = (int)gate_prob + delta;
+    if (p < 32)  p = 32;
+    if (p > 255) p = 255;
+    gate_prob = (uint8_t)p;
 }
