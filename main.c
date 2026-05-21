@@ -30,7 +30,7 @@ static const char HELP_TEXT[] =
     "  SPACE  force mutation now\r\n"
     "  +  /  -    tempo  faster / slower\r\n"
     "  [  /  ]    FM mod_depth  down / up\r\n"
-    "  s          cycle scale  D > L > P\r\n"
+    "  s          cycle scale  D L P l H M\r\n"
     "  ?          toggle this help\r\n"
     "  q          quit\r\n"
     "\r\n"
@@ -83,7 +83,8 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     do { t[n++] = '0' + v % 10; v /= 10; } while (v);
     while (n > 0) s[p++] = t[--n];
     s[p++] = ' '; s[p++] = 'S'; s[p++] = ':';
-    s[p++] = "DLP"[gen_get_scale() % 3];
+    /* D=Dorian L=Lydian P=Phrygian l=Locrian H=Harmonic-minor M=Mixolydian */
+    s[p++] = "DLPlHM"[gen_get_scale() % 6];
     s[p++] = ' '; s[p++] = 'V'; s[p++] = ':';
     for (int i = 0; i < N_VOICES; i++) s[p++] = (mask & (1u << i)) ? '*' : '.';
     (void)!write(1, s, p);

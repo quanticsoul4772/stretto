@@ -25,24 +25,52 @@ static uint32_t prng(void) {
     return x;
 }
 
-/* Three modes rooted on D, all 7 degrees in one octave starting from
-   D4 (MIDI 62). Markov runs on degree indices (0..6) so the same
+/* Six modes/scales rooted on D, all 7 degrees in one octave starting
+   from D4 (MIDI 62). Markov runs on degree indices (0..6) so the same
    transition matrix works for any 7-note scale; only the degree-to-
    MIDI mapping changes when scale switches.
-     0 = Dorian   (D minor with raised 6) - default starting mode
-     1 = Lydian   (D major with raised 4) - brightest, major triad
-                  on degrees 0/2/4
-     2 = Phrygian (D minor with lowered 2) - darkest */
-#define N_SCALES 3
+     0 = Dorian          - D minor with raised 6  (starting mode)
+     1 = Lydian          - D major with raised 4  (major triad on 0/2/4)
+     2 = Phrygian        - D minor with lowered 2 (darkest minor mode)
+     3 = Locrian         - half-diminished, very dark, unstable tonic
+     4 = Harmonic Minor  - minor with raised 7, exotic / Middle-Eastern feel
+     5 = Mixolydian      - major with lowered 7, bluesy / modal pop */
+#define N_SCALES 6
 static const uint8_t SCALES[N_SCALES][7] = {
-    /* Dorian   */ { 62, 64, 65, 67, 69, 71, 72 },
-    /* Lydian   */ { 62, 64, 66, 68, 69, 71, 73 },
-    /* Phrygian */ { 62, 63, 65, 67, 69, 70, 72 },
+    /* Dorian         */ { 62, 64, 65, 67, 69, 71, 72 },
+    /* Lydian         */ { 62, 64, 66, 68, 69, 71, 73 },
+    /* Phrygian       */ { 62, 63, 65, 67, 69, 70, 72 },
+    /* Locrian        */ { 62, 63, 65, 67, 68, 70, 72 },
+    /* Harmonic Minor */ { 62, 64, 65, 67, 69, 70, 73 },
+    /* Mixolydian     */ { 62, 64, 66, 67, 69, 71, 72 },
 };
 static uint8_t cur_scale = 0;
 
 /* Auto-rotate every N bars (~64 s at default tempo). */
 #define SCALE_ROTATE_BARS 32u
+
+/* Chord voicings: each entry is (degree, octave_offset). Three notes
+   per voicing fits the three chord voice slots (2..4). Patterns cycle
+   per bar to add harmonic variety beyond the basic root-3rd-5th triad.
+     triad    - standard 1-3-5
+     seventh  - 1-3-7  (drops the 5 to make room for the 7)
+     sus4     - 1-4-5  (suspends the 3, classic open feel)
+     sus2     - 1-2-5  (lighter suspension)
+     inv1     - 3-5-1' (first inversion, 3rd in bass position)
+     inv2     - 5-1'-3' (second inversion, 5th in bass position)
+   Inversions use octave_offset = 1 to push the root and 3rd up an
+   octave for a different voicing height. */
+typedef struct { int8_t degree; int8_t octave; } ChordNote;
+
+#define N_CHORD_PATTERNS 6
+static const ChordNote CHORD_PATTERNS[N_CHORD_PATTERNS][3] = {
+    /* triad   */ {{0,0}, {2,0}, {4,0}},
+    /* seventh */ {{0,0}, {2,0}, {6,0}},
+    /* sus4    */ {{0,0}, {3,0}, {4,0}},
+    /* sus2    */ {{0,0}, {1,0}, {4,0}},
+    /* inv1    */ {{2,0}, {4,0}, {0,1}},
+    /* inv2    */ {{4,0}, {0,1}, {2,1}},
+};
 
 /* Markov transition weights for D Dorian (7 scale degrees, indices
    0..6 = tonic, supertonic, mediant, subdominant, dominant,
@@ -189,14 +217,17 @@ void gen_step(void) {
             voice_pool_trigger_role(bass_note, VOICE_FM, ROLE_BASS);
         }
 
-        /* Chord trigger: at steps 0 and 8, fire a triad (root, 3rd, 5th)
-           filtered by active_mask. */
+        /* Chord trigger: at steps 0 and 8, fire a 3-note voicing from
+           the rotating CHORD_PATTERNS table, filtered by active_mask.
+           Pattern index advances per bar so consecutive chord beats hit
+           different voicings (triad, 7th, sus4, sus2, inversions...). */
         if (step_in_bar == 0 || step_in_bar == 8) {
-            static const uint8_t triad[3] = { 0u, 2u, 4u };
+            const ChordNote *pat = CHORD_PATTERNS[bar_count % N_CHORD_PATTERNS];
             for (int i = 0; i < 3; i++) {
-                uint8_t d = triad[i];
+                uint8_t d = (uint8_t)pat[i].degree;
                 if (active_mask & (1u << d)) {
-                    voice_pool_trigger_role(SCALES[cur_scale][d], VOICE_FM, ROLE_CHORD);
+                    uint8_t note = SCALES[cur_scale][d] + (uint8_t)(pat[i].octave * 12);
+                    voice_pool_trigger_role(note, VOICE_FM, ROLE_CHORD);
                 }
             }
         }
