@@ -43,7 +43,6 @@ void    voice_trigger(Voice *v, uint8_t note, uint8_t type, uint8_t role);
 int16_t voice_step(Voice *v);
 
 void    voice_pool_init(void);
-void    voice_pool_trigger(uint8_t note, uint8_t type);
 void    voice_pool_trigger_role(uint8_t note, uint8_t type, uint8_t role);
 int16_t voice_pool_mix(void);
 

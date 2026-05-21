@@ -198,10 +198,6 @@ static int pick_slot_range(uint8_t lo, uint8_t hi) {
     return chosen;
 }
 
-void voice_pool_trigger(uint8_t note, uint8_t type) {
-    voice_trigger(&pool[pick_slot_range(0, N_VOICES)], note, type, ROLE_MELODY);
-}
-
 void voice_pool_trigger_role(uint8_t note, uint8_t type, uint8_t role) {
     int slot = pick_slot_range(role_slot_start[role], role_slot_end[role]);
     voice_trigger(&pool[slot], note, type, role);
