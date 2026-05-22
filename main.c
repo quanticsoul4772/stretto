@@ -411,82 +411,141 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     uint32_t h = th > 2u   ? (uint32_t)(th - 2u) : 22u;
     if (w > frames) w = frames;
 
-    static char out[4096];
+    static char out[8192];
     int p = 0;
     /* Cursor home + hide + clear line */
     out[p++] = 0x1b; out[p++] = '['; out[p++] = 'H';
     out[p++] = 0x1b; out[p++] = '['; out[p++] = '?'; out[p++] = '2'; out[p++] = '5'; out[p++] = 'l';
     out[p++] = 0x1b; out[p++] = '['; out[p++] = '2'; out[p++] = 'K';
 
-    /* Helper: append an unsigned decimal value to the output buffer. */
+    /* Helpers for status row / colorized oscilloscope. */
     #define APPEND_NUM(val) do { \
         unsigned _v = (unsigned)(val); \
         char _t[6]; int _n = 0; \
         do { _t[_n++] = '0' + _v % 10; _v /= 10; } while (_v); \
         while (_n > 0) out[p++] = _t[--_n]; \
     } while (0)
+    #define APPEND_STR(s) do { const char *_s = (s); while (*_s) out[p++] = *_s++; } while (0)
+    /* ANSI 16-color escapes (cheap: 5 bytes each). */
+    #define COL_RESET  "\x1b[0m"
+    #define COL_DIM    "\x1b[90m"   /* bright black = dim gray */
+    #define COL_BLUE   "\x1b[34m"
+    #define COL_CYAN   "\x1b[36m"
+    #define COL_GREEN  "\x1b[32m"
+    #define COL_YELLOW "\x1b[33m"
+    #define COL_MAG    "\x1b[35m"
+    #define COL_RED    "\x1b[31m"
+    #define COL_WHITE  "\x1b[97m"   /* bright white */
 
     /* Status row:
        M:<mod> S:<scale> V:<voices>   G:<gate>  R:<reverb_wet>
        D:<delay_wet>/<delay_fb>  deg:<n>  act:<7-char bitmask>
        chord:<voicing>  */
     uint32_t voice_mask = voice_pool_active_mask();
-    out[p++] = 'M'; out[p++] = ':';
-    APPEND_NUM(voice_get_mod_depth());
-    out[p++] = ' '; out[p++] = 'S'; out[p++] = ':';
-    /* D=Dorian L=Lydian P=Phrygian l=Locrian H=Harmonic-minor M=Mixolydian */
-    out[p++] = "DLPlHM"[gen_get_scale() % 6];
-    out[p++] = ' '; out[p++] = 'V'; out[p++] = ':';
-    for (int i = 0; i < N_VOICES; i++)
-        out[p++] = (voice_mask & (1u << i)) ? '*' : '.';
 
-    out[p++] = ' '; out[p++] = 'G'; out[p++] = ':';
+    /* M: mod_depth (cyan label, white value) */
+    APPEND_STR(COL_CYAN "M:" COL_WHITE);
+    APPEND_NUM(voice_get_mod_depth());
+
+    /* S: scale letter (yellow) */
+    APPEND_STR(" " COL_YELLOW "S:" COL_WHITE);
+    out[p++] = "DLPlHM"[gen_get_scale() % 6];
+
+    /* V: voices, color per role - bass red, chord green, melody blue */
+    APPEND_STR(" " COL_MAG "V:");
+    for (int i = 0; i < N_VOICES; i++) {
+        const char *role_col =
+            (i < 2) ? COL_RED :         /* bass slots 0..1 */
+            (i < 5) ? COL_GREEN :       /* chord slots 2..4 */
+                      COL_BLUE;         /* melody slots 5..7 */
+        APPEND_STR(role_col);
+        out[p++] = (voice_mask & (1u << i)) ? '*' : '.';
+    }
+
+    /* G: gate (cyan) */
+    APPEND_STR(" " COL_CYAN "G:" COL_WHITE);
     APPEND_NUM(gen_get_gate());
 
-    out[p++] = ' '; out[p++] = 'R'; out[p++] = ':';
+    /* R: reverb wet (green) */
+    APPEND_STR(" " COL_GREEN "R:" COL_WHITE);
     APPEND_NUM(reverb_wet);
 
-    out[p++] = ' '; out[p++] = 'D'; out[p++] = ':';
+    /* D: delay wet/feedback (yellow) */
+    APPEND_STR(" " COL_YELLOW "D:" COL_WHITE);
     APPEND_NUM(delay_wet);
     out[p++] = '/';
     APPEND_NUM(delay_feedback);
 
-    out[p++] = ' '; out[p++] = 'd'; out[p++] = 'e'; out[p++] = 'g'; out[p++] = ':';
+    /* deg: current Markov walk position (magenta) */
+    APPEND_STR(" " COL_MAG "deg:" COL_WHITE);
     APPEND_NUM(gen_get_degree());
 
-    /* Active-degree mask: 7 bits, LSB = degree 0. '#' = active. */
-    out[p++] = ' '; out[p++] = 'a'; out[p++] = 'c'; out[p++] = 't'; out[p++] = ':';
+    /* act: active scale-degree mask, colored # / dim . */
+    APPEND_STR(" " COL_RED "act:");
     {
         uint8_t am = gen_get_active_mask();
-        for (int i = 0; i < 7; i++) out[p++] = (am & (1u << i)) ? '#' : '.';
+        for (int i = 0; i < 7; i++) {
+            if (am & (1u << i)) { APPEND_STR(COL_RED); out[p++] = '#'; }
+            else                { APPEND_STR(COL_DIM); out[p++] = '.'; }
+        }
     }
 
-    /* Chord voicing name. Indexed by gen_get_chord_pattern() (0..5). */
-    out[p++] = ' ';
-    out[p++] = 'c'; out[p++] = 'h'; out[p++] = 'o'; out[p++] = 'r'; out[p++] = 'd'; out[p++] = ':';
+    /* chord: voicing name (white) */
+    APPEND_STR(" " COL_WHITE "chord:");
     {
         static const char *names[6] = { "triad", "7th", "sus4", "sus2", "inv1", "inv2" };
-        const char *nm = names[gen_get_chord_pattern() % 6];
-        while (*nm) out[p++] = *nm++;
+        APPEND_STR(names[gen_get_chord_pattern() % 6]);
     }
 
+    APPEND_STR(COL_RESET);
     out[p++] = '\r'; out[p++] = '\n';
 
     #undef APPEND_NUM
 
-    /* Oscilloscope grid: L channel, ASCII intensity per cell. */
+    /* Oscilloscope grid: per-cell color from intensity, RLE-emitted
+       (color escape only when the char changes) so the per-frame
+       byte cost stays modest. Heat-map palette: violet (very quiet) ->
+       blue -> cyan -> green -> yellow -> magenta -> red (peak). */
+    static const char *level_colors[7] = {
+        COL_DIM,    /* ' ' silence */
+        COL_BLUE,   /* '.' */
+        COL_CYAN,   /* '-' */
+        COL_GREEN,  /* '+' */
+        COL_YELLOW, /* '*' */
+        COL_MAG,    /* '#' */
+        COL_RED,    /* '@' */
+    };
+    static const char level_chars[7] = { ' ', '.', '-', '+', '*', '#', '@' };
+
+    int last_lvl = -1;
     for (uint32_t r = 0; r < h; r++) {
         out[p++] = 0x1b; out[p++] = '['; out[p++] = '2'; out[p++] = 'K';
         int32_t thresh = 8000 - (int32_t)((r * 16000u) / h);
         for (uint32_t c = 0; c < w; c++) {
             int16_t samp = buf[2 * ((c * frames) / w)];
             int32_t a = samp < 0 ? -samp : samp;
-            out[p++] = (a > thresh) ? (a > 7000 ? '@' : a > 5000 ? '#' : a > 3500 ? '*' : a > 2500 ? '+' : a > 1500 ? '-' : '.') : ' ';
+            int lvl;
+            if (!(a > thresh))      lvl = 0;
+            else if (a > 7000)      lvl = 6;
+            else if (a > 5000)      lvl = 5;
+            else if (a > 3500)      lvl = 4;
+            else if (a > 2500)      lvl = 3;
+            else if (a > 1500)      lvl = 2;
+            else                    lvl = 1;
+            if (lvl != last_lvl) {
+                APPEND_STR(level_colors[lvl]);
+                last_lvl = lvl;
+            }
+            out[p++] = level_chars[lvl];
         }
         if (r < h - 1) { out[p++] = '\r'; out[p++] = '\n'; }
         if (p > (int)sizeof(out) - 256) break;  /* defensive */
     }
+    APPEND_STR(COL_RESET);
     (void)!write(1, out, (size_t)p);
+
+    #undef APPEND_NUM
+    #undef APPEND_STR
 }
 
 static void write_wav_header(FILE *f, uint32_t num_samples) {
