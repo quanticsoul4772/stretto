@@ -1,88 +1,98 @@
 # Changelog
 
-## Unreleased
+## Recent main-branch work (since stereo)
 
-(none currently — everything below is on `main`.)
+### Windows port
+- Native Windows binary `stretto.exe` via MinGW cross-compile (`make win`). No WSL involved at runtime.
+- Win32 `waveOut` audio backend on Windows (4 cycling buffers of 1024 frames, CALLBACK_EVENT, links `winmm.lib`). Bypasses WSLg's broken RDP audio pipe entirely.
+- Platform-abstracted terminal layer (`term_get_size` / `term_read_key` / `term_raw_mode` / `term_restore_mode`) so the oscilloscope + status row + key handler work the same on Linux and Windows. Windows uses `SetConsoleMode` with `ENABLE_VIRTUAL_TERMINAL_PROCESSING` for ANSI escapes and `_kbhit`/`_getch` for non-blocking key input.
+- Size-optimized Windows build: 529 KB → 30 KB packed via `-Os -flto + section gc-sections + strip + UPX`. `make winpack` packs in one step.
 
-## Recent main-branch work
+### Audio quality
+- 48 kHz native sample rate (was 44.1 kHz). WSL/PulseAudio's 44.1 → 48 resampler was broken on the user's machine; switching native eliminates that path. All sample-count constants (envelope timings, reverb delays, samples per substep, LFO increments) rescaled to preserve identical musical timing at the new rate.
+- Stereo output with per-voice panning. Voices have role-based base pan positions plus a slow per-voice LFO for continuous motion in the stereo field. Linear pan law, applied at mix time.
+- Per-voice peak normalization. 50 ms measurement window after each trigger; gain scales the voice output toward a common peak target (16000) with a 4× cap. Equalizes perceived loudness between bass (FM 1:1, soft) and chord (FM 2:1, bright).
+- LFO pitch detune on FM voices (~5 cents peak chorus). Reuses the existing pan LFO at zero state cost.
+- Master-bus stereo delay (250 ms, two independent buffers per channel) with feedback (default ~0.55).
+- Master-bus Schroeder reverb. 4 parallel comb filters → 2 series all-pass per channel, with prime delays slightly different L/R so the tail keeps stereo separation. RT60 ~1.5 s.
+- Soft cubic saturation `y = x - x^3 / 2^31` on the master bus. Transparent at typical levels; smoothly compresses peaks.
+
+### Generative
+- Time-seeded PRNG by default — every launch sounds different. `--seed N` overrides for reproducible runs (used by the regression test).
+- Dynamic mutation rate. Triangle LFO sweeps the interval between 1 bar (busy) and 16 bars (calm) over a ~4.3-min cycle so the piece alternates between dense and sparse sections.
+- True 3-against-4 polyrhythm via 48-substep bar (was 16-step). Bass 3 events vs chord 4 events fit cleanly. LCM(3, 4, 16) = 48.
+- Bouncing bass — 4 events per bar at substeps 0, 18, 24, 42 (long-short alternating). Beats 1 and 3 anchor tempo; offbeats anticipate. Alternates root/fifth with bar parity swap.
+- Voice leading on chord triggers. Each new chord pitch octave-shifts toward the running chord centroid for stepwise motion instead of leaps.
+- Counter-melody: second melodic line on its own Euclidean rhythm + Markov walk, transposed +12 semitones to occupy a different register.
+- Chord voicing variety: triad / seventh / sus4 / sus2 / inv1 / inv2 rotating per bar.
+- Probability gates on Euclidean hits. `gate_prob` (default 200/256) drops some hits for melodic breath; drifts via mutation; live-tunable with `g`/`G`.
+
+### Scales
+- Six modes: D Dorian, D Lydian, D Phrygian, D Locrian, D Harmonic Minor, D Mixolydian. The `s` key cycles between them in live mode. Scale never changes automatically. Status row shows current scale.
+
+### Drums
+- 11-voice pool (was 8): added kick (slot 8), snare (9), hihat (10) as new `VOICE_DRUM` type with `ROLE_DRUM`.
+- Synthesis: kick is a sine pitch-sweep + 5 ms noise attack click; snare is noise-dominant (90/10) with a 200 Hz body; hihat is pure white noise. Per-drum-type linear envelope releases (kick 150 ms / snare 100 ms / hihat 30 ms).
+- Rotating pattern banks: kick 4 patterns, snare 3, hihat 5. Coprime sizes → LCM(4, 3, 5) = 60 bars before exact repeat.
+- Per-drum-type post-normalization gain (kick 3×, snare 2.5×, hihat 1.5×) so drums sit on top of the harmonic mix.
+
+### UI
+- Color heat-map oscilloscope (silence dim gray → blue → cyan → green → yellow → magenta → red peak), single `write()` syscall per frame.
+- Expanded status row: M (mod_depth), S (scale), V (11 activity dots colored by role), G (gate), R (reverb wet), D (delay wet/feedback), deg (Markov walk position), act (active scale-degree mask), chord (current voicing name).
+- Help screen toggled by `?` listing all live keys.
+
+### Polish
+- ALSA → libpulse-simple → pa_stream + threaded mainloop on Linux. Final libpulse architecture matches paplay's exactly.
+- ALSA latency bumped to 300 ms while the WSLg crackling investigation was ongoing; retained as the PulseAudio buffer target.
+
+## Pre-stereo work (recent main-branch)
 
 ### Code quality / cleanup
-- Remove dead `voice_pool_trigger` (non-role variant); only the role-aware API is used. Fix two `-Wshadow` warnings in `draw_oscilloscope` by renaming locals (`t`→`thresh`, `s`→`samp`).
-- Inline rationale comments added at four points that previously required reading commit history: SVF int32 widening, `MUTATE_BARS` deviation from PLAN.md, Markov weights, Rule 110 + Rule 30 pairing.
-- ALSA underrun recovery: `snd_pcm_recover` on `snd_pcm_writei` failure handles EPIPE / ESTRPIPE / EINTR; only truly unrecoverable errors exit.
-- `--render <seconds>` validates input via `strtol`; rejects non-numeric, negative, zero, and > 3600.
-- Makefile housekeeping: removed unused `SMOL` variable, split stale `SIZE_TARGET` into `STRIP_TARGET` and `PACK_TARGET`, added `UPX_BIN` / `UPX_FLAGS` variables and `make pack` target, expanded `make clean` to remove abandoned experiment artifacts.
-- main.c warnings: cast `write()` returns to `(void)!`, remove dead `peak` computation, add fail-loud error path for `fcntl` failures. Hoist SVF `f` / `q` to file-scope `SVF_F` / `SVF_Q` macros.
+- Removed dead `voice_pool_trigger` (non-role variant); only the role-aware API is used.
+- Inline rationale comments at four points that previously required reading commit history: SVF int32 widening, `MUTATE_BARS` deviation from PLAN.md, Markov weights, Rule 110 + Rule 30 pairing.
+- ALSA underrun recovery via `snd_pcm_recover` (later replaced when moving to libpulse, then to waveOut on Windows).
+- `--render <seconds>` input validation via `strtol`.
+- Makefile housekeeping: `STRIP_TARGET` / `PACK_TARGET`, `UPX_BIN` / `UPX_FLAGS`, `make clean` removes abandoned experiment artifacts.
 
-### Synth features
-- True Bjorklund Euclidean rhythm patterns replace the floor-distributed approximation. `gen_euclid_table.c` emits the canonical tresillo, cinquillo, etc. masks. Popcount of each E(k,16) mask verified equal to k.
-- Multi-scale support: six modes (D Dorian, D Lydian, D Phrygian, D Locrian, D Harmonic Minor, D Mixolydian). The `s` key cycles between them in live mode. Scale never changes automatically. Status row shows current scale.
-- Per-voice roles: bass (slots 0–1), chord (slots 2–4), melody (slots 5–7). Each role has its own envelope timings, FM parameters, and pitch offset. Voice stealing constrained to a role's range.
-  - Bass: FM 1:1 ratio, mod_depth 200, attack 50 ms, release 1 s, pitch −12.
-  - Chord: triad on degrees 0/2/4 from active mask, fired at steps 0 and 8.
-  - Melody: existing Euclidean rhythm; KS/FM alternation by step parity.
+### Earlier synth features
+- True Bjorklund Euclidean rhythm masks replace the floor-distributed approximation.
+- Per-voice roles: bass / chord / melody with role-scoped envelope and synth parameters.
 
-### Audio fixes
-- SVF state widened from `int16_t` to `int32_t` with int16 saturation at output. Eliminates resonance-wrap clicks (measured: 395 → 0 clicks per 16 s render).
-- Default FM `mod_depth` reduced from 6000 to 1500. Cuts FM aliasing; HF energy >8 kHz dropped 45% → 12%.
-- Realtime `mod_depth` keys (`[` / `]`) added to live mode for ear-tuning.
+### Earlier audio fixes
+- SVF state widened `int16_t` → `int32_t` with int16 saturation at output. Eliminated resonance-wrap clicks (395 → 0 per 16 s render).
+- Default FM `mod_depth` reduced 6000 → 1500 to cut aliasing (HF energy >8 kHz dropped 45% → 12%).
 
-### Docs
-- README, ARCHITECTURE, CHANGELOG, MIT LICENSE.
+## Phase 5 (PR #4)
 
-## fix-wsl-libasound (PR #6, merged)
-
-- Reverted Phase 4-finish's direct ioctl path back to libasound. The ioctl path required `/dev/snd/pcmC0D0p`, which WSL does not expose. Live audio now routes through libasound → pulse plugin → WSLg on WSL, and through libasound → ALSA hardware on native Linux.
-- Threshold (c) "no libasound" from the original PLAN.md Phase 4 is explicitly reverted in favor of WSL compatibility.
-
-## Phase 5 (PR #4, merged)
-
-- Terminal UI: ASCII oscilloscope, raw stdin via termios, atexit termios restore.
+- Terminal UI: ASCII oscilloscope, raw stdin via termios, atexit restore.
 - Live keyboard controls: SPACE (force mutate), `+`/`-` (tempo ±10%), `q` (quit).
-- `gen_force_mutate()` and `gen_set_tempo(int delta_pct)` exposed in `gen.h`.
-- Packed binary: 12,032 bytes.
 
-## Phase 4-p3 (PR #3, merged)
+## Phase 4 (PR #3 series)
 
-- Restored `--build-id` in LDFLAGS so UPX could pack the binary without a runtime crash. UPX `--ultra-brute` produces a 10,984-byte packed binary that decompresses in-memory (no `/tmp` writes).
-- The `synth.memfd` C-based extractor and the `synth.packed` XZ+shell extractor were both abandoned in favour of UPX.
+- UPX `--ultra-brute` packing; binary fits demoscene-tier sizes.
+- Direct ioctl path on `/dev/snd/pcmC0D0p` explored, then reverted to libasound for WSL compatibility (PR #6).
 
-## Phase 4-finish
+## Phase 3 (PR #2)
 
-- Replaced libasound calls with direct `ioctl(SNDRV_PCM_IOCTL_*)` on `/dev/snd/pcmC0D0p`. Met PLAN.md threshold (c). Live audio worked on native Linux but failed in WSL because WSL lacks `/dev/snd`.
-
-## Phase 4-complete
-
-- 8-voice polyphony (up from 4). Per-voice 2-pole Chamberlin SVF lowpass. Second CA layer (`ca_harm`, Rule 30) added to `gen.c`.
-- Two compression variants explored:
-  - `synth.packed` (XZ + shell self-extractor): 5,892 bytes but used `/tmp`.
-  - `synth.memfd` (C memfd_create + execveat): 20,048 bytes, no `/tmp`.
-
-## Phase 4 (PR #3 initial slice, merged)
-
-- Stripped binary size reduced via UPX from 14,528 to 5,892 bytes.
-
-## Phase 3 (PR #2, merged)
-
-- Replaced the Phase 2 hard-coded arpeggio with the generative MVP per PLAN.md section I:
-  - Rule 110 CA evolves the active-degree mask per bar.
-  - First-order Markov chain over 7 D-Dorian degrees picks the next note within the active mask.
-  - Two parallel Euclidean rhythm masks combined for per-step trigger pattern.
-  - Mutation every 4 bars (deviation from PLAN.md's 16 bars; documented in commit and now in inline comment).
+- Generative MVP per PLAN.md section I:
+  - Rule 110 CA evolves active-degree mask per bar.
+  - First-order Markov chain over 7 D-Dorian degrees.
+  - Two parallel Euclidean rhythm masks combined for melody triggers.
+  - Mutation every 4 bars (deviation from PLAN.md's 16; documented).
 - Build adds `gen_euclid_table.c` as a fourth build-time generator.
 
-## Phase 2 (PR #1, merged)
+## Phase 2 (PR #1)
 
-- Static `pool[65536]` arena with 8-byte-aligned bump allocator. All runtime state allocated from it.
-- Voice struct unioning Karplus-Strong and 2-op FM variants. ADSR envelope per voice.
+- Static `pool[65536]` arena with 8-byte-aligned bump allocator.
+- Voice struct unioning Karplus-Strong and 2-op FM variants. ADSR per voice.
 - 4-voice polyphony, hard-coded C-major arpeggio for testing.
-- Build-time generators added for envelope curve and per-MIDI-note tables.
+- Build-time generators for envelope curve and per-MIDI-note tables.
 
-## Phase 1 (PR #1, merged)
+## Phase 1 (PR #1)
 
 - Hard-coded 440 Hz sine via 1024-entry int16 LUT.
 - ALSA `snd_pcm_writei` live playback at 44.1 kHz S16_LE mono.
-- `--render <seconds> <out.wav>` mode for offline output and regression tests.
+- `--render <seconds> <out.wav>` mode.
 - Bit-exact regression test (`tests/test_bitexact.sh`, `golden/regression_16s.sha256`).
 
 ## Initial commit
