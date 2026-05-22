@@ -7,8 +7,7 @@
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <termios.h>
-#include <pulse/simple.h>
-#include <pulse/error.h>
+#include <pulse/pulseaudio.h>
 
 #include "arena.h"
 #include "voice.h"
@@ -383,6 +382,22 @@ static void render_wav(int seconds, const char *path) {
     fclose(f);
 }
 
+/* Threaded-mainloop pa_stream callbacks: each just wakes the
+   condition variable so the main thread can re-check stream state
+   or writable-size in its wait loops. */
+static void pa_state_cb(pa_context *c, void *userdata) {
+    (void)c;
+    pa_threaded_mainloop_signal((pa_threaded_mainloop *)userdata, 0);
+}
+static void pa_stream_state_cb(pa_stream *s, void *userdata) {
+    (void)s;
+    pa_threaded_mainloop_signal((pa_threaded_mainloop *)userdata, 0);
+}
+static void pa_stream_write_cb(pa_stream *s, size_t length, void *userdata) {
+    (void)s; (void)length;
+    pa_threaded_mainloop_signal((pa_threaded_mainloop *)userdata, 0);
+}
+
 static void play_pulse(void) {
     if (tcgetattr(0, &saved_termios) < 0) {
         fprintf(stderr, "tcgetattr: %s\n", strerror(errno));
@@ -406,34 +421,91 @@ static void play_pulse(void) {
         exit(1);
     }
 
-    /* libpulse-simple direct: avoids libasound's pulse plugin which
-       glitches on sustained 48 kHz output under WSLg. Same final
-       audio path as paplay, no resampling in between.
-       buffer_attr is NULL so PulseAudio picks its own sizing (matches
-       what paplay does); explicit 300 ms tlength was too tight to
-       absorb WSL scheduling pauses. */
+    /* Full pa_stream API with a threaded mainloop, matching what
+       paplay does. The internal helper thread used by pa_simple was
+       getting under-scheduled by WSLg; running the PA event loop in
+       our own pa_threaded_mainloop with INTERPOLATE_TIMING +
+       AUTO_TIMING_UPDATE flags avoids that and matches paplay's
+       behaviour exactly. */
+    pa_threaded_mainloop *ml = pa_threaded_mainloop_new();
+    if (!ml) { fprintf(stderr, "pa: mainloop alloc\n"); exit(1); }
+
+    pa_context *ctx = pa_context_new(pa_threaded_mainloop_get_api(ml), "stretto");
+    pa_context_set_state_callback(ctx, pa_state_cb, ml);
+
+    if (pa_context_connect(ctx, NULL, 0, NULL) < 0) {
+        fprintf(stderr, "pa: connect %s\n", pa_strerror(pa_context_errno(ctx)));
+        exit(1);
+    }
+    if (pa_threaded_mainloop_start(ml) < 0) {
+        fprintf(stderr, "pa: mainloop start\n");
+        exit(1);
+    }
+
+    pa_threaded_mainloop_lock(ml);
+    for (;;) {
+        pa_context_state_t st = pa_context_get_state(ctx);
+        if (st == PA_CONTEXT_READY) break;
+        if (st == PA_CONTEXT_FAILED || st == PA_CONTEXT_TERMINATED) {
+            fprintf(stderr, "pa: context %s\n",
+                    pa_strerror(pa_context_errno(ctx)));
+            exit(1);
+        }
+        pa_threaded_mainloop_wait(ml);
+    }
+
     pa_sample_spec ss;
     ss.format = PA_SAMPLE_S16LE;
     ss.rate = SAMPLE_RATE;
     ss.channels = 2;
 
-    int pa_err = 0;
-    pa_simple *pa = pa_simple_new(NULL, "stretto", PA_STREAM_PLAYBACK, NULL,
-                                  "music", &ss, NULL, NULL, &pa_err);
-    if (!pa) {
-        fprintf(stderr, "pulse: %s\n", pa_strerror(pa_err));
+    pa_stream *stream = pa_stream_new(ctx, "music", &ss, NULL);
+    pa_stream_set_state_callback(stream, pa_stream_state_cb, ml);
+    pa_stream_set_write_callback(stream, pa_stream_write_cb, ml);
+
+    pa_buffer_attr ba;
+    ba.maxlength = (uint32_t)-1;
+    ba.tlength = (uint32_t)((uint64_t)SAMPLE_RATE * 4u * LATENCY_US / 1000000u);
+    ba.prebuf = (uint32_t)-1;
+    ba.minreq = (uint32_t)-1;
+    ba.fragsize = (uint32_t)-1;
+
+    if (pa_stream_connect_playback(stream, NULL, &ba,
+            PA_STREAM_INTERPOLATE_TIMING | PA_STREAM_AUTO_TIMING_UPDATE,
+            NULL, NULL) < 0) {
+        fprintf(stderr, "pa: connect_playback %s\n",
+                pa_strerror(pa_context_errno(ctx)));
         exit(1);
     }
+    for (;;) {
+        pa_stream_state_t sst = pa_stream_get_state(stream);
+        if (sst == PA_STREAM_READY) break;
+        if (sst == PA_STREAM_FAILED || sst == PA_STREAM_TERMINATED) {
+            fprintf(stderr, "pa: stream %s\n",
+                    pa_strerror(pa_context_errno(ctx)));
+            exit(1);
+        }
+        pa_threaded_mainloop_wait(ml);
+    }
+    pa_threaded_mainloop_unlock(ml);
 
     int16_t *buf = arena_alloc(BUFFER_FRAMES * 2 * sizeof(int16_t));
     size_t buf_bytes = BUFFER_FRAMES * 2u * sizeof(int16_t);
 
     for (;;) {
         render_chunk(buf, BUFFER_FRAMES);
-        if (pa_simple_write(pa, buf, buf_bytes, &pa_err) < 0) {
-            fprintf(stderr, "pulse: %s\n", pa_strerror(pa_err));
+
+        pa_threaded_mainloop_lock(ml);
+        while (pa_stream_writable_size(stream) < buf_bytes) {
+            pa_threaded_mainloop_wait(ml);
+        }
+        if (pa_stream_write(stream, buf, buf_bytes, NULL, 0, PA_SEEK_RELATIVE) < 0) {
+            pa_threaded_mainloop_unlock(ml);
+            fprintf(stderr, "pa: write %s\n",
+                    pa_strerror(pa_context_errno(ctx)));
             exit(1);
         }
+        pa_threaded_mainloop_unlock(ml);
 
         /* Skip drawing entirely with --no-ui (diagnostic mode), and
            when UI is enabled only draw every Nth buffer to keep terminal
@@ -477,8 +549,15 @@ static void play_pulse(void) {
             else if (ch == 'r') reverb_adjust_wet(-16);
             else if (ch == 'R') reverb_adjust_wet(+16);
             else if (ch == 'q') {
-                pa_simple_drain(pa, NULL);
-                pa_simple_free(pa);
+                pa_threaded_mainloop_lock(ml);
+                pa_operation *op = pa_stream_drain(stream, NULL, NULL);
+                if (op) pa_operation_unref(op);
+                pa_threaded_mainloop_unlock(ml);
+                pa_threaded_mainloop_stop(ml);
+                pa_stream_unref(stream);
+                pa_context_disconnect(ctx);
+                pa_context_unref(ctx);
+                pa_threaded_mainloop_free(ml);
                 restore_terminal();
                 exit(0);
             }
