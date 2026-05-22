@@ -306,20 +306,41 @@ void gen_step(void) {
         active_mask = active_mask & (harm_mask | 0x11u);
         if (active_mask == 0) active_mask = 0x01u;
 
-        /* Drum trigger: classic 4/4 backbeat fits over the existing
-           polyrhythm.
-             kick on substeps 0 and 24       (downbeats 1 and 3)
-             snare on substeps 12 and 36     (backbeats 2 and 4)
-             hihat on every 6 substeps       (1, +, 2, +, 3, +, 4, +) */
-        if (substep_in_bar == 0u || substep_in_bar == 24u) {
-            voice_pool_trigger_drum(DRUM_KICK);
-        }
-        if (substep_in_bar == 12u || substep_in_bar == 36u) {
-            voice_pool_trigger_drum(DRUM_SNARE);
-        }
-        if (substep_in_bar % 6u == 0u) {
-            voice_pool_trigger_drum(DRUM_HIHAT);
-        }
+        /* Drum trigger: each drum has its own rotating bank of bitmask
+           patterns. Bit N of a pattern set means "trigger this drum
+           at substep N within the bar". Pattern index advances per
+           bar; banks have coprime sizes (4, 3, 5) so the combined
+           kit cycles through LCM(4,3,5) = 60 bars before exactly
+           repeating - enough variety to never feel locked. */
+        #define S(n) (1ULL << (n))
+        static const uint64_t kick_patterns[4] = {
+            /* basic 1+3 */          S(0) | S(24),
+            /* syncopated 1+3+ */    S(0) | S(24) | S(30),
+            /* four-on-the-floor */  S(0) | S(12) | S(24) | S(36),
+            /* off-kilter w/ 2+ */   S(0) | S(18) | S(24),
+        };
+        static const uint64_t snare_patterns[3] = {
+            /* classic 2+4 */        S(12) | S(36),
+            /* with ghost 2e 4e */   S(9)  | S(12) | S(33) | S(36),
+            /* half-time 3 only */   S(24),
+        };
+        static const uint64_t hihat_patterns[5] = {
+            /* 8ths every 6 */       S(0)|S(6)|S(12)|S(18)|S(24)|S(30)|S(36)|S(42),
+            /* 16ths every 3 */      S(0)|S(3)|S(6)|S(9)|S(12)|S(15)|S(18)|S(21)|
+                                     S(24)|S(27)|S(30)|S(33)|S(36)|S(39)|S(42)|S(45),
+            /* quarters only */      S(0)|S(12)|S(24)|S(36),
+            /* offbeats only */      S(6)|S(18)|S(30)|S(42),
+            /* triplet feel */       S(0)|S(8)|S(16)|S(24)|S(32)|S(40),
+        };
+        #undef S
+
+        uint64_t kbits = kick_patterns [bar_count % 4u];
+        uint64_t sbits = snare_patterns[bar_count % 3u];
+        uint64_t hbits = hihat_patterns[bar_count % 5u];
+
+        if ((kbits >> substep_in_bar) & 1u) voice_pool_trigger_drum(DRUM_KICK);
+        if ((sbits >> substep_in_bar) & 1u) voice_pool_trigger_drum(DRUM_SNARE);
+        if ((hbits >> substep_in_bar) & 1u) voice_pool_trigger_drum(DRUM_HIHAT);
 
         /* Bass trigger: 4 events per bar at unequal spacing for a
            bouncing feel. Beats 1 and 3 (substeps 0, 24) anchor the

@@ -316,6 +316,13 @@ int16_t voice_step(Voice *v) {
         v->peak_window--;
     }
     int32_t scaled = ((int32_t)lp * v->gain) >> 8;
+
+    /* Drums get a post-normalization boost so kick/snare/hihat sit
+       audibly on top of the harmonic content. ~1.5x. */
+    if (v->role == ROLE_DRUM) {
+        scaled = (scaled * 3) / 2;
+    }
+
     if (scaled > 32767) scaled = 32767;
     else if (scaled < -32768) scaled = -32768;
     return (int16_t)scaled;
