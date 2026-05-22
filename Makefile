@@ -134,6 +134,28 @@ test-unit: $(UNIT_TEST_BINS)
 	done; \
 	exit $$fail
 
+# Multi-seed integration test - renders 4 seeds, checks determinism +
+# audio sanity bounds + golden hashes. Catches runaway-state bugs.
+test-multiseed: synth
+	chmod +x tests/test_multi_seed.sh
+	./tests/test_multi_seed.sh
+
+# Live-mode smoke test (Linux only, auto-skips if no PulseAudio).
+test-smoke: synth
+	chmod +x tests/test_smoke_live.sh
+	./tests/test_smoke_live.sh
+
+# Capture golden hashes for all multi-seed renders.
+golden-multiseed: synth
+	@mkdir -p golden
+	@for s in 0 1 42 12345; do \
+		./synth --render 4 /tmp/golden_seed_$$s.wav --seed $$s >/dev/null 2>&1; \
+		h=$$(sha256sum /tmp/golden_seed_$$s.wav | awk '{print $$1}'); \
+		echo "seed_$$s: $$h"; \
+	done > golden/regression_multiseed.sha256.txt
+	@echo "golden/regression_multiseed.sha256.txt updated:"
+	@cat golden/regression_multiseed.sha256.txt
+
 # Coverage build: instrumented compile of the synth + each unit test,
 # run them, then print per-file line-coverage percentages. gcov
 # expects the .gcno files to be named after the source (arena.gcno
@@ -174,4 +196,5 @@ golden: synth
 play: synth
 	./synth
 
-.PHONY: all clean size pack test test-unit coverage golden play win winpack
+.PHONY: all clean size pack test test-unit test-multiseed test-smoke \
+        coverage golden golden-multiseed play win winpack

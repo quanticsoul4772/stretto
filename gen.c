@@ -241,9 +241,10 @@ static int gen_seeded_explicitly = 0;
 
 /* xorshift32: turn one input seed into a sequence of well-distributed
    uint32 values so PRNG, ca_row, and ca_harm all start from
-   independent points. */
+   independent points. The zero fixed point of xorshift32 is handled
+   by gen_seed() XORing the input with a constant first so seed=0
+   maps somewhere meaningful and does not collide with seed=1. */
 static uint32_t hash32(uint32_t x) {
-    if (x == 0) x = 1;
     x ^= x << 13;
     x ^= x >> 17;
     x ^= x << 5;
@@ -251,7 +252,11 @@ static uint32_t hash32(uint32_t x) {
 }
 
 void gen_seed(uint32_t seed) {
-    uint32_t s = hash32(seed ? seed : 1u);
+    /* XOR with a non-zero constant so seed=0 and seed=1 hash to
+       different chains and seed=0 does not hit xorshift's zero
+       fixed point. */
+    uint32_t s = hash32(seed ^ 0xDEADBEEFu);
+    if (s == 0) s = 0x12345678u;
     gen_prng_state = s;
     s = hash32(s);
     ca_row = s ? s : 0x12345678u;
