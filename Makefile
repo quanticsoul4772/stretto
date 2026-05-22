@@ -102,6 +102,10 @@ pack: synth.packed
 
 clean:
 	rm -f synth synth.packed stretto.exe stretto.packed.exe \
+	      synth_cov cov_*.o *.gcda *.gcno *.gcov \
+	      tests/unit/test_arena tests/unit/test_voice \
+	      tests/unit/test_gen tests/unit/test_effects \
+	      tests/unit/*.cov \
 	      $(GENS) $(HEADERS) *.o *.win.o
 
 size: synth
@@ -114,6 +118,52 @@ size: synth
 test: synth
 	./tests/test_bitexact.sh
 
+# Unit tests. Each tests/unit/test_*.c links against the existing
+# arena.o + voice.o + gen.o and runs as a standalone binary.
+UNIT_TEST_SRCS = $(wildcard tests/unit/test_*.c)
+UNIT_TEST_BINS = $(UNIT_TEST_SRCS:.c=)
+
+tests/unit/test_%: tests/unit/test_%.c tests/unit/test.h $(HEADERS) arena.o voice.o gen.o
+	gcc -O2 -Wall -no-pie -Itests/unit $< arena.o voice.o gen.o -o $@ -lm
+
+test-unit: $(UNIT_TEST_BINS)
+	@echo "=== unit tests ==="
+	@fail=0; for t in $(UNIT_TEST_BINS); do \
+		echo; echo "[$$t]"; \
+		./$$t || fail=1; \
+	done; \
+	exit $$fail
+
+# Coverage build: instrumented compile of the synth + each unit test,
+# run them, then print per-file line-coverage percentages. gcov
+# expects the .gcno files to be named after the source (arena.gcno
+# for arena.c) which only happens when the .o is also named that way.
+# So the coverage build uses the same .o names as the regular build;
+# `make clean` first if you mix them.
+COV_FLAGS = -O0 -g -fprofile-arcs -ftest-coverage
+coverage:
+	@echo "=== rebuilding instrumented ==="
+	@rm -f *.gcda *.gcno *.gcov *.o synth_cov tests/unit/*.cov
+	gcc $(COV_FLAGS) -c arena.c -o arena.o
+	gcc $(COV_FLAGS) -c voice.c -o voice.o
+	gcc $(COV_FLAGS) -c gen.c   -o gen.o
+	gcc $(COV_FLAGS) -c main.c  -o main.o
+	gcc $(COV_FLAGS) arena.o voice.o gen.o main.o -lpulse -o synth_cov
+	@echo "=== render-mode regression ==="
+	./synth_cov --render 16 /tmp/cov_render.wav --seed 0 >/dev/null
+	@echo "=== unit suite ==="
+	@for t in $(UNIT_TEST_SRCS); do \
+		base=$${t%.c}; \
+		gcc $(COV_FLAGS) -no-pie -Itests/unit $$t arena.o voice.o gen.o \
+		    -o $$base.cov -lm; \
+		./$$base.cov >/dev/null || true; \
+	done
+	@echo "=== per-file line coverage ==="
+	@gcov -n arena.c voice.c gen.c main.c 2>/dev/null | \
+		awk '/^File/ {sub(/[\x27]/,"",$$2); sub(/[\x27]/,"",$$2); f=$$2} \
+		     /^Lines/ {sub(/Lines executed:/,""); print f": "$$0}' | \
+		grep "\.c"
+
 golden: synth
 	@mkdir -p golden
 	./synth --render 16 /tmp/golden_render.wav --seed 0
@@ -124,4 +174,4 @@ golden: synth
 play: synth
 	./synth
 
-.PHONY: all clean size pack test golden play win winpack
+.PHONY: all clean size pack test test-unit coverage golden play win winpack
