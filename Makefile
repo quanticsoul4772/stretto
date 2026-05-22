@@ -20,11 +20,17 @@ PACK_TARGET  = 12288
 
 all: synth
 
-# Windows cross-compile target (Phase 1: render-mode only).
-# Live mode (PortAudio) lands in Phase 2.
-WIN_CC     = x86_64-w64-mingw32-gcc
-WIN_CFLAGS = -O2 -DWIN32_LEAN_AND_MEAN
-WIN_OBJS   = arena.win.o voice.win.o gen.win.o main.win.o
+# Windows cross-compile target.
+# Size-optimized flags mirror the Linux build: -Os + LTO + section
+# splitting + gc-sections drop unreferenced code/data. After link
+# we strip and (optionally) UPX-pack.
+WIN_CC      = x86_64-w64-mingw32-gcc
+WIN_STRIP   = x86_64-w64-mingw32-strip
+WIN_CFLAGS  = -Os -flto -fuse-linker-plugin -ffunction-sections \
+              -fdata-sections -fno-asynchronous-unwind-tables \
+              -fno-stack-protector -Qn -DWIN32_LEAN_AND_MEAN
+WIN_LDFLAGS = -Wl,--gc-sections -s -no-pie
+WIN_OBJS    = arena.win.o voice.win.o gen.win.o main.win.o
 
 arena.win.o: arena.c arena.h
 	$(WIN_CC) $(WIN_CFLAGS) -c arena.c -o arena.win.o
@@ -36,11 +42,22 @@ main.win.o: main.c arena.h voice.h gen.h
 	$(WIN_CC) $(WIN_CFLAGS) -c main.c -o main.win.o
 
 stretto.exe: $(WIN_OBJS)
-	$(WIN_CC) $(WIN_CFLAGS) $(WIN_OBJS) -lwinmm -o stretto.exe
+	$(WIN_CC) $(WIN_CFLAGS) $(WIN_LDFLAGS) $(WIN_OBJS) -lwinmm -o stretto.exe
+	$(WIN_STRIP) -s -R .comment stretto.exe
 
 win: stretto.exe
 	@echo "Built: stretto.exe (native Windows binary, live + render mode)"
 	@file stretto.exe
+	@stat -c "  size: %s bytes" stretto.exe
+
+# UPX-pack the Windows binary. Run after `make win`.
+stretto.packed.exe: stretto.exe
+	$(UPX_BIN) $(UPX_FLAGS) stretto.exe -o stretto.packed.exe
+
+winpack: stretto.packed.exe
+	@echo "Packed: stretto.packed.exe"
+	@stat -c "  unpacked: %s bytes" stretto.exe
+	@stat -c "  packed:   %s bytes" stretto.packed.exe
 
 gen_sin_table: gen_sin_table.c
 	gcc -O2 gen_sin_table.c -o gen_sin_table -lm
@@ -86,7 +103,7 @@ pack: synth.packed
 clean:
 	rm -f synth synth.packed synth.upx synth.test synth.orig \
 	      synth.unpacked synth.xz synth.lto.o synth_xz.h \
-	      stretto.exe \
+	      stretto.exe stretto.packed.exe \
 	      start.c stub.c \
 	      $(GENS) $(HEADERS) *.o *.win.o
 
@@ -110,4 +127,4 @@ golden: synth
 play: synth
 	./synth
 
-.PHONY: all clean size pack test golden play win
+.PHONY: all clean size pack test golden play win winpack
