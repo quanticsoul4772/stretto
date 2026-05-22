@@ -75,6 +75,10 @@ Fixes the PRNG / cellular automaton / Markov seeds to `N`. Same `--seed` always 
 | `r` / `R` | Reverb wet mix down / up by 16 |
 | `d` / `D` | Delay wet mix down / up by 16 |
 | `f` / `F` | Delay feedback down / up by 16 |
+| `c` / `C` | Filter cutoff down / up by 10 |
+| `n` / `N` | Filter resonance down / up by 10 |
+| `m` / `M` | Filter LFO depth down / up by 8 |
+| `t` | Cycle filter mode (LP → HP → BP → notch) |
 | `?` | Toggle help overlay |
 | `q` | Quit (restores terminal state) |
 | `Ctrl-C` | Same as `q` via atexit handler |
@@ -84,7 +88,7 @@ Fixes the PRNG / cellular automaton / Markov seeds to `N`. Same `--seed` always 
 Colored single-line status at the top of the terminal:
 
 ```
-M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2
+M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2 F:200 N:100 L:80 T:LP
 ```
 
 | Field | Meaning |
@@ -98,6 +102,10 @@ M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2
 | `deg` | Current Markov walk position (0–6) |
 | `act` | Active scale-degree mask (7 chars, `#` = active, `.` = suppressed by CA) |
 | `chord` | Current bar's voicing: `triad`, `7th`, `sus4`, `sus2`, `inv1`, `inv2` |
+| `F` | SVF filter cutoff base (30–180 user-tunable; per-role offsets + LFO + chord fenv modulate this per voice) |
+| `N` | SVF resonance base (0–180; per-role offsets apply per voice) |
+| `L` | Filter LFO depth (0–255; scales how much the per-voice pan LFO sweeps the cutoff) |
+| `T` | Filter mode: `LP` low-pass, `HP` high-pass, `BP` band-pass, `NO` notch |
 
 The oscilloscope below paints with a heat-map palette: dim (silence) → blue → cyan → green → yellow → magenta → red (peak).
 
