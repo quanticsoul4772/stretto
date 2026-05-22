@@ -1,5 +1,25 @@
 # Changelog
 
+## Recent: testing + CI
+
+- Hand-rolled unit-test framework at `tests/unit/test.h` (~130 LOC, `TEST(name) {...}` registration via constructor attributes plus assertion macros).
+- 49 unit tests across `tests/unit/test_arena.c`, `test_voice.c`, `test_gen.c`. Coverage: `arena.c` ~80%, `voice.c` ~98%, `gen.c` ~97%.
+- `tests/test_multi_seed.sh` renders 4 seeds, asserts determinism, distinct sha256s, audio characteristics within bounds, plus golden-hash regression in `golden/regression_multiseed.sha256.txt`.
+- `tests/test_smoke_live.sh` spawns `./synth --no-ui` under a 2 s timeout, accepts clean exit / SIGTERM, fails on segfault, auto-skips without PulseAudio.
+- New Makefile targets: `test-unit`, `test-multiseed`, `test-smoke`, `coverage`, `golden-multiseed`.
+- GitHub Actions CI (`.github/workflows/ci.yml`) runs the full suite on push and pull-request to `main`, plus Windows cross-compile. Uploads `stretto.packed.exe` and coverage log as build artifacts. Per-file coverage gate at 80%.
+
+Two bug fixes uncovered by the new tests:
+
+- `gen_seed(0)` and `gen_seed(1)` produced identical state. The old ternary `hash32(seed ? seed : 1u)` collapsed both to `hash32(1)`. Fix: XOR the seed with `0xDEADBEEFu` before hashing so all seeds map to distinct chains.
+- `tcgetattr` exited synth with code 1 when stdin had no TTY (script invocation, smoke test). `--no-ui` now skips `term_raw_mode` entirely; live mode without TTY runs cleanly until SIGTERM.
+
+## Recent: cleanup pass
+
+- Removed dead `drum_attack` / `drum_release` placeholder arrays in `voice_pool_trigger_drum` that were marked `(void)` for-future. The actual per-drum-type release table is in `env_step`; per-drum attack is just `role_attack[ROLE_DRUM]`.
+- Pruned Makefile `clean` target of legacy experiment artifacts (synth.upx, synth.test, synth.orig, synth.unpacked, synth.xz, synth.lto.o, synth_xz.h, start.c, stub.c) that haven't existed for many PRs.
+- Reorganized `.gitignore` into labeled groups; added Windows artifacts (stretto.exe, stretto.packed.exe, *.win.o) that were previously showing as untracked.
+
 ## Recent: filter controls
 
 - Runtime cutoff and resonance, live-tunable via `c`/`C` and `n`/`N`.
