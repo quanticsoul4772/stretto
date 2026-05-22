@@ -71,6 +71,12 @@ static uint16_t reverb_wet = 60;   /* 0..256, mix amount */
 static struct termios saved_termios;
 static int termios_saved = 0;
 static int help_visible = 0;
+static int no_ui = 0;
+/* Throttle oscilloscope to ~12 fps so terminal I/O doesn't block
+   the audio loop. WSLg's RDP-based terminal can stall on writes,
+   and stalls > 300 ms would underrun the PulseAudio buffer. */
+static unsigned int draw_skip_count = 0;
+#define DRAW_EVERY_N_BUFFERS 4u
 
 static const char HELP_TEXT[] =
     "\x1b[H\x1b[2J"
@@ -278,6 +284,12 @@ static void restore_terminal(void) {
     }
 }
 
+/* Build the entire frame (status row + oscilloscope grid) into one
+   buffer and write it with a single write() syscall. Previously we
+   issued ~3 + 3*h syscalls per frame (~75 at h=24); under WSLg's
+   RDP-based terminal each one can stall, accumulating enough delay
+   to underrun the PulseAudio buffer. One write per frame keeps the
+   audio loop unblocked. */
 static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     unsigned short ws[4];
     ws[0] = 24; ws[1] = 80;
@@ -289,38 +301,40 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     uint32_t h = ws[0] > 2 ? ws[0] - 2 : 22;
     if (w > frames) w = frames;
 
-    (void)!write(1, "\x1b[H\x1b[?25l\x1b[2K", 14);
-
-    uint32_t mask = voice_pool_active_mask();
-    char s[40];
+    static char out[4096];
     int p = 0;
-    s[p++] = 'M'; s[p++] = ':';
+    /* Cursor home + hide + clear line */
+    out[p++] = 0x1b; out[p++] = '['; out[p++] = 'H';
+    out[p++] = 0x1b; out[p++] = '['; out[p++] = '?'; out[p++] = '2'; out[p++] = '5'; out[p++] = 'l';
+    out[p++] = 0x1b; out[p++] = '['; out[p++] = '2'; out[p++] = 'K';
+
+    /* Status row: M:<mod> S:<scale> V:<voices> */
+    uint32_t mask = voice_pool_active_mask();
+    out[p++] = 'M'; out[p++] = ':';
     unsigned v = voice_get_mod_depth();
     char t[6]; int n = 0;
     do { t[n++] = '0' + v % 10; v /= 10; } while (v);
-    while (n > 0) s[p++] = t[--n];
-    s[p++] = ' '; s[p++] = 'S'; s[p++] = ':';
+    while (n > 0) out[p++] = t[--n];
+    out[p++] = ' '; out[p++] = 'S'; out[p++] = ':';
     /* D=Dorian L=Lydian P=Phrygian l=Locrian H=Harmonic-minor M=Mixolydian */
-    s[p++] = "DLPlHM"[gen_get_scale() % 6];
-    s[p++] = ' '; s[p++] = 'V'; s[p++] = ':';
-    for (int i = 0; i < N_VOICES; i++) s[p++] = (mask & (1u << i)) ? '*' : '.';
-    (void)!write(1, s, p);
-    (void)!write(1, "\r\n", 2);
+    out[p++] = "DLPlHM"[gen_get_scale() % 6];
+    out[p++] = ' '; out[p++] = 'V'; out[p++] = ':';
+    for (int i = 0; i < N_VOICES; i++) out[p++] = (mask & (1u << i)) ? '*' : '.';
+    out[p++] = '\r'; out[p++] = '\n';
 
-    /* buf is interleaved stereo (L,R,L,R,...); draw the L channel by
-       stepping with stride 2. */
-    char line[120];
+    /* Oscilloscope grid: L channel, ASCII intensity per cell. */
     for (uint32_t r = 0; r < h; r++) {
+        out[p++] = 0x1b; out[p++] = '['; out[p++] = '2'; out[p++] = 'K';
         int32_t thresh = 8000 - (int32_t)((r * 16000u) / h);
         for (uint32_t c = 0; c < w; c++) {
             int16_t samp = buf[2 * ((c * frames) / w)];
             int32_t a = samp < 0 ? -samp : samp;
-            line[c] = (a > thresh) ? (a > 7000 ? '@' : a > 5000 ? '#' : a > 3500 ? '*' : a > 2500 ? '+' : a > 1500 ? '-' : '.') : ' ';
+            out[p++] = (a > thresh) ? (a > 7000 ? '@' : a > 5000 ? '#' : a > 3500 ? '*' : a > 2500 ? '+' : a > 1500 ? '-' : '.') : ' ';
         }
-        (void)!write(1, "\x1b[2K", 4);
-        (void)!write(1, line, w);
-        if (r < h - 1) (void)!write(1, "\r\n", 2);
+        if (r < h - 1) { out[p++] = '\r'; out[p++] = '\n'; }
+        if (p > (int)sizeof(out) - 256) break;  /* defensive */
     }
+    (void)!write(1, out, (size_t)p);
 }
 
 static void write_wav_header(FILE *f, uint32_t num_samples) {
@@ -427,7 +441,15 @@ static void play_pulse(void) {
             exit(1);
         }
 
-        if (!help_visible) draw_oscilloscope(buf, BUFFER_FRAMES);
+        /* Skip drawing entirely with --no-ui (diagnostic mode), and
+           when UI is enabled only draw every Nth buffer to keep terminal
+           I/O out of the audio loop's critical path. */
+        if (!no_ui && !help_visible) {
+            if (++draw_skip_count >= DRAW_EVERY_N_BUFFERS) {
+                draw_skip_count = 0;
+                draw_oscilloscope(buf, BUFFER_FRAMES);
+            }
+        }
 
         char ch;
         while (read(0, &ch, 1) > 0) {
@@ -493,10 +515,11 @@ int main(int argc, char **argv) {
         }
         render_wav((int)seconds, argv[3]);
         fprintf(stderr, "arena: %zu/%d bytes used\n", arena_used(), HEAP_BYTES);
-    } else if (argc == 1) {
+    } else if (argc == 1 || (argc == 2 && strcmp(argv[1], "--no-ui") == 0)) {
+        if (argc == 2) no_ui = 1;
         play_pulse();
     } else {
-        fprintf(stderr, "usage: %s [--render <seconds> <output.wav>]\n", argv[0]);
+        fprintf(stderr, "usage: %s [--render <seconds> <output.wav>] [--no-ui]\n", argv[0]);
         exit(1);
     }
     return 0;
