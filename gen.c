@@ -1,6 +1,7 @@
 #include "gen.h"
 #include "voice.h"
 #include "euclid_table.h"
+#include "lsystem.h"
 #include <stdint.h>
 #include <time.h>
 
@@ -219,6 +220,12 @@ static void mutate(void) {
     if (((r >> 30) & 1u) == 0u) {
         voice_mutate_filter(prng());
     }
+
+    /* Drift the L-system melodic grammar on roughly 1 in 3 mutate
+       events so the main melody's character shifts across the piece. */
+    if (((r >> 26) & 3u) == 0u) {
+        lsystem_mutate(prng());
+    }
 }
 
 /* Read the current dynamic mutation interval from the triangle LFO.
@@ -286,6 +293,10 @@ void gen_init(void) {
     if (!gen_seeded_explicitly) {
         gen_seed((uint32_t)time(NULL));
     }
+
+    /* Build the initial L-system expansion so the first melody trigger
+       has output to walk. */
+    lsystem_reset();
 }
 
 void gen_step(void) {
@@ -417,15 +428,20 @@ void gen_step(void) {
         if (substep_in_bar % MELODY_SUBSTRIDE == 0u) {
             uint32_t step_in_bar = substep_in_bar / MELODY_SUBSTRIDE;
 
-            /* Main melody: Euclidean E(k_a) | E(k_b), Markov walk on
-               cur_degree, probability-gated. */
+            /* Main melody: Euclidean E(k_a) | E(k_b), L-system walk on
+               scale degrees, probability-gated. The L-system produces
+               phrased contours (multi-scale self-similarity from rule
+               rewrites) vs the Markov walker's first-order steps. */
             uint16_t hits = (uint16_t)(euclid_table[eucl_k_a] | euclid_table[eucl_k_b]);
             unsigned int hit = (unsigned int)((hits >> (15 - step_in_bar)) & 1u);
             if (hit && ((prng() & 0xFFu) < (uint32_t)gate_prob)) {
-                cur_degree = markov_next(cur_degree, active_mask);
-                uint8_t note = SCALES[cur_scale][cur_degree];
-                uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
-                voice_pool_trigger_role(note, type, ROLE_MELODY);
+                uint8_t deg = lsystem_next(active_mask);
+                if (deg != LSYSTEM_REST) {
+                    cur_degree = deg;
+                    uint8_t note = SCALES[cur_scale][cur_degree];
+                    uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
+                    voice_pool_trigger_role(note, type, ROLE_MELODY);
+                }
             }
 
             /* Counter-melody: independent Euclidean (eucl_k_counter)
