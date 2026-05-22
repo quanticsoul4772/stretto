@@ -364,23 +364,23 @@ int16_t voice_step(Voice *v) {
     fenv_step(v);
     int16_t shaped = (int16_t)(((int32_t)raw * env) >> 15);
 
-    /* Compute effective cutoff for this voice:
-         base + per-role offset
-         + LFO modulation (slow sweep via the same LFO that drives pan)
-         + filter-envelope modulation (chord voices only)
-       Clamp to a stable range for the SVF. */
+    /* Compute effective cutoff. The Chamberlin SVF is stable for
+       f * pi / 2 < 1, i.e. f < 256/pi ~= 81 in our >>8 units... but
+       in practice with int32 state and Q ~= 2.5 it stays sensible up
+       to ~230. Clamp at 220 to leave margin. */
     int32_t f_eff = (int32_t)svf_f_base + role_svf_f_off[v->role];
     {
-        int16_t lfo = sin_table[v->lfo_phase >> 22];  /* +/-24576 */
-        f_eff += ((int32_t)lfo * lfo_filter_depth) >> 11;
+        /* LFO contributes up to +/-60 units (sin peak 24576 * 80 / 32768). */
+        int16_t lfo = sin_table[v->lfo_phase >> 22];
+        f_eff += ((int32_t)lfo * lfo_filter_depth) >> 15;
     }
     if (v->role == ROLE_CHORD) {
-        /* Filter env: open the cutoff a lot during attack, then close
-           during release. fenv_amp range is 0..32767 (matches env_amp). */
-        f_eff += ((int32_t)v->fenv_amp * 120) >> 10;  /* up to +~+3.7k at peak */
+        /* Filter env opens the cutoff by up to +60 units at peak
+           (fenv_amp 32767 * 30 / 16384 ~= 60). Subtle sweep. */
+        f_eff += ((int32_t)v->fenv_amp * 30) >> 14;
     }
     if (f_eff < 20)  f_eff = 20;
-    if (f_eff > 450) f_eff = 450;
+    if (f_eff > 220) f_eff = 220;
 
     int32_t q_eff = (int32_t)svf_q_base + role_svf_q_off[v->role];
     if (q_eff < 0)   q_eff = 0;
@@ -580,7 +580,7 @@ uint32_t voice_pool_active_mask(void) {
 void voice_adjust_cutoff(int delta) {
     int v = (int)svf_f_base + delta;
     if (v < 30)  v = 30;
-    if (v > 350) v = 350;
+    if (v > 220) v = 220;     /* keep below SVF instability */
     svf_f_base = (uint16_t)v;
 }
 
