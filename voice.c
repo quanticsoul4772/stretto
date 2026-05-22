@@ -5,9 +5,13 @@
 #include "note_table.h"
 #include <stdint.h>
 
-#define ENV_ATTACK_SAMPLES   220
-#define ENV_DECAY_SAMPLES    8820
-#define ENV_RELEASE_SAMPLES  26460
+/* Sample counts calibrated for SAMPLE_RATE = 48000 (formerly 44100):
+     220   ->  240   (5 ms attack)
+     8820  ->  9600  (200 ms decay)
+     26460 -> 28800  (600 ms release) */
+#define ENV_ATTACK_SAMPLES   240
+#define ENV_DECAY_SAMPLES    9600
+#define ENV_RELEASE_SAMPLES  28800
 #define ENV_SUSTAIN_LEVEL    16384
 #define ENV_PEAK             32767
 
@@ -15,7 +19,7 @@
    trigger, each voice's output is scaled so its observed peak hits
    PEAK_TARGET. Gain is clamped between 1.0x and PEAK_GAIN_MAX (8.8 fp,
    so 1024 = 4.0x). */
-#define PEAK_WINDOW_SAMPLES  2205    /* ~50 ms; covers attack + early decay */
+#define PEAK_WINDOW_SAMPLES  2400    /* 50 ms at 48 kHz */
 #define PEAK_TARGET          16000   /* per-voice peak after normalization;
                                         chosen so 3-4 simultaneous voices
                                         after the >>3 mix divide produce
@@ -53,8 +57,8 @@ static int16_t prng_noise(void) {
 /* Per-role parameters: BASS, CHORD, MELODY */
 static const uint16_t role_mod_depth[3]  = {  200, 1500, 1500 };
 static const uint8_t  role_fm_ratio[3]   = {    1,    2,    2 };
-static const uint16_t role_attack[3]     = { 2205,  882,  220 }; /* 50 / 20 / 5 ms */
-static const uint16_t role_release[3]    = {44100,26460,26460 }; /* 1000 / 600 / 600 ms */
+static const uint16_t role_attack[3]     = { 2400,  960,  240 }; /* 50 / 20 / 5 ms at 48 kHz */
+static const uint16_t role_release[3]    = {48000,28800,28800 }; /* 1000 / 600 / 600 ms at 48 kHz */
 
 /* Per-voice-slot base pan position (0 = full left, 128 = center,
    255 = full right). Bass slots 0-1 sit at center; chord slots 2-4
@@ -67,12 +71,13 @@ static const uint8_t slot_base_pan[N_VOICES] = {
 };
 
 /* Per-voice-slot LFO increment for slow pan motion. Numbers are
-   uint32 phase-increments at 44.1 kHz; freqs ~0.07-0.18 Hz so the
-   modulation period is several seconds. */
+   uint32 phase-increments at 48 kHz; freqs ~0.07-0.18 Hz so the
+   modulation period is several seconds. Original 44.1k values scaled
+   by 44100/48000 to preserve the same frequencies at the new rate. */
 static const uint32_t slot_lfo_inc[N_VOICES] = {
-     6818,  9738,       /* bass: 0.07, 0.10 Hz */
-    10711,  8276, 12166,/* chord: 0.11, 0.085, 0.125 Hz */
-    14606, 11684, 17527,/* melody: 0.15, 0.12, 0.18 Hz */
+     6263,  8946,       /* bass: 0.07, 0.10 Hz */
+     9841,  7603,11178, /* chord: 0.11, 0.085, 0.125 Hz */
+    13418,10737,16103,  /* melody: 0.15, 0.12, 0.18 Hz */
 };
 
 /* Pan jitter range per role (centered): bass tight, chord medium,

@@ -23,9 +23,10 @@
 #define MUTATE_DEFAULT     4u
 #define MUTATE_LFO_INC     512u    /* 65536 / 512 = 128-bar period */
 
-/* 48 substeps * 1837 samples = 88176 samples = 2.00 s per bar
-   (matches the old 16 steps * 5512). Tempo control scales this. */
-static uint32_t samples_per_substep = 1837u;
+/* 48 substeps * 2000 samples = 96000 samples = 2.00 s per bar at
+   48 kHz (rescaled from the prior 1837 at 44.1 kHz). Tempo control
+   scales this. */
+static uint32_t samples_per_substep = 2000u;
 
 static uint32_t gen_prng_state = 0xDEADBEEFu;
 static uint32_t prng(void) {
@@ -379,10 +380,10 @@ void gen_force_mutate(void) {
 void gen_set_tempo(int delta_pct) {
     int32_t new_val = (int32_t)samples_per_substep
                     + ((int32_t)samples_per_substep * delta_pct) / 100;
-    /* Range: ~700 (faster) .. ~7000 (slower), keeping the bar between
-       ~0.75 s and ~7.5 s. */
-    if (new_val < 700)  new_val = 700;
-    if (new_val > 7000) new_val = 7000;
+    /* Range: ~760 (faster) .. ~7600 (slower) at 48 kHz, keeping the
+       bar between ~0.75 s and ~7.5 s. */
+    if (new_val < 760)  new_val = 760;
+    if (new_val > 7600) new_val = 7600;
     samples_per_substep = (uint32_t)new_val;
 }
 
