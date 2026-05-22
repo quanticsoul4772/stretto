@@ -7,7 +7,8 @@
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <termios.h>
-#include <alsa/asoundlib.h>
+#include <pulse/simple.h>
+#include <pulse/error.h>
 
 #include "arena.h"
 #include "voice.h"
@@ -15,12 +16,10 @@
 
 #define SAMPLE_RATE    48000
 #define BUFFER_FRAMES  1024
-/* 300 ms ALSA buffer. Native Linux is happy at 100 ms; WSLg's
-   libasound -> pulse plugin -> WSLg -> Windows audio pipeline has
-   variable scheduling jitter on the Windows side that causes
-   underruns (audible as crackles) at the tighter setting. 300 ms
-   absorbs the jitter at the cost of ~200 ms extra live-mode lag.
-   Render mode is unaffected; this is an ALSA-only setting. */
+/* 300 ms playback latency. WSLg's libasound -> pulse-plugin chain
+   crackles at sustained 48 kHz output; using libpulse-simple
+   directly (same path paplay uses) is clean. This latency value is
+   passed to pulse as the target buffer length. */
 #define LATENCY_US     300000
 
 /* Master-bus stereo delay. Two independent mono buffers (one per
@@ -370,7 +369,7 @@ static void render_wav(int seconds, const char *path) {
     fclose(f);
 }
 
-static void play_alsa(void) {
+static void play_pulse(void) {
     if (tcgetattr(0, &saved_termios) < 0) {
         fprintf(stderr, "tcgetattr: %s\n", strerror(errno));
         exit(1);
@@ -393,36 +392,39 @@ static void play_alsa(void) {
         exit(1);
     }
 
-    snd_pcm_t *pcm;
-    int err = snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK, 0);
-    if (err < 0) {
-        fprintf(stderr, "alsa: %s\n", snd_strerror(err));
-        exit(1);
-    }
-    err = snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED,
-                             2, SAMPLE_RATE, 1, LATENCY_US);
-    if (err < 0) {
-        fprintf(stderr, "alsa: %s\n", snd_strerror(err));
+    /* libpulse-simple direct: avoids libasound's pulse plugin which
+       glitches on sustained 48 kHz output under WSLg. Same final
+       audio path as paplay, no resampling in between. */
+    pa_sample_spec ss;
+    ss.format = PA_SAMPLE_S16LE;
+    ss.rate = SAMPLE_RATE;
+    ss.channels = 2;
+
+    pa_buffer_attr ba;
+    /* tlength = target buffer in bytes = rate * channels * bytes/sample
+       * latency_us / 1e6. Other fields = -1 means "server default". */
+    ba.maxlength = (uint32_t)-1;
+    ba.tlength = (uint32_t)((uint64_t)SAMPLE_RATE * 4u * LATENCY_US / 1000000u);
+    ba.prebuf = (uint32_t)-1;
+    ba.minreq = (uint32_t)-1;
+    ba.fragsize = (uint32_t)-1;
+
+    int pa_err = 0;
+    pa_simple *pa = pa_simple_new(NULL, "stretto", PA_STREAM_PLAYBACK, NULL,
+                                  "music", &ss, NULL, &ba, &pa_err);
+    if (!pa) {
+        fprintf(stderr, "pulse: %s\n", pa_strerror(pa_err));
         exit(1);
     }
 
     int16_t *buf = arena_alloc(BUFFER_FRAMES * 2 * sizeof(int16_t));
+    size_t buf_bytes = BUFFER_FRAMES * 2u * sizeof(int16_t);
 
     for (;;) {
         render_chunk(buf, BUFFER_FRAMES);
-        snd_pcm_sframes_t frames = snd_pcm_writei(pcm, buf, BUFFER_FRAMES);
-        if (frames < 0) {
-            /* Attempt recovery from xruns (EPIPE), suspends (ESTRPIPE),
-               and interrupts. snd_pcm_recover handles those internally;
-               for anything else it returns the original error. */
-            int rc = snd_pcm_recover(pcm, (int)frames, 1);
-            if (rc < 0) {
-                fprintf(stderr, "alsa: %s\n", snd_strerror(rc));
-                exit(1);
-            }
-            /* Recovered. Skip this buffer's oscilloscope update to keep
-               the gen state advancing; the next iteration will catch up. */
-            continue;
+        if (pa_simple_write(pa, buf, buf_bytes, &pa_err) < 0) {
+            fprintf(stderr, "pulse: %s\n", pa_strerror(pa_err));
+            exit(1);
         }
 
         if (!help_visible) draw_oscilloscope(buf, BUFFER_FRAMES);
@@ -459,7 +461,8 @@ static void play_alsa(void) {
             else if (ch == 'r') reverb_adjust_wet(-16);
             else if (ch == 'R') reverb_adjust_wet(+16);
             else if (ch == 'q') {
-                snd_pcm_close(pcm);
+                pa_simple_drain(pa, NULL);
+                pa_simple_free(pa);
                 restore_terminal();
                 exit(0);
             }
@@ -491,7 +494,7 @@ int main(int argc, char **argv) {
         render_wav((int)seconds, argv[3]);
         fprintf(stderr, "arena: %zu/%d bytes used\n", arena_used(), HEAP_BYTES);
     } else if (argc == 1) {
-        play_alsa();
+        play_pulse();
     } else {
         fprintf(stderr, "usage: %s [--render <seconds> <output.wav>]\n", argv[0]);
         exit(1);
