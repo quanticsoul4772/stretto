@@ -2,217 +2,314 @@
 
 ## Overview
 
-`stretto` is a single-process Linux audio program that mixes generated music to an ALSA device or a WAV file. It compiles to a stripped ELF around 19 KB and packs with UPX to ~12.9 KB. All runtime allocations come from a single 64 KB static arena. The audio thread is the main thread; no concurrency primitives are used.
+`stretto` is a single-process audio synthesizer that mixes generated music to PulseAudio (Linux), Win32 `waveOut` (Windows), or a WAV file. All runtime allocations come from a single static 128 KB arena. The audio thread is the main thread; on Linux a `pa_threaded_mainloop` helper thread services the PulseAudio event loop, and on Windows the `waveOut` callback fires an event the main thread waits on — neither model requires cross-thread synchronization inside our code.
+
+| Binary | Size |
+|---|---|
+| Linux `synth` (stripped) | ~29 KB |
+| Linux `synth.packed` (UPX) | ~14 KB |
+| Windows `stretto.exe` (stripped) | ~210 KB |
+| Windows `stretto.packed.exe` (UPX) | ~30 KB |
 
 ## Module layout
 
 ```
-main.c            argv, ALSA open/write loop with xrun recovery, WAV writer,
-                  terminal UI (raw stdin, status row, oscilloscope, key handler)
-voice.c / .h      Voice struct, KS, FM, ADSR, SVF; role-scoped voice pool
-gen.c   / .h      sample clock, three scales, Rule-110 + Rule-30 CAs, Markov chain,
-                  Bjorklund Euclidean rhythm, mutation, role-based scheduling
-arena.c / .h      static pool[65536], 8-byte-aligned bump allocator, oom = exit(1)
-gen_sin_table.c   build-time generator: 1024-entry int16 sine LUT (peak 24576)
-gen_env_table.c   build-time generator: 256-entry uint8 exponential envelope curve
-gen_note_table.c  build-time generator: 128 MIDI notes -> {phase increment, KS buffer length}
-gen_euclid_table.c build-time generator: 17 16-bit Bjorklund Euclidean masks E(0..16, 16)
+main.c            argv, audio backend (PulseAudio / waveOut), WAV writer,
+                  terminal UI (cross-platform raw mode + key polling +
+                  oscilloscope + status row), master-bus delay + reverb +
+                  soft saturation
+voice.c / .h      Voice struct (KS / FM / drum), ADSR, SVF, per-voice peak
+                  normalization, role-scoped voice pool of 11 slots
+gen.c   / .h      sample clock, six scales, Rule-110 + Rule-30 CAs, Markov
+                  chain, Bjorklund Euclidean rhythm, drum pattern banks,
+                  bass / chord / melody / counter-melody / drum scheduling,
+                  dynamic mutation rate
+arena.c / .h      static pool[131072], 8-byte-aligned bump allocator
+gen_sin_table.c   build-time: 1024-entry int16 sine LUT (peak 24576)
+gen_env_table.c   build-time: 256-entry uint8 exponential envelope curve
+gen_note_table.c  build-time: 128 MIDI notes -> {phase increment, KS length}
+                  at the 48 kHz sample rate
+gen_euclid_table.c build-time: 17 16-bit Bjorklund masks E(0..16, 16)
 ```
 
-The `gen_*` programs run during `make`. They emit C headers (`sin_table.h`, `env_table.h`, `note_table.h`, `euclid_table.h`) that are `#include`d by `voice.c` and `gen.c`. The tables end up in `.rodata` of the final binary and do not consume arena space.
+The `gen_*` programs run during `make` and emit C headers (`sin_table.h`, `env_table.h`, `note_table.h`, `euclid_table.h`) that are `#include`d by `voice.c` and `gen.c`. Tables end up in `.rodata` of the final binary; they do not consume arena space.
 
 ## Audio path
 
 ```
-gen_step ──► voice_pool_trigger_role ──► Voice[0..7] ──► voice_pool_mix ──► render_chunk ──► snd_pcm_writei
-                                                                                          └► fwrite (WAV)
+gen_step ──► voice_pool_trigger_role/_drum ──► Voice[0..10]
+                                                    │
+                                                    ▼
+                                            voice_pool_mix (stereo)
+                                                    │
+                                                    ▼
+                                              render_chunk
+                                                    │
+                                            reverb_process
+                                                    │
+                                             delay_process
+                                                    │
+                                          saturate_process
+                                                    │
+                              ┌─────────────────────┼─────────────────────┐
+                              ▼                     ▼                     ▼
+                       pa_stream_write       waveOutWrite          fwrite (WAV)
+                       (Linux)               (Windows)             (--render)
 ```
 
-Each call to `render_chunk(buf, frames)` produces `frames` mono int16 samples. It is the only path that advances the sample clock and the only function called by both live and render modes. This guarantees live and render outputs are sample-identical given the same starting state.
+`render_chunk(buf, frames)` fills `2 * frames` int16 samples in interleaved L,R order. It is the only function that advances the sample clock, so live and render outputs are sample-identical given the same starting state and the same seed.
 
-### Voice roles
+## Voice pool (11 slots, 4 roles)
 
-The 8-voice pool is partitioned into three role groups:
+| Slots | Role | Synth type | Envelope | Pan |
+|---|---|---|---|---|
+| 0–1 | Bass | FM, 1:1 ratio, mod_depth 200 | A 50 ms / R 1000 ms | Center |
+| 2–4 | Chord | FM, 2:1 ratio, mod_depth 1500 | A 20 ms / R 600 ms | L / C / R |
+| 5–7 | Melody | KS or FM alternating | A 5 ms / R 600 ms | Outer L / R |
+| 8 | Kick | DRUM, sine sweep + click | A 1 ms / linear R 150 ms | Center |
+| 9 | Snare | DRUM, noise + 200 Hz body | A 0.5 ms / linear R 100 ms | Slight R |
+| 10 | Hihat | DRUM, white noise | A 0.5 ms / linear R 30 ms | Slight L |
 
-| Slots | Role | Envelope | FM mod_depth | FM ratio | Pitch offset |
-|---|---|---|---|---|---|
-| 0–1 | Bass   | A 50 ms / R 1000 ms | 200 (fixed) | 1:1 | -12 semitones |
-| 2–4 | Chord  | A 20 ms / R 600 ms  | 1500 (fixed) | 2:1 | 0 |
-| 5–7 | Melody | A 5 ms / R 600 ms   | 1500 default, user-tunable | 2:1 | 0 |
+Voice stealing (`pick_slot_range`) only searches within a role's reserved range, so a chord trigger never displaces a bass voice. Drum slots are dedicated per drum type — no stealing inside the kit.
 
-Decay (200 ms) and sustain (50%) are shared across roles. Voice stealing (`pick_slot_range`) only searches within a role's reserved range so a chord trigger never displaces a bass voice and vice versa.
-
-### Voice struct
+## Voice struct
 
 ```
-type            VOICE_OFF | VOICE_KS | VOICE_FM
-note            MIDI 0..127
+type            VOICE_OFF | VOICE_KS | VOICE_FM | VOICE_DRUM
+note            MIDI 0..127 (or drum sub-type for VOICE_DRUM)
 env_phase       ENV_OFF | ENV_A | ENV_D | ENV_R
-role            ROLE_BASS | ROLE_CHORD | ROLE_MELODY
+role            ROLE_BASS | ROLE_CHORD | ROLE_MELODY | ROLE_DRUM
+pan             0 = full L, 128 = center, 255 = full R
 env_amp         0..32767, ADSR amplitude
 env_time        sample count since current phase started
-svf_lp, svf_bp  int32 SVF state (widened from int16 to prevent resonance wrap)
+lfo_phase, lfo_inc       per-voice pan LFO (also drives FM pitch detune)
+peak_seen, gain, peak_window   per-voice peak normalization state
+svf_lp, svf_bp           int32 SVF state
 union:
-  ks { int16 buf[512], idx, len }
-  fm { uint32 phase_c, phase_m, inc_c, inc_m; uint16 mod_depth }
+  ks    { int16 buf[512], idx, len }
+  fm    { uint32 phase_c, phase_m, inc_c, inc_m; uint16 mod_depth }
+  drum  { uint32 phase, inc; uint8 drum_type }
 ```
 
-`voice_step` advances one sample of one voice through three stages: raw oscillator (KS or FM), envelope multiplication, then SVF. It returns the SVF lowpass output saturated to int16.
+`voice_step` advances one sample of one voice through five stages: raw oscillator (KS / FM / drum), envelope multiplication, SVF, per-voice peak-normalization gain, and finally a per-drum-type post-normalization boost (kick 3×, snare 2.5×, hihat 1.5×) so percussion sits on top of the harmonic content.
 
-`voice_pool_mix` calls `voice_step` for all 8 voices, sums to int32, and divides by 8 (right-shift 3). Result fits in int16 without further clipping at current per-voice amplitudes.
+`voice_pool_mix` calls `voice_step` for all 11 voices, applies per-voice pan (with slow LFO modulation) to produce L and R contributions, sums into int32 per channel, and returns a `Stereo` pair.
 
-### Karplus-Strong
+## Synthesis details
 
-On trigger, the voice's circular buffer of length `note_ks_len[note]` is filled with half-amplitude white noise from a dedicated xorshift32 PRNG. Each step outputs the head sample, then writes back the damped average of two adjacent samples:
+### Karplus-Strong (melody, sometimes)
 
-```
-out = buf[idx]
-avg = (a + b) * 32440 >> 16   (damp factor ≈ 0.99)
-buf[idx] = avg
-idx = (idx + 1) % len
-```
+On trigger, the voice's circular buffer of length `note_ks_len[note]` is filled with half-amplitude white noise. Each step outputs the head sample, then writes back the damped average of two adjacent samples (damp factor ≈ 0.99). The result is the classic plucked-string timbre.
 
-The dedicated PRNG is reseeded only at process start, so KS noise initialisation is part of the deterministic render output.
+### 2-op FM (bass / chord / melody)
 
-### 2-op FM
+Two uint32 NCOs share the sine LUT. Modulator output scales by `mod_depth` and offsets the carrier phase. `inc_m = inc_c * ratio` where ratio is 1:1 for bass (soft, sine-like) and 2:1 for chord/melody (bell-like).
 
-Two uint32 NCOs share the sine LUT. The modulator's output (signed int16) scales by `mod_depth` and offsets the carrier's phase:
+Per-voice LFO pitch detune (~5 cents peak) is layered on top of FM by reusing the pan LFO — same LFO sample, applied to both `inc_c` and `inc_m` proportionally so the FM ratio stays constant.
+
+### Drums
 
 ```
-mod = sin_table[phase_m >> 22]
-phase_m += inc_m
-phase_c_eff = phase_c + ((int32)mod * mod_depth) << 6
-out = sin_table[phase_c_eff >> 22]
-phase_c += inc_c
+KICK   sine wave starting at ~150 Hz; phase increment decays each sample
+       (inc -= inc >> 12) so pitch sweeps down to ~45 Hz over ~100 ms.
+       First 240 samples (~5 ms) blend a noise burst 50/50 with the sine
+       for an audible attack click on speakers with weak bass response.
+SNARE  white noise + ~200 Hz sine body, mixed 90/10 noise-dominant.
+HIHAT  pure white noise.
 ```
 
-`inc_m = inc_c * ratio` where the ratio is 1:1 for bass (gives a soft sine-like sub) and 2:1 for chord/melody (bell-ish). `mod_depth` is runtime-tunable in live mode via `[` and `]` keys for melody voices; bass and chord use fixed depths.
+All three use a one-shot envelope (ENV_A then straight to ENV_R, skipping decay/sustain) with per-drum-type linear release: kick 150 ms, snare 100 ms, hihat 30 ms.
 
-### Envelope
+### Envelope (ADSR)
 
-ADSR with per-role attack and release durations (`role_attack[]`, `role_release[]` tables in voice.c). Shared decay 8820 samples (~200 ms) and sustain 16384/32767 (~50%). The 256-entry `env_table[]` provides a `1 - exp(-x*5)` curve normalised to 0–255; attack reads it directly, decay and release read the inverse (`255 - env_table[idx]`).
+Per-role attack and release durations come from `role_attack[]` and `role_release[]`. Shared decay (200 ms) and sustain (50%) for pitched voices. Drums override the release with a linear `PEAK -> 0` ramp and skip decay/sustain entirely.
 
 ### State-variable filter
 
-A standard Chamberlin 2-pole topology:
+Chamberlin 2-pole topology, `SVF_F = 200`, `SVF_Q = 100`, both shifted by 8. Gives cutoff ~5.6 kHz and Q ≈ 2.56 at 44.1 kHz reference (slightly higher cutoff at the actual 48 kHz rate). State (`svf_lp`, `svf_bp`) is `int32_t` because Q ≈ 2.56 can ring the internal state above int16 range; the int16 saturation happens at the function's return.
+
+### Per-voice peak normalization
+
+Each trigger starts a 50 ms (2400-sample) measurement window. While the window is open, the running `peak_seen` updates whenever a new peak is found, and `gain` is recomputed as `PEAK_TARGET / peak_seen` (clamped to a 4× ceiling). The peak grows monotonically (envelope ramps, SVF settles), so gain only decreases — smooth ramp, no clicks. After the window expires, gain is frozen for the rest of the voice's life.
+
+Effect: loud voices (chord at full mod_depth) get attenuated; quiet voices (bass at mod_depth 200) get boosted up to 4×. The mix sits in a predictable amplitude range regardless of which voices are active.
+
+## Master bus
 
 ```
-hp = in - lp - (bp * damp)
-bp += hp * f1
-lp += bp * f1
+voice_pool_mix  ──► reverb_process ──► delay_process ──► saturate_process
+                    (Schroeder)        (stereo, 250ms)   (cubic soft sat)
 ```
 
-`SVF_F = 200`, `SVF_Q = 100`, both shifted by 8 (divided by 256). Gives cutoff ~5.6 kHz and Q ≈ 2.56 at 44.1 kHz. State (`svf_lp`, `svf_bp`) is `int32_t`, not `int16_t`. At Q ≈ 2.56 the SVF can ring the internal state to ~2.5× input amplitude; int16 would wrap and produce broadband clicks. Widening to int32 eliminates the wrap; output `lp` is saturated to int16 at return.
+### Schroeder reverb
+
+4 parallel comb filters feed 2 series all-pass filters, per channel. Comb feedback ~0.70, RT60 ~1.5 s. L and R use slightly different prime delays so the reverb tail keeps stereo separation.
+
+Comb delays (samples, primes near Schroeder's originals rescaled for 48 kHz):
+```
+L:  1693, 1759, 1621, 1549
+R:  1721, 1747, 1613, 1571
+```
+All-pass delays:
+```
+L: 241, 607     R: 251, 613
+```
+
+### Delay
+
+Two independent mono buffers (one per stereo channel) of 12000 samples each (250 ms at 48 kHz). Standard feed-forward + feedback:
+```
+out = dry + tap * wet
+delay_buf[idx] = dry + tap * feedback
+```
+Default `wet = 100/256`, `feedback = 140/256` (cap 200/256 to avoid runaway).
+
+### Soft saturation
+
+Cubic transfer curve `y = x - x^3 / 2^31`. Linear for small `x`; gracefully compresses peaks. Per-channel, last in the chain so any peaks reverb / delay introduce are smoothed before the device.
 
 ## Generative path
 
-A single sample clock drives everything. `gen_step` is called once per output sample by `render_chunk`. It compares `sample_clock` to `next_step` and on each step boundary:
+A single 48 kHz sample clock drives everything. The bar grid is **48 substeps** per bar (LCM of 3, 4, 16), giving 1.999 s at default tempo and supporting true 3-against-4 polyrhythm between bass and chord. `gen_step` is called once per output sample by `render_chunk`; it compares `sample_clock` to `next_step` and on each substep boundary does:
 
-1. If start of bar: advance `ca_row` (Rule 110), increment `bar_count`. Every `MUTATE_BARS` (4) bars call `mutate()`. The current scale (`cur_scale`) never changes automatically; only the `s` key in live mode cycles it.
-2. Every 4 steps: advance `ca_harm` (Rule 30).
+1. **At substep 0 of a bar**: advance `ca_row` (Rule 110), increment `bar_count`. Advance the mutation LFO. Decrement `bars_until_mutate`; when it reaches 0, call `mutate()` and reload from `dynamic_mutate_interval()`.
+2. **Every 12 substeps** (i.e. 4 times per bar): advance `ca_harm` (Rule 30).
 3. Compute `active_mask = (ca_row & 0x7F) & (ca_harm_mask | 0x11)` — degrees allowed this bar.
-4. Compute Euclidean `hits = euclid_table[eucl_k_a] | euclid_table[eucl_k_b]`. Determine if step is a hit.
-5. Fire role triggers:
-   - **Bass** at step 0: root or dominant (alternating by bar parity), one octave down.
-   - **Chord** at steps 0 and 8: up to three triad voices on degrees 0/2/4 filtered by active_mask.
-   - **Melody** on Euclidean hits: `markov_next(cur_degree, active_mask)` picks a degree; map via `SCALES[cur_scale][]`; type alternates KS/FM by step parity.
+4. Fire role triggers:
+   - **Drums** check three pattern bitmasks for the current substep.
+   - **Bass** checks `bass_substeps = {0, 18, 24, 42}` and fires root or fifth, octave down.
+   - **Chord** at substeps `{0, 12, 24, 36}` fires a 3-note voicing from a 6-pattern rotation (triad / 7th / sus4 / sus2 / inv1 / inv2), with each pitch octave-shifted toward the previous chord's centroid (voice leading).
+   - **Melody** at every 3rd substep (the 16-step Euclidean grid maps onto 48 substeps with stride 3): two parallel Euclidean rhythms `E(k_a) | E(k_b)`, Markov walk over scale degrees, probability-gated.
+   - **Counter-melody** on its own Euclidean `E(k_counter)` with an independent Markov walk, transposed +12 semitones.
 
 ### Scales
 
 ```
-SCALES[3][7] = {
-    /* Dorian   */ { 62, 64, 65, 67, 69, 71, 72 },
-    /* Lydian   */ { 62, 64, 66, 68, 69, 71, 73 },
-    /* Phrygian */ { 62, 63, 65, 67, 69, 70, 72 },
+SCALES[6][7] = {
+    /* Dorian          */ { 62, 64, 65, 67, 69, 71, 72 },
+    /* Lydian          */ { 62, 64, 66, 68, 69, 71, 73 },
+    /* Phrygian        */ { 62, 63, 65, 67, 69, 70, 72 },
+    /* Locrian         */ { 62, 63, 65, 67, 68, 70, 72 },
+    /* Harmonic Minor  */ { 62, 64, 65, 67, 69, 70, 73 },
+    /* Mixolydian      */ { 62, 64, 66, 67, 69, 71, 72 },
 };
 ```
 
-The Markov runs on degree indices (0..6), so a single 7×7 matrix applies to any 7-note scale. Only the degree-to-MIDI mapping changes when `cur_scale` rotates. `cur_scale` resets to 0 in `gen_init` for render-mode determinism. Auto-rotation happens at the 32-bar boundary inside `gen_step`; the `s` key in live mode cycles manually.
+Markov runs on degree indices (0..6), so a single 7×7 matrix applies to any 7-note scale. Only the degree-to-MIDI mapping changes when `cur_scale` rotates. Scale never auto-rotates; only the `s` key in live mode cycles it.
 
-### Markov chain
+### Chord voicings
 
-`markov[from][to]` is a 7×7 `uint8_t` matrix of unnormalised weights. `markov_next` sums weights for columns in the active mask, draws `prng() % sum`, and walks. Initial weights are hand-tuned with these principles:
+```
+CHORD_PATTERNS[6][3] = {
+    triad    : (0,0)  (2,0)  (4,0)     1 - 3 - 5
+    seventh  : (0,0)  (2,0)  (6,0)     1 - 3 - 7    (drops 5 to fit 7)
+    sus4     : (0,0)  (3,0)  (4,0)     1 - 4 - 5
+    sus2     : (0,0)  (1,0)  (4,0)     1 - 2 - 5
+    inv1     : (2,0)  (4,0)  (0,1)     3 - 5 - 1'   (3rd in bass)
+    inv2     : (4,0)  (0,1)  (2,1)     5 - 1' - 3'  (5th in bass)
+};
+```
 
-- Stepwise motion (cols at ±1) weighted moderate (3–4).
-- Strong cadences: rows 4 (dominant) and 6 (leading) bias toward row 0 (tonic) with weight 5.
-- Diagonal is 0 — prevents stuck self-transitions.
-- Tonic (row 0) opens broadly to all degrees except itself, slight bias to dominant.
+Each entry is `(degree, octave_offset)`. Pattern index = `bar_count % 6`. After choosing the pattern, each pitch is octave-shifted to stay within ±8 semitones of the running chord centroid — that is the voice-leading step.
 
-`mutate()` modifies the matrix at runtime so it drifts from the initial seed.
+### Drum patterns
+
+```
+kick_patterns[4]   - cycles per bar (basic 1+3, syncopated, 4-on-floor, off-kilter)
+snare_patterns[3]  - classic 2+4, ghost-notes added, half-time
+hihat_patterns[5]  - 8ths, 16ths, quarters, offbeats only, triplet feel
+```
+
+Each is a uint64 bitmask where bit N = trigger at substep N. Coprime bank sizes (4, 3, 5) → combined kit cycles every LCM(4, 3, 5) = 60 bars (~2 minutes) before exact repeat.
+
+### Bass pattern
+
+4 events per bar at substeps `0, 18, 24, 42` — beats 1 and 3 anchor the tempo, offbeats at "and of 2" and "and of 4" anticipate. Pitch alternates root/fifth with bar parity swapping the order.
 
 ### Cellular automata
 
 Two CAs run in parallel:
+- `ca_row` (Rule 110, class IV) — 32-bit row advanced once per bar. Low 7 bits become the active-degree mask.
+- `ca_harm` (Rule 30, class III) — 32-bit row advanced every 12 substeps. ANDed with `ca_row & 0x7F` to filter degrees.
 
-- `ca_row` (Rule 110, class IV) — a 32-bit row advanced once per bar. Low 7 bits become the active-degree mask.
-- `ca_harm` (Rule 30, class III) — a second 32-bit row advanced every 4 steps. ANDed with `ca_row & 0x7F` to filter degrees.
+Pairing Rule 110 (long-period repeats alone) with Rule 30 (pure randomness alone) gives recurring structure with variation. If either CA collapses to zero it is reseeded.
 
-Pairing Rule 110 (which alone tends to settle into long-period repeats) with Rule 30 (which alone is too random) gives recurring structure with variation. If either CA collapses to all-zero it is reseeded.
+### Markov chain
+
+`markov[7][7]` of unnormalized `uint8_t` weights. `markov_next(cur, mask)` sums weights for columns in the active mask, draws `prng() % sum`, walks. Initial weights hand-tuned: stepwise motion weighted moderate, strong cadences (dominant/leading → tonic) weighted high, diagonal zero (no stuck self-transitions). `mutate()` modifies cells over time.
 
 ### Euclidean rhythm
 
-Two parameters `eucl_k_a` and `eucl_k_b` select two 16-step rhythm masks from `euclid_table[]`. The OR of the two masks defines hit positions inside a 16-step bar. `mutate()` alternates which one it bumps so both drift over time.
+True Bjorklund (recursive bucket merge). The 17-entry `euclid_table[]` holds `E(k, 16)` for `k = 0..16`. Two parameters `eucl_k_a` and `eucl_k_b` select two masks for the main melody; `eucl_k_counter` drives the counter-melody.
 
-The build-time generator implements true Bjorklund (recursive bucket merge, the Euclid-of-GCD algorithm). The resulting masks are the canonical tresillo, cinquillo, and related patterns. Popcount of `euclid_table[k]` equals `k` for all `k = 0..16`.
+### Dynamic mutation rate
+
+A triangle LFO sweeps the mutation interval between `MUTATE_MIN = 1` bar (busy section) and `MUTATE_MAX = 16` bars (calm section) over a 128-bar period (~4.3 min). At each bar boundary, `bars_until_mutate` decrements; on zero, `mutate()` fires and the counter reloads from the current LFO-derived interval. This gives natural alternation between dense and sparse passages.
 
 ### Mutation
 
-Triggered at the start of each bar where `bar_count % 4 == 0`. Mutation does three things:
-
-1. Re-rolls one cell of the Markov matrix (random row, random column, new value 0–15).
-2. Flips one bit of `ca_row` (16 possible positions).
-3. Bumps either `eucl_k_a` or `eucl_k_b` to a new value in its allowed range.
-
-Defenses: CA reseed on collapse, mod_depth clamping (100–8000), tempo clamping (samples_per_step 2000–20000), Euclidean k clamped to ≥ 1.
+Per call (`mutate()`):
+1. Re-roll one cell of the Markov matrix.
+2. Flip one bit of `ca_row` (with reseed if it collapses).
+3. Bump one Euclidean k (alternating `eucl_k_a` / `eucl_k_b`).
+4. With 25% probability: drift `gate_prob` by ±16, clamped to [64, 240].
+5. With 50% probability: re-roll `eucl_k_counter`.
 
 ## Memory model
 
 ```
-static uint8_t pool[65536] __attribute__((aligned(64)));
+static uint8_t pool[131072] __attribute__((aligned(64)));   // 128 KB
 static size_t bump;
 ```
 
-Allocations come from `arena_alloc(n)`, which rounds `n` up to 8-byte alignment, bumps the cursor, and exits on overflow. No free path. Lifetimes match the process lifetime. Typical usage at startup is ~10.4 KB of 64 KB.
+`arena_alloc(n)` rounds to 8-byte alignment, bumps the cursor, exits on overflow. No `free` path. Typical startup usage:
+
+```
+Voices (11 * sizeof(Voice))   ~11.6 KB
+Delay buffers (2 * 24 KB)        48 KB
+Reverb buffers (12 * varying)    27 KB
+Live render buffer                8 KB
+                                ───────
+                                ~95 KB / 128 KB available
+```
 
 ## Determinism
 
-All random state at process start is fixed:
+With `--seed N`, all random state is derived from `N`:
 
 ```
-voice.c PRNG seed = 0xCAFEBABE
-gen.c   PRNG seed = 0xDEADBEEF
-ca_row init       = 0x12345678
-ca_harm init      = 0x87654321
-cur_scale init    = 0 (Dorian)
-markov[] init     = hand-tuned constants
+gen_prng_state, ca_row, ca_harm = hash32(N), hash32(hash32(N)), hash32(hash32(hash32(N)))
+voice.c PRNG (KS noise)         = 0xCAFEBABE (fixed)
 ```
 
-Nothing reads the clock, environment, or filesystem during render. Two renders with the same binary produce byte-identical WAV output. This is the basis of the `make test` regression check.
+Without `--seed`, the seed is derived from `time(NULL)` at startup, so each launch produces a different generative output but every audio sample of any specific run is fully determined by that initial time stamp.
 
-## ALSA path
+`make test` renders 16 seconds with `--seed 0` twice, sha256-compares to verify byte-exact determinism, and checks the hash against `golden/regression_16s.sha256` to verify the algorithm hasn't drifted unexpectedly.
 
-Live mode opens `"default"` via `snd_pcm_open`, configures via `snd_pcm_set_params` (S16_LE, mono, 44100 Hz, ~100 ms latency), and writes 1024-frame blocks via `snd_pcm_writei`. On any negative return, `snd_pcm_recover(pcm, err, 1)` is called: it handles EPIPE (underrun), ESTRPIPE (PM suspend), and EINTR internally by re-preparing the stream. Only truly unrecoverable errors exit; the recovered iteration skips its oscilloscope update and continues.
+## Live audio backends
 
-On WSL2, this routes through libasound's `pulse` plugin into WSLg's PulseAudio bridge. On native Linux, it routes through libasound to whatever ALSA device `default` resolves to.
+### Linux: `pa_stream` + threaded mainloop
+
+Uses the full PulseAudio API (`pa_threaded_mainloop` + `pa_context` + `pa_stream`) with `PA_STREAM_INTERPOLATE_TIMING | PA_STREAM_AUTO_TIMING_UPDATE` — the same architecture `paplay` uses. The main loop blocks on `pa_stream_writable_size` and wakes when the write callback fires. 300 ms target buffer (passed via `pa_buffer_attr.tlength`).
+
+WSL2 + WSLg note: WSLg's RDP-based audio pipe is unreliable for sustained playback (multiple open GitHub issues against `microsoft/wslg`). Render to WAV and play on Windows, or run `stretto.exe` directly on Windows.
+
+### Windows: Win32 `waveOut`
+
+Four cycling buffers of 1024 frames each (~85 ms total latency). Opens via `waveOutOpen` with `CALLBACK_EVENT` so the main thread can wait on a single `HANDLE` for buffer completion — no callback function needed. After each `WHDR_DONE`, the freed buffer is filled by `render_chunk` and resubmitted via `waveOutWrite`. Links against `winmm.lib` only.
 
 ## Terminal UI
 
-Live mode configures raw stdin (no canonical mode, no echo) and `O_NONBLOCK` on fd 0. An `atexit` handler restores the saved termios so quitting via `q`, `Ctrl-C`, or any `exit(1)` path leaves the terminal usable.
+Platform-abstracted by four helpers in `main.c`:
+- `term_get_size(&w, &h)` — Unix `ioctl(TIOCGWINSZ)` / Windows `GetConsoleScreenBufferInfo`
+- `term_read_key(&ch)` — Unix non-blocking `read(0,...)` / Windows `_kbhit()` + `_getch()`
+- `term_raw_mode()` — Unix `tcsetattr` / Windows `SetConsoleMode` with `ENABLE_VIRTUAL_TERMINAL_PROCESSING` for ANSI escapes
+- `term_restore_mode()` — restore on exit
 
-Drawing happens after each `snd_pcm_writei`. The cursor is moved home with `\x1b[H` (no full screen clear, to avoid flicker), the status row is written, then the oscilloscope. Each row is preceded by `\x1b[2K` (erase line) so width changes do not leave artifacts.
+The oscilloscope draws each frame into a 24 KB static buffer (one `write()` syscall per frame to keep terminal I/O from blocking the audio loop) with ANSI 16-color escapes inline. Color escapes are RLE-emitted — only when intensity changes between cells — to keep per-frame byte count modest.
 
-Status row format: `M:<mod_depth> S:<D|L|P> V:<8 activity dots>`.
+## Build details
 
-Amplitude thresholds in `draw_oscilloscope` are calibrated to the actual signal range (~10000 peak after roles + multi-scale).
+Linux flags (`-Os -flto -ffunction-sections -fdata-sections -Wl,--gc-sections`) and `strip -s -R .comment` are standard. `make pack` runs UPX `--ultra-brute` on top for a final ~33% reduction.
 
-## Size discipline
-
-Compiler flags (`-Os -flto -ffunction-sections -fdata-sections -Wl,--gc-sections`) and stripping (`strip -s -R .comment`) are conventional. `-no-pie` is required by the absence of `-fpic`.
-
-`make pack` runs UPX `--ultra-brute` for the final ~33% reduction. UPX decompresses in-memory at runtime; no `/tmp` file is written.
-
-Current sizes:
-- unpacked synth: 19,264 bytes
-- UPX packed:     12,860 bytes (572 bytes over PLAN.md's 12,288 threshold)
-
-The pre-roles baseline was ~11.8 KB packed. Adding bass/chord/melody roles, multi-scale rotation, Bjorklund Euclidean, status row, and the runtime mod_depth control added ~1.1 KB packed. The growth was accepted in favour of musical richness; further reductions (musl static link, custom `_start`, hand-written linker script) remain available if needed.
+Windows cross-compile uses `x86_64-w64-mingw32-gcc` with the same size flags. `make winpack` adds UPX. The packed Windows binary is ~30 KB — well under the 64 KB target from the original PLAN.md and the demoscene "tiny generative synth" tradition.

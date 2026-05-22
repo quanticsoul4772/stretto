@@ -1,125 +1,124 @@
 # stretto
 
-A small generative music synthesizer for Linux. Sub-13 KB packed binary. C99. No malloc.
+A generative music synthesizer. Plays live on Linux (PulseAudio) or Windows (waveOut), or renders to a 48 kHz stereo WAV file. C99, no malloc, single static arena.
+
+| Binary | Size |
+|---|---|
+| Linux `synth` (stripped) | ~29 KB |
+| Windows `stretto.exe` (stripped + UPX) | ~30 KB |
 
 ## Build
+
+### Linux
 
 ```
 make
 ```
 
-Produces a stripped `synth` ELF (~19 KB). To pack to the ≤12.5 KB target:
+Produces `./synth`. Needs `gcc`, `make`, `libpulse-dev`.
+
+### Windows (cross-compile from Linux / WSL)
+
+```
+make win        # produces stretto.exe (~210 KB, stripped)
+make winpack    # additionally produces stretto.packed.exe (~30 KB, UPX-packed)
+```
+
+Needs `gcc-mingw-w64-x86-64` and `upx`. The packed `.exe` is a single-file native Windows binary — no WSL, no runtime dependencies beyond the bundled Windows kernel + multimedia DLLs.
+
+### Optional: UPX-pack the Linux build
 
 ```
 make pack
 ```
 
-(uses UPX). Override the UPX path with `make UPX_BIN=/path/to/upx pack` if it is not on `$PATH`.
-
-Requires `gcc`, `make`, `libasound2-dev`, and (for packing) `upx`.
+Produces `synth.packed` (~14 KB).
 
 ## Run
 
 ### Live mode
 
 ```
-./synth
+./synth                  # Linux
+.\stretto.exe            # Windows (in PowerShell or CMD)
 ```
 
-Plays generative audio out the default ALSA device and draws an ASCII oscilloscope sized to the terminal.
-
-Status row at the top of the terminal:
-
-```
-M:<mod_depth> S:<scale> V:<8 voice activity dots>
-```
-
-- `M` — current FM modulation depth (100–8000, default 1500).
-- `S` — current scale (`D` Dorian / `L` Lydian / `P` Phrygian / `l` Locrian / `H` Harmonic minor / `M` Mixolydian). Press `s` to cycle.
-- `V` — eight characters, one per voice. `*` means the voice is firing or sustaining; `.` means it is silent.
-
-### Live keyboard controls
-
-| Key | Action |
-|---|---|
-| `SPACE` | Force a mutation (re-roll one Markov weight, flip one CA bit, change one Euclidean k) |
-| `+` | Tempo up 10% |
-| `-` | Tempo down 10% |
-| `[` | FM `mod_depth` down by 200 (cleaner) |
-| `]` | FM `mod_depth` up by 200 (more harmonics) |
-| `s` | Cycle scale (Dorian → Lydian → Phrygian → …) |
-| `q` | Quit (restores terminal state) |
-| `Ctrl-C` | Same as `q` via atexit handler |
-
-ALSA underruns and PM suspends are recovered automatically via `snd_pcm_recover`; only truly unrecoverable errors stop the program.
+Plays generative audio out the default audio device, draws an ASCII oscilloscope sized to the terminal. Different generative output every launch (PRNG seeded from the system clock).
 
 ### Render mode
 
 ```
 ./synth --render <seconds> <output.wav>
+.\stretto.exe --render <seconds> <output.wav>
 ```
 
-Writes a mono 16-bit 44.1 kHz PCM WAV. No audio device opened. Used for regression tests and offline analysis. Seconds must be an integer in 1..3600.
+Writes a stereo 16-bit 48 kHz WAV. Seconds in `1..3600`. No audio device opened.
 
-## Architecture
+### Reproducible runs
 
-### Voice roles
+```
+./synth --seed <N>
+./synth --render 60 song.wav --seed 12345
+```
 
-The 8-voice pool is split into three role groups, each with its own envelope shape, FM parameters, and pitch range:
+Fixes the PRNG / cellular automaton / Markov seeds to `N`. Same `--seed` always produces the same audio (this is how the regression test works).
 
-| Slots | Role | Synth |
-|---|---|---|
-| 0–1 | Bass | FM, mod_depth 200, ratio 1:1, attack 50 ms, release 1 s, pitch -12 semitones |
-| 2–4 | Chord | FM, mod_depth 1500, ratio 2:1, attack 20 ms, release 600 ms |
-| 5–7 | Melody | KS or FM alternating, mod_depth user-tunable, attack 5 ms, release 600 ms |
+## Keyboard controls (live mode)
 
-Voice stealing is constrained to a role's reserved slot range so the bass never displaces melody and vice versa.
-
-### Synthesis
-
-- **Karplus-Strong** plucked-string voices. Noise-initialised circular buffer, damped average feedback (factor ~0.99).
-- **2-op FM** voices. Carrier and modulator NCOs sharing one 1024-entry sine LUT. Modulator ratio is 1:1 for bass, 2:1 for chord and melody.
-- **ADSR envelope** per voice. Attack / release durations are per-role; decay (200 ms) and sustain (50%) are shared.
-- **State-variable filter** per voice. 2-pole Chamberlin lowpass at ~5.6 kHz, Q ≈ 2.56. State stored as `int32_t` to prevent resonance wrap; output saturates to `int16_t`.
-- **Mix**: sum 8 voices into int32, divide by 8 at the output stage.
-
-### Generative layer
-
-- **Scales**: D Dorian, D Lydian, D Phrygian, D Locrian, D Harmonic Minor, D Mixolydian. The `s` key cycles between them; scale never changes automatically. Markov runs on degree indices so a single matrix applies to any 7-note scale.
-- **Rule 110 cellular automaton** (`ca_row`, 32-bit). Low 7 bits select which scale degrees are active for the current bar.
-- **Rule 30 CA** (`ca_harm`) advances every 4 steps and ANDs into the active mask to introduce harmonic variation. Pairing 110 with 30 avoids the long repeats of 110 alone and the pure randomness of 30 alone.
-- **Markov chain** (7×7 weights) picks the next melody degree from the active mask. Initial weights are hand-tuned: stepwise motion weighted, leading-tone and dominant cadences favour tonic. Weights mutate at runtime.
-- **Euclidean rhythm**: two parallel `E(k, 16)` masks (`eucl_k_a`, `eucl_k_b`) combined for the melody trigger pattern. Patterns are true Bjorklund (tresillo, cinquillo, etc.).
-- **Per-role scheduling**:
-  - Bass: once per bar on root or dominant, one octave below the scale.
-  - Chord: at steps 0 and 8, fires the root/3rd/5th triad filtered by the active mask.
-  - Melody: existing Euclidean rhythm restricted to voices 5–7.
-- **Mutation**: every 4 bars (~8 s) re-rolls one Markov weight, flips one CA bit, and bumps one Euclidean k.
-
-### Memory
-
-All runtime state lives in a single static `pool[65536]` arena with an 8-byte-aligned bump allocator. No `malloc`, no `free`. Tables (sine, envelope, MIDI note increments, Euclidean patterns) are generated at build time and embedded as `static const` arrays in `.rodata`. Arena usage at startup is ~10.4 KB of the 64 KB budget.
-
-### Determinism
-
-Render mode produces bit-exact identical output across runs of the same binary. Two PRNGs (one in `voice.c` for KS noise, one in `gen.c` for Markov/mutation), `ca_row`, `ca_harm`, and `cur_scale` are seeded with fixed constants on every `gen_init`. No reads of clock, environment, or filesystem during render.
-
-## Files
-
-| File | Purpose |
+| Key | Action |
 |---|---|
-| `main.c` | Argv, ALSA setup, render loop, WAV writer, terminal UI |
-| `voice.c` / `voice.h` | Voice struct, KS, FM, ADSR, SVF, role-based voice pool |
-| `gen.c` / `gen.h` | Sample clock, scales, CAs, Markov, Euclidean, mutation |
-| `arena.c` / `arena.h` | Static arena and bump allocator |
-| `gen_sin_table.c` | Build-time generator for 1024-entry sine LUT |
-| `gen_env_table.c` | Build-time generator for 256-entry envelope curve |
-| `gen_note_table.c` | Build-time generator for 128-entry MIDI note tables |
-| `gen_euclid_table.c` | Build-time generator for Bjorklund Euclidean masks |
-| `Makefile` | Build orchestration (`make`, `make pack`, `make test`, `make golden`) |
-| `tests/test_bitexact.sh` | Renders twice, sha256-compares, also checks against golden |
-| `golden/regression_16s.sha256` | Reference hash for 16-second render |
-| `PLAN.md` | Original design document |
+| `SPACE` | Force a mutation (re-roll one Markov weight, flip one CA bit, change one Euclidean k) |
+| `+` / `-` | Tempo up / down 10% |
+| `[` / `]` | FM `mod_depth` down / up by 200 |
+| `s` | Cycle scale (Dorian → Lydian → Phrygian → Locrian → Harmonic Minor → Mixolydian) |
+| `g` / `G` | Gate probability down / up by 16 |
+| `r` / `R` | Reverb wet mix down / up by 16 |
+| `d` / `D` | Delay wet mix down / up by 16 |
+| `f` / `F` | Delay feedback down / up by 16 |
+| `?` | Toggle help overlay |
+| `q` | Quit (restores terminal state) |
+| `Ctrl-C` | Same as `q` via atexit handler |
+
+## Status row
+
+Colored single-line status at the top of the terminal:
+
+```
+M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2
+```
+
+| Field | Meaning |
+|---|---|
+| `M` | FM `mod_depth` (100–8000) |
+| `S` | Scale: `D` Dorian, `L` Lydian, `P` Phrygian, `l` Locrian, `H` Harmonic Minor, `M` Mixolydian |
+| `V` | 11 activity dots — `*` = firing, `.` = silent. Colored: red bass (slots 0–1), green chord (2–4), blue melody (5–7), yellow drums (8–10) |
+| `G` | Gate probability (0–255) |
+| `R` | Reverb wet mix (0–256) |
+| `D` | Delay `wet/feedback` (0–256 / 0–200) |
+| `deg` | Current Markov walk position (0–6) |
+| `act` | Active scale-degree mask (7 chars, `#` = active, `.` = suppressed by CA) |
+| `chord` | Current bar's voicing: `triad`, `7th`, `sus4`, `sus2`, `inv1`, `inv2` |
+
+The oscilloscope below paints with a heat-map palette: dim (silence) → blue → cyan → green → yellow → magenta → red (peak).
+
+## What you'll hear
+
+- **Bass** (FM, 1:1 ratio, 2 voices) — 4-event "bouncing" pattern per bar: substeps 0, 18, 24, 42. Alternates root and fifth, swaps order per bar.
+- **Chord** (FM, 2:1 ratio, 3 voices) — 4 voicings per bar at substeps 0, 12, 24, 36. Voicing cycles through triad / 7th / sus4 / sus2 / inv1 / inv2 each bar with voice leading (octave-shift to stay close to the previous chord).
+- **Melody** (Karplus-Strong + FM alternating, 3 voices) — Euclidean rhythm on a 16-step grid, Markov walk over scale degrees, probability-gated. Plus a counter-melody one octave up running an independent Markov + Euclidean.
+- **Drums** (3 voices: kick, snare, hihat) — kick is a sine pitch-sweep with attack click; snare is noise-dominant with a 200 Hz body; hihat is pure noise. Each drum cycles its own pattern bank — kick 4 / snare 3 / hihat 5 patterns → LCM of 60 bars before exact repeat.
+
+The whole texture sits in a Schroeder reverb tail and a 250 ms stereo delay, with soft cubic saturation at the master bus.
+
+## Architecture summary
+
+11 voices share a single sample clock at 48 kHz. The audio is mixed to stereo, run through reverb → delay → soft saturation, and either fed to `pa_stream_write` (Linux) / `waveOutWrite` (Windows) or written to a WAV file.
+
+A 48-substep bar (LCM of 3, 4, 16) supports 3-against-4 polyrhythm between bass and chord while keeping the melody on a 16-step Euclidean grid.
+
+Mutation runs at a dynamic rate driven by a slow triangle LFO that sweeps the mutation interval between 1 bar (busy section) and 16 bars (calm) over a ~4-minute cycle, so the piece naturally alternates between dense and sparse passages.
+
+See `ARCHITECTURE.md` for the detailed walkthrough.
 
 ## Tests
 
@@ -127,7 +126,9 @@ Render mode produces bit-exact identical output across runs of the same binary. 
 make test
 ```
 
-Renders 16 seconds of audio twice and checks sha256 against `golden/regression_16s.sha256`. After an intentional synth change:
+Renders 16 seconds with `--seed 0` twice and verifies the output bytes are identical (proves determinism), plus checks against the stored hash in `golden/regression_16s.sha256` (proves the algorithm hasn't drifted).
+
+After an intentional change:
 
 ```
 make golden
@@ -135,19 +136,25 @@ make golden
 
 regenerates the golden hash.
 
-## Sizes
+## Files
 
-| Artifact | Bytes |
+| File | Purpose |
 |---|---|
-| `synth` (stripped, dynamic-linked libasound + libc) | 19,264 |
-| `synth.packed` (UPX `--ultra-brute`) | 12,860 |
-
-Packed size targets ≤12,288 bytes (PLAN.md Phase 4) but is currently 572 bytes over after roles + multi-scale features were added. The growth was accepted in favour of musical richness.
+| `main.c` | argv parsing, audio backend (PA / waveOut), WAV writer, terminal UI |
+| `voice.c` / `.h` | Voice struct (KS / FM / drum), ADSR, SVF, role-based pool, peak normalization |
+| `gen.c` / `.h` | Sample clock, scales, CAs, Markov chain, Euclidean rhythm, drum patterns, mutation |
+| `arena.c` / `.h` | Static 128 KB pool with bump allocator |
+| `gen_*_table.c` | Build-time generators for sine / envelope / MIDI note / Bjorklund tables |
+| `Makefile` | `make`, `make win`, `make winpack`, `make pack`, `make test`, `make golden` |
+| `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
+| `golden/regression_16s.sha256` | Reference hash for the 16-second seed-0 render |
+| `PLAN.md` | Original design document (historical) |
 
 ## Environment notes
 
-- **Native Linux**: live audio routes through libasound to ALSA hardware.
-- **WSL2 + WSLg**: live audio routes through libasound → pulse plugin → WSLg → Windows audio. Render mode works in all environments.
+- **Native Linux**: live audio via libpulse direct (`pa_stream` API on a threaded mainloop).
+- **WSL2 + WSLg**: WSLg's audio pipe is unreliable for sustained playback (multiple GitHub issues open against `microsoft/wslg`). Run `stretto.exe` directly on Windows instead — it bypasses WSL entirely.
+- **Windows**: live audio via Win32 `waveOut` (mmsystem). No external dependencies beyond `kernel32` and `winmm`.
 
 ## License
 
