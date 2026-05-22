@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+void gen_seed(uint32_t seed);
 void gen_init(void);
 void gen_step(void);
 void gen_force_mutate(void);

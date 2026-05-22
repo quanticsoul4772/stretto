@@ -2,8 +2,8 @@
 set -e
 cd "$(dirname "$0")/.."
 
-./synth --render 16 /tmp/a.wav >/dev/null 2>&1
-./synth --render 16 /tmp/b.wav >/dev/null 2>&1
+./synth --render 16 /tmp/a.wav --seed 0 >/dev/null 2>&1
+./synth --render 16 /tmp/b.wav --seed 0 >/dev/null 2>&1
 
 if ! cmp -s /tmp/a.wav /tmp/b.wav; then
     echo "FAIL: determinism (renders differ)"

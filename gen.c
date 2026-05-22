@@ -2,6 +2,7 @@
 #include "voice.h"
 #include "euclid_table.h"
 #include <stdint.h>
+#include <time.h>
 
 /* Substep grid for true 3-against-4 polyrhythm. 48 = LCM(3, 4, 16):
      bass fires at 3 evenly-spaced positions (every 16 substeps)
@@ -228,14 +229,37 @@ static uint8_t dynamic_mutate_interval(void) {
     return (uint8_t)v;
 }
 
+/* Flag set by gen_seed; gen_init checks it and seeds from clock if
+   never explicitly seeded. */
+static int gen_seeded_explicitly = 0;
+
+/* xorshift32: turn one input seed into a sequence of well-distributed
+   uint32 values so PRNG, ca_row, and ca_harm all start from
+   independent points. */
+static uint32_t hash32(uint32_t x) {
+    if (x == 0) x = 1;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    return x;
+}
+
+void gen_seed(uint32_t seed) {
+    uint32_t s = hash32(seed ? seed : 1u);
+    gen_prng_state = s;
+    s = hash32(s);
+    ca_row = s ? s : 0x12345678u;
+    s = hash32(s);
+    ca_harm = s ? s : 0x87654321u;
+    gen_seeded_explicitly = 1;
+}
+
 void gen_init(void) {
     cur_degree         = 0;
     cur_degree_counter = 4;
     eucl_k_counter     = 4;
     prev_chord_center  = 67;
     cur_scale          = 0;
-    ca_row             = 0x12345678u;
-    ca_harm            = 0x87654321u;
     eucl_k_a           = 3;
     eucl_k_b           = 5;
     bar_count          = 0;
@@ -245,7 +269,12 @@ void gen_init(void) {
     gate_prob          = 200;
     mutate_lfo_phase   = 0;
     bars_until_mutate  = MUTATE_DEFAULT;
-    gen_prng_state     = 0xDEADBEEFu;
+
+    /* If the caller did not seed explicitly, derive seeds from the
+       wall clock so each launch is a different generative output. */
+    if (!gen_seeded_explicitly) {
+        gen_seed((uint32_t)time(NULL));
+    }
 }
 
 void gen_step(void) {
