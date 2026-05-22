@@ -379,12 +379,15 @@ int16_t voice_step(Voice *v) {
            (fenv_amp 32767 * 30 / 16384 ~= 60). Subtle sweep. */
         f_eff += ((int32_t)v->fenv_amp * 30) >> 14;
     }
+    /* Effective f_eff range [20, 230] gives 50 units of headroom above
+       the user's base ceiling (180) for LFO sweep and filter-envelope
+       motion to land without clipping. */
     if (f_eff < 20)  f_eff = 20;
-    if (f_eff > 220) f_eff = 220;
+    if (f_eff > 230) f_eff = 230;
 
     int32_t q_eff = (int32_t)svf_q_base + role_svf_q_off[v->role];
     if (q_eff < 0)   q_eff = 0;
-    if (q_eff > 230) q_eff = 230;  /* >240 self-oscillates with int32 state */
+    if (q_eff > 220) q_eff = 220;
 
     int32_t hp = shaped - v->svf_lp - ((v->svf_bp * q_eff) >> 8);
     int32_t bp = v->svf_bp + ((hp * f_eff) >> 8);
@@ -577,17 +580,20 @@ uint32_t voice_pool_active_mask(void) {
 /* Filter control API. Clamps keep the SVF stable - too-high f or q
    cause the state to overflow or self-oscillate uncontrollably even
    with int32 state. */
+/* User-tunable base ranges are intentionally tighter than the
+   effective-value clamps so LFO and filter-envelope modulation
+   always have room at the top of the dial. */
 void voice_adjust_cutoff(int delta) {
     int v = (int)svf_f_base + delta;
     if (v < 30)  v = 30;
-    if (v > 220) v = 220;     /* keep below SVF instability */
+    if (v > 180) v = 180;     /* leaves 50 units headroom for LFO+fenv */
     svf_f_base = (uint16_t)v;
 }
 
 void voice_adjust_resonance(int delta) {
     int v = (int)svf_q_base + delta;
     if (v < 0)   v = 0;
-    if (v > 220) v = 220;
+    if (v > 180) v = 180;     /* above ~180 the filter screeches */
     svf_q_base = (uint16_t)v;
 }
 
