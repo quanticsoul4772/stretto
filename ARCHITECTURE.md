@@ -316,16 +316,19 @@ Live render buffer                8 KB
 
 ## Determinism
 
-With `--seed N`, all random state is derived from `N`:
+With `--seed N`, all random state is derived from `N`. To avoid xorshift32's zero fixed point and to keep small seeds from colliding, `gen_seed` XORs the input with a constant before hashing:
 
 ```
-gen_prng_state, ca_row, ca_harm = hash32(N), hash32(hash32(N)), hash32(hash32(hash32(N)))
-voice.c PRNG (KS noise)         = 0xCAFEBABE (fixed)
+s = hash32(N ^ 0xDEADBEEFu)
+gen_prng_state = s
+ca_row         = hash32(s)
+ca_harm        = hash32(hash32(s))
+voice.c PRNG (KS noise) = 0xCAFEBABE (fixed)
 ```
 
-Without `--seed`, the seed is derived from `time(NULL)` at startup, so each launch produces a different generative output but every audio sample of any specific run is fully determined by that initial time stamp.
+Without `--seed`, `gen_init` derives the seed from `time(NULL)` at startup, so each launch produces a different generative output but every audio sample of any specific run is fully determined by that initial time stamp.
 
-`make test` renders 16 seconds with `--seed 0` twice, sha256-compares to verify byte-exact determinism, and checks the hash against `golden/regression_16s.sha256` to verify the algorithm hasn't drifted unexpectedly.
+`make test` renders 16 seconds with `--seed 0` twice, sha256-compares to verify byte-exact determinism, and checks the hash against `golden/regression_16s.sha256` to verify the algorithm hasn't drifted unexpectedly. See the **Testing** section below for the rest of the test surface.
 
 ## Live audio backends
 
@@ -348,6 +351,31 @@ Platform-abstracted by four helpers in `main.c`:
 - `term_restore_mode()` — restore on exit
 
 The oscilloscope draws each frame into a 24 KB static buffer (one `write()` syscall per frame to keep terminal I/O from blocking the audio loop) with ANSI 16-color escapes inline. Color escapes are RLE-emitted — only when intensity changes between cells — to keep per-frame byte count modest.
+
+`--no-ui` skips `term_raw_mode` entirely so the program can run from scripts and CI (no TTY on stdin) without `tcgetattr` exiting it. When `--no-ui` is set, the oscilloscope and key handler are also skipped; the audio loop just renders and plays continuously until SIGTERM / Ctrl-C / SIGINT.
+
+## Testing
+
+| Target | Scope |
+|---|---|
+| `make test` | Bit-exact regression: render 16 s at `--seed 0` twice, byte-compare, then sha256 against `golden/regression_16s.sha256`. |
+| `make test-unit` | ~50 unit tests across `tests/unit/test_arena.c`, `test_voice.c`, `test_gen.c` using the hand-rolled framework in `tests/unit/test.h`. |
+| `make test-multiseed` | Renders 4 s at seeds 0 / 1 / 42 / 12345, asserts each is deterministic across runs, asserts all four produce distinct sha256s, asserts each render's peak / RMS / clip count lands within sane bounds (catches runaway-state bugs), then matches each hash against `golden/regression_multiseed.sha256.txt`. |
+| `make test-smoke` | Spawns `./synth --no-ui` under a 2 s timeout. Pass on exit 0 / 124 / 143; fail on segfault. Auto-skips if no PulseAudio. |
+| `make coverage` | Rebuilds instrumented (`-fprofile-arcs -ftest-coverage`), runs the regression + unit suites, prints per-file line coverage via `gcov`. |
+
+The framework header `tests/unit/test.h` (~130 LOC) provides `TEST(name) {...}` registration via constructor attributes plus assertion macros (`ASSERT_TRUE` / `ASSERT_EQ` / `ASSERT_NE` / `ASSERT_NEAR` / `ASSERT_BETWEEN`). Each `tests/unit/test_*.c` links against `arena.o + voice.o + gen.o` (no `main.o`) and runs as a standalone binary.
+
+Approximate line coverage:
+
+| File | Coverage |
+|---|---|
+| `arena.c` | ~80% (OOM exit path excluded; not exercised by tests) |
+| `voice.c` | ~98% |
+| `gen.c` | ~97% |
+| `main.c` | ~70% (live-audio + interactive UI excluded by design) |
+
+CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `main`, plus the Windows cross-compile (`make winpack`). Coverage gate at 80% per file on `arena.c`, `voice.c`, `gen.c`. The Windows binary and coverage log are uploaded as build artifacts.
 
 ## Build details
 
