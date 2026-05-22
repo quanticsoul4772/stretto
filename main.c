@@ -418,19 +418,61 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     out[p++] = 0x1b; out[p++] = '['; out[p++] = '?'; out[p++] = '2'; out[p++] = '5'; out[p++] = 'l';
     out[p++] = 0x1b; out[p++] = '['; out[p++] = '2'; out[p++] = 'K';
 
-    /* Status row: M:<mod> S:<scale> V:<voices> */
-    uint32_t mask = voice_pool_active_mask();
+    /* Helper: append an unsigned decimal value to the output buffer. */
+    #define APPEND_NUM(val) do { \
+        unsigned _v = (unsigned)(val); \
+        char _t[6]; int _n = 0; \
+        do { _t[_n++] = '0' + _v % 10; _v /= 10; } while (_v); \
+        while (_n > 0) out[p++] = _t[--_n]; \
+    } while (0)
+
+    /* Status row:
+       M:<mod> S:<scale> V:<voices>   G:<gate>  R:<reverb_wet>
+       D:<delay_wet>/<delay_fb>  deg:<n>  act:<7-char bitmask>
+       chord:<voicing>  */
+    uint32_t voice_mask = voice_pool_active_mask();
     out[p++] = 'M'; out[p++] = ':';
-    unsigned v = voice_get_mod_depth();
-    char t[6]; int n = 0;
-    do { t[n++] = '0' + v % 10; v /= 10; } while (v);
-    while (n > 0) out[p++] = t[--n];
+    APPEND_NUM(voice_get_mod_depth());
     out[p++] = ' '; out[p++] = 'S'; out[p++] = ':';
     /* D=Dorian L=Lydian P=Phrygian l=Locrian H=Harmonic-minor M=Mixolydian */
     out[p++] = "DLPlHM"[gen_get_scale() % 6];
     out[p++] = ' '; out[p++] = 'V'; out[p++] = ':';
-    for (int i = 0; i < N_VOICES; i++) out[p++] = (mask & (1u << i)) ? '*' : '.';
+    for (int i = 0; i < N_VOICES; i++)
+        out[p++] = (voice_mask & (1u << i)) ? '*' : '.';
+
+    out[p++] = ' '; out[p++] = 'G'; out[p++] = ':';
+    APPEND_NUM(gen_get_gate());
+
+    out[p++] = ' '; out[p++] = 'R'; out[p++] = ':';
+    APPEND_NUM(reverb_wet);
+
+    out[p++] = ' '; out[p++] = 'D'; out[p++] = ':';
+    APPEND_NUM(delay_wet);
+    out[p++] = '/';
+    APPEND_NUM(delay_feedback);
+
+    out[p++] = ' '; out[p++] = 'd'; out[p++] = 'e'; out[p++] = 'g'; out[p++] = ':';
+    APPEND_NUM(gen_get_degree());
+
+    /* Active-degree mask: 7 bits, LSB = degree 0. '#' = active. */
+    out[p++] = ' '; out[p++] = 'a'; out[p++] = 'c'; out[p++] = 't'; out[p++] = ':';
+    {
+        uint8_t am = gen_get_active_mask();
+        for (int i = 0; i < 7; i++) out[p++] = (am & (1u << i)) ? '#' : '.';
+    }
+
+    /* Chord voicing name. Indexed by gen_get_chord_pattern() (0..5). */
+    out[p++] = ' ';
+    out[p++] = 'c'; out[p++] = 'h'; out[p++] = 'o'; out[p++] = 'r'; out[p++] = 'd'; out[p++] = ':';
+    {
+        static const char *names[6] = { "triad", "7th", "sus4", "sus2", "inv1", "inv2" };
+        const char *nm = names[gen_get_chord_pattern() % 6];
+        while (*nm) out[p++] = *nm++;
+    }
+
     out[p++] = '\r'; out[p++] = '\n';
+
+    #undef APPEND_NUM
 
     /* Oscilloscope grid: L channel, ASCII intensity per cell. */
     for (uint32_t r = 0; r < h; r++) {

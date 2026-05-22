@@ -15,5 +15,8 @@ void     gen_cycle_scale(void);
 uint8_t  gen_get_scale(void);
 void     gen_adjust_gate(int delta);
 uint8_t  gen_get_gate(void);
+uint8_t  gen_get_degree(void);
+uint8_t  gen_get_active_mask(void);
+uint8_t  gen_get_chord_pattern(void);
 
 #endif

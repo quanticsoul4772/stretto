@@ -423,6 +423,22 @@ uint32_t gen_get_bar(void) { return bar_count; }
 uint8_t  gen_get_step(void) { return (uint8_t)((substep_count % BAR_SUBSTEPS) / MELODY_SUBSTRIDE); }
 uint8_t  gen_get_scale(void) { return cur_scale; }
 uint8_t  gen_get_gate(void) { return gate_prob; }
+uint8_t  gen_get_degree(void) { return cur_degree; }
+
+/* Recompute the same active_mask gen_step uses each step, for UI
+   readout. ca_row contributes the low 7 bits; ca_harm bits 8-14
+   narrow it; fallback to tonic if everything zeroes. */
+uint8_t gen_get_active_mask(void) {
+    uint8_t m = (uint8_t)(ca_row & 0x7Fu);
+    uint8_t h = (uint8_t)((ca_harm >> 8) & 0x7Fu);
+    m = m & (h | 0x11u);
+    if (m == 0) m = 0x01u;
+    return m;
+}
+
+uint8_t gen_get_chord_pattern(void) {
+    return (uint8_t)(bar_count % N_CHORD_PATTERNS);
+}
 
 void gen_cycle_scale(void) {
     cur_scale = (uint8_t)((cur_scale + 1u) % N_SCALES);
