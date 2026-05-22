@@ -131,18 +131,31 @@ See `ARCHITECTURE.md` for the detailed walkthrough.
 ## Tests
 
 ```
-make test
+make test            # bit-exact regression (renders 16 s at seed 0, sha256 check)
+make test-unit       # ~50 unit tests for arena, voice synthesis, gen state machine
+make test-multiseed  # renders 4 seeds, checks determinism + audio bounds + golden
+make test-smoke      # spawns ./synth for 2 s, expects clean exit / SIGTERM
+make coverage        # rebuilds with -fprofile-arcs -ftest-coverage and prints
+                     # per-file line coverage via gcov
 ```
 
-Renders 16 seconds with `--seed 0` twice and verifies the output bytes are identical (proves determinism), plus checks against the stored hash in `golden/regression_16s.sha256` (proves the algorithm hasn't drifted).
-
-After an intentional change:
+After an intentional synth change:
 
 ```
-make golden
+make golden            # regenerate the 16 s seed-0 reference hash
+make golden-multiseed  # regenerate the four multi-seed reference hashes
 ```
 
-regenerates the golden hash.
+CI (GitHub Actions) runs all of the above on every push and pull request to `main`, plus the Windows cross-compile (`make winpack`). The Windows binary is uploaded as a build artifact.
+
+Approximate line coverage (unit + integration combined):
+
+| File | Coverage |
+|---|---|
+| `arena.c` | ~80% |
+| `voice.c` | ~98% |
+| `gen.c` | ~97% |
+| `main.c` | ~70% (interactive audio + UI code excluded by design) |
 
 ## Files
 
