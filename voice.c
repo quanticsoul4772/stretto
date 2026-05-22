@@ -123,6 +123,17 @@ void voice_trigger(Voice *v, uint8_t note, uint8_t type, uint8_t role) {
         for (uint16_t i = 0; i < len; i++) {
             v->u.ks.buf[i] = (int16_t)(prng_noise() >> 1);
         }
+    } else if (type == VOICE_DRUM) {
+        /* Drum voices: note parameter holds the drum sub-type
+           (DRUM_KICK/DRUM_SNARE/DRUM_HIHAT). Initialize drum union
+           fields so drum_step reads valid state. */
+        v->role = ROLE_DRUM;
+        v->u.drum.drum_type = note;
+        v->u.drum.phase = 0;
+        /* Kick: sine starting at ~150 Hz, decays toward ~50 Hz over its
+           envelope. inc = 150 * 2^32 / 48000 = 13,421,773.
+           Snare/hihat use noise, so inc = 0. */
+        v->u.drum.inc = (note == DRUM_KICK) ? 13421773u : 0u;
     } else {
         v->u.fm.phase_c   = 0;
         v->u.fm.phase_m   = 0;
