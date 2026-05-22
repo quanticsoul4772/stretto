@@ -14,22 +14,29 @@
 ## Module layout
 
 ```
-main.c            argv, audio backend (PulseAudio / waveOut), WAV writer,
-                  terminal UI (cross-platform raw mode + key polling +
-                  oscilloscope + status row), master-bus delay + reverb +
-                  soft saturation
-voice.c / .h      Voice struct (KS / FM / drum), ADSR, SVF, per-voice peak
-                  normalization, role-scoped voice pool of 11 slots
-gen.c   / .h      sample clock, six scales, Rule-110 + Rule-30 CAs, Markov
-                  chain, Bjorklund Euclidean rhythm, drum pattern banks,
-                  bass / chord / melody / counter-melody / drum scheduling,
-                  dynamic mutation rate
-arena.c / .h      static pool[131072], 8-byte-aligned bump allocator
-gen_sin_table.c   build-time: 1024-entry int16 sine LUT (peak 24576)
-gen_env_table.c   build-time: 256-entry uint8 exponential envelope curve
-gen_note_table.c  build-time: 128 MIDI notes -> {phase increment, KS length}
-                  at the 48 kHz sample rate
-gen_euclid_table.c build-time: 17 16-bit Bjorklund masks E(0..16, 16)
+main.c                  argv, audio backend (PulseAudio / waveOut),
+                        WAV writer, terminal UI (cross-platform raw mode
+                        + key polling + oscilloscope + status row),
+                        master-bus delay + reverb + soft saturation
+voice.c / .h            Voice struct (KS / FM / drum), ADSR, SVF,
+                        per-voice peak normalization, role-scoped
+                        voice pool of 11 slots
+gen.c   / .h            sample clock, six scales, Rule-110 + Rule-30
+                        CAs, counter-melody Markov chain, Bjorklund
+                        Euclidean rhythm, drum pattern banks, bass /
+                        chord / melody / counter-melody / drum
+                        scheduling, dynamic mutation rate
+lsystem.c / .h          L-system phrase generator for the main melody
+                        (6-symbol alphabet, 3 hand-tuned characters,
+                        3 generations of rewrite into a 256 B buffer)
+chord_progression.c/.h  Markov chain over chord functions; chord root
+                        advances every 2 bars
+arena.c / .h            static pool[131072], 8-byte-aligned bump allocator
+gen_sin_table.c         build-time: 1024-entry int16 sine LUT (peak 24576)
+gen_env_table.c         build-time: 256-entry uint8 exponential env curve
+gen_note_table.c        build-time: 128 MIDI notes -> {phase inc, KS len}
+                        at the 48 kHz sample rate
+gen_euclid_table.c      build-time: 17 16-bit Bjorklund masks E(0..16, 16)
 ```
 
 The `gen_*` programs run during `make` and emit C headers (`sin_table.h`, `env_table.h`, `note_table.h`, `euclid_table.h`) that are `#include`d by `voice.c` and `gen.c`. Tables end up in `.rodata` of the final binary; they do not consume arena space.
@@ -236,7 +243,7 @@ SCALES[6][7] = {
 };
 ```
 
-Markov runs on degree indices (0..6), so a single 7×7 matrix applies to any 7-note scale. Only the degree-to-MIDI mapping changes when `cur_scale` rotates. Scale never auto-rotates; only the `s` key in live mode cycles it.
+Scale-degree indices (0..6) abstract the generators (Markov for counter-melody, L-system for main melody, chord-progression Markov for chord root) from concrete MIDI pitches. Only the degree-to-MIDI mapping changes when `cur_scale` rotates. Scale never auto-rotates; only the `s` key in live mode cycles it.
 
 ### Chord voicings
 
@@ -251,7 +258,43 @@ CHORD_PATTERNS[6][3] = {
 };
 ```
 
-Each entry is `(degree, octave_offset)`. Pattern index = `bar_count % 6`. After choosing the pattern, each pitch is octave-shifted to stay within ±8 semitones of the running chord centroid — that is the voice-leading step.
+Each entry is `(degree, octave_offset)` measured **above the current chord root** (see Chord progressions below). Pattern index = `bar_count % 6` (rotates voicing every bar). The resolved degree is `(pat[i].degree + current_chord_root) % 7`, then mapped to MIDI via `SCALES[cur_scale][...]`. Each pitch is finally octave-shifted to stay within ±8 semitones of the running chord centroid — that is the voice-leading step.
+
+### Chord progressions
+
+`chord_progression.c` holds the current chord function as a single `uint8_t current_root` in [0, 6]. The root advances once every two bars via a Markov chain over chord functions; chord triggers within those two bars share the same root.
+
+Two 7×7 weight tables (`uint8_t` each, totaling 98 B of `.rodata`):
+
+- `CHORD_MARKOV_MAJOR` — used for Lydian (`cur_scale=1`) and Mixolydian (`cur_scale=5`). Cadences (V→I, IV→I, vii°→I, ii→V) weighted highest. Diagonal weights are nonzero so the synth can sit on a chord across multiple advances.
+- `CHORD_MARKOV_MINOR` — used for Dorian, Phrygian, Locrian, Harmonic Minor. Modal motion: VII↔i, iv↔i, weaker dominant pull than major-mode tables.
+
+`chord_progression_step(rng, scale)` is called from `gen.c` once at the start of every even bar. It sums the source row, draws `rng % sum`, walks. Module is one-way coupled: gen.c passes `prng()` output and `cur_scale` in; the module never reads gen.c file-scope state.
+
+Bass also reads `chord_progression_get_root()` so its root/fifth alternation (substeps 0, 18, 24, 42) tracks the current chord function rather than always playing scale-degree 0/4.
+
+### L-system melodic phrase generator
+
+`lsystem.c` produces the main melody's degree sequence. Replaces the older Markov walker for that voice; counter-melody still uses Markov so the two lines contrast (phrased vs walked).
+
+Alphabet (6 symbols, 1 byte each):
+
+```
+SYM_UP   move pointer +1   SYM_UP2  move +2 (leap)
+SYM_DN   move pointer -1   SYM_DN2  move -2 (leap)
+SYM_REP  no move           SYM_REST emit rest (caller skips trigger)
+```
+
+The grammar is one of three hand-tuned **characters** (stepwise / leaping / sparse). Each character has a 6-rule production table. `lsystem_reset()` expands the axiom for 3 generations using the current character into a 256-byte output buffer. `lsystem_next(active_mask)` reads the next symbol, advances a scale-degree pointer wrapped to [0, 6], snaps to the nearest in-mask degree, and returns it. `LSYSTEM_REST` is returned for the rest symbol; the caller in `gen.c` skips the melody trigger for that Euclidean hit (gives the melody breathing room).
+
+`lsystem_mutate(rng)` is called by `mutate()` with ~33% probability per event:
+- ~50%: re-roll one rule's RHS in the current character.
+- ~25%: cycle to the next character.
+- ~25%: swap one symbol in the axiom.
+
+After mutation, `lsystem_reset()` re-expands so the next phrase reflects the new grammar.
+
+Memory cost: ~410 B static state (3 chars × 6 rules × 7 B + axiom + 256 B output buffer + pointer + state).
 
 ### Drum patterns
 
@@ -265,7 +308,7 @@ Each is a uint64 bitmask where bit N = trigger at substep N. Coprime bank sizes 
 
 ### Bass pattern
 
-4 events per bar at substeps `0, 18, 24, 42` — beats 1 and 3 anchor the tempo, offbeats at "and of 2" and "and of 4" anticipate. Pitch alternates root/fifth with bar parity swapping the order.
+4 events per bar at substeps `0, 18, 24, 42` — beats 1 and 3 anchor the tempo, offbeats at "and of 2" and "and of 4" anticipate. Pitch alternates root/fifth with bar parity swapping the order. Root and fifth are computed relative to the **current chord function** from `chord_progression`, not always scale degree 0/4.
 
 ### Cellular automata
 
@@ -275,9 +318,11 @@ Two CAs run in parallel:
 
 Pairing Rule 110 (long-period repeats alone) with Rule 30 (pure randomness alone) gives recurring structure with variation. If either CA collapses to zero it is reseeded.
 
-### Markov chain
+### Markov chain (counter-melody)
 
 `markov[7][7]` of unnormalized `uint8_t` weights. `markov_next(cur, mask)` sums weights for columns in the active mask, draws `prng() % sum`, walks. Initial weights hand-tuned: stepwise motion weighted moderate, strong cadences (dominant/leading → tonic) weighted high, diagonal zero (no stuck self-transitions). `mutate()` modifies cells over time.
+
+Used **only for the counter-melody** since the L-system phrase generator replaced Markov on the main melody. Two voices sharing the same active mask but driven by different generators give the listener a phrased line (L-system, main) over a walked line (Markov, counter) — automatic stylistic contrast.
 
 ### Euclidean rhythm
 
@@ -373,7 +418,9 @@ Approximate line coverage:
 | `arena.c` | ~80% (OOM exit path excluded; not exercised by tests) |
 | `voice.c` | ~98% |
 | `gen.c` | ~97% |
-| `main.c` | ~70% (live-audio + interactive UI excluded by design) |
+| `lsystem.c` | ~93% |
+| `chord_progression.c` | ~91% |
+| `main.c` | ~74% (live-audio + interactive UI excluded by design) |
 
 CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `main`, plus the Windows cross-compile (`make winpack`). Coverage gate at 80% per file on `arena.c`, `voice.c`, `gen.c`. The Windows binary and coverage log are uploaded as build artifacts.
 
