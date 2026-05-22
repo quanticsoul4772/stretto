@@ -126,7 +126,48 @@ Per-role attack and release durations come from `role_attack[]` and `role_releas
 
 ### State-variable filter
 
-Chamberlin 2-pole topology, `SVF_F = 200`, `SVF_Q = 100`, both shifted by 8. Gives cutoff ~5.6 kHz and Q ≈ 2.56 at 44.1 kHz reference (slightly higher cutoff at the actual 48 kHz rate). State (`svf_lp`, `svf_bp`) is `int32_t` because Q ≈ 2.56 can ring the internal state above int16 range; the int16 saturation happens at the function's return.
+Chamberlin 2-pole topology. Cutoff (`svf_f_base`) and resonance (`svf_q_base`) are now runtime-tunable file-scope variables (replaced the old `SVF_F`/`SVF_Q` macros). State (`svf_lp`, `svf_bp`) is `int32_t` because at Q ≈ 2.5 the internal state can ring above int16 range; the int16 saturation happens at the function's return.
+
+The effective per-voice filter is composed each sample:
+
+```
+f_eff = svf_f_base
+      + role_svf_f_off[role]        // bass darker, melody open
+      + (lfo * lfo_filter_depth) >> 15   // per-voice pan LFO sweeps cutoff
+      + (fenv_amp * 30) >> 14            // chord voices only: filter envelope
+                                         //   opens cutoff on attack, closes
+                                         //   during release
+                                         //   (range 0..+60 units at peak)
+clamp f_eff to [20, 230]
+
+q_eff = svf_q_base + role_svf_q_off[role]   // bass less resonant, drums damped
+clamp q_eff to [0, 220]
+```
+
+User base ranges are deliberately tighter than the effective-value clamps so LFO and filter-envelope modulation always have headroom at the top of the dial:
+
+| Parameter | User clamp | Effective clamp | Default |
+|---|---|---|---|
+| `svf_f_base` | [30, 180] | [20, 230] | 200 |
+| `svf_q_base` | [0, 180] | [0, 220] | 100 |
+| `lfo_filter_depth` | [0, 255] | — | 80 |
+
+Per-role offsets:
+
+| Role | f offset | q offset |
+|---|---|---|
+| Bass | -100 | -30 |
+| Chord | -40 | 0 |
+| Melody | 0 | 0 |
+| Drum | -120 | -50 |
+
+The Chamberlin topology computes `hp`, `bp`, and `lp` outputs inline. `notch = hp + lp`. `voice_step` selects one of the four via the global `filter_mode` (0 LP / 1 HP / 2 BP / 3 notch) and that becomes the post-SVF signal. The mode is cycled live with the `t` key.
+
+`mutate()` also calls `voice_mutate_filter()` about 50% of the time it fires, drifting cutoff ±16 and resonance ±8 so the global filter character evolves alongside Markov / CA / Euclidean drift.
+
+#### Chord filter envelope
+
+Voice struct has dedicated `fenv_amp` / `fenv_time` / `fenv_phase` fields. Only consumed when `role == ROLE_CHORD`. Runs the same ADSR shape as the amplitude envelope (5 ms attack / 200 ms decay / 600 ms release) but feeds into the cutoff modulation rather than the audio gain. Each chord trigger opens the filter and closes it as the chord decays — classic synth filter sweep, scoped to chord voices so it stays subtle.
 
 ### Per-voice peak normalization
 

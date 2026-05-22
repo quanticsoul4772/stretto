@@ -1,5 +1,18 @@
 # Changelog
 
+## Recent: filter controls
+
+- Runtime cutoff and resonance, live-tunable via `c`/`C` and `n`/`N`.
+- Per-role cutoff/Q offset tables (bass darker, melody open, drums heavily damped).
+- Per-voice cutoff LFO modulation, reusing the existing per-voice pan LFO at zero new state. Depth adjustable live via `m`/`M`.
+- Multi-mode filter: LP / HP / BP / notch, cycled via `t`. SVF natively computes all four outputs; `voice_step` selects.
+- Chord-voice filter envelope: separate ADSR feeds cutoff modulation only for chord voices. Each chord trigger sweeps the filter open then closed.
+- `mutate()` drifts cutoff and resonance ~50% of the time it fires, so the timbre evolves over long timescales.
+- Status row gains `F:<cutoff> N:<resonance> L:<lfo_depth> T:<mode>` fields.
+- User base ranges deliberately tighter than effective-value clamps so LFO + filter-envelope modulation always lands without losing swing at the top of the dial:
+  - `svf_f_base`: user [30, 180], effective clamp [20, 230].
+  - `svf_q_base`: user [0, 180], effective clamp [0, 220].
+
 ## Recent main-branch work (since stereo)
 
 ### Windows port
