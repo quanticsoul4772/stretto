@@ -110,6 +110,10 @@ static const char HELP_TEXT[] =
     "  d  /  D    delay wet mix  down / up\r\n"
     "  f  /  F    delay feedback  down / up\r\n"
     "  r  /  R    reverb wet mix  down / up\r\n"
+    "  c  /  C    filter cutoff  down / up\r\n"
+    "  n  /  N    filter resonance  down / up\r\n"
+    "  m  /  M    filter LFO depth  down / up\r\n"
+    "  t          cycle filter mode  LP / HP / BP / notch\r\n"
     "  ?          toggle this help\r\n"
     "  q          quit\r\n"
     "\r\n"
@@ -501,6 +505,20 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
         APPEND_STR(names[gen_get_chord_pattern() % 6]);
     }
 
+    /* F: filter cutoff (cyan), N: resonance (yellow), L: LFO filter depth
+       (green), T: filter mode (magenta). */
+    APPEND_STR(" " COL_CYAN "F:" COL_WHITE);
+    APPEND_NUM(voice_get_cutoff());
+    APPEND_STR(" " COL_YELLOW "N:" COL_WHITE);
+    APPEND_NUM(voice_get_resonance());
+    APPEND_STR(" " COL_GREEN "L:" COL_WHITE);
+    APPEND_NUM(voice_get_lfo_filter_depth());
+    APPEND_STR(" " COL_MAG "T:" COL_WHITE);
+    {
+        static const char *modes[4] = { "LP", "HP", "BP", "NO" };
+        APPEND_STR(modes[voice_get_filter_mode() & 3u]);
+    }
+
     APPEND_STR(COL_RESET);
     out[p++] = '\r'; out[p++] = '\n';
 
@@ -740,6 +758,13 @@ static void play_pulse(void) {
             else if (ch == 'F') delay_adjust_feedback(+16);
             else if (ch == 'r') reverb_adjust_wet(-16);
             else if (ch == 'R') reverb_adjust_wet(+16);
+            else if (ch == 'c') voice_adjust_cutoff(-10);
+            else if (ch == 'C') voice_adjust_cutoff(+10);
+            else if (ch == 'n') voice_adjust_resonance(-10);
+            else if (ch == 'N') voice_adjust_resonance(+10);
+            else if (ch == 'm') voice_adjust_lfo_filter_depth(-8);
+            else if (ch == 'M') voice_adjust_lfo_filter_depth(+8);
+            else if (ch == 't') voice_cycle_filter_mode();
             else if (ch == 'q') {
                 pa_threaded_mainloop_lock(ml);
                 pa_operation *op = pa_stream_drain(stream, NULL, NULL);
@@ -868,6 +893,13 @@ static void play_pulse(void) {
             else if (ch == 'F') delay_adjust_feedback(+16);
             else if (ch == 'r') reverb_adjust_wet(-16);
             else if (ch == 'R') reverb_adjust_wet(+16);
+            else if (ch == 'c') voice_adjust_cutoff(-10);
+            else if (ch == 'C') voice_adjust_cutoff(+10);
+            else if (ch == 'n') voice_adjust_resonance(-10);
+            else if (ch == 'N') voice_adjust_resonance(+10);
+            else if (ch == 'm') voice_adjust_lfo_filter_depth(-8);
+            else if (ch == 'M') voice_adjust_lfo_filter_depth(+8);
+            else if (ch == 't') voice_cycle_filter_mode();
             else if (ch == 'q') {
                 win_cleanup();
                 exit(0);
