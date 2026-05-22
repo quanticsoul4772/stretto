@@ -1,12 +1,13 @@
+# Linux build artifacts
 synth
 synth.packed
-synth.unpacked
-synth.orig
-synth.xz
-synth.upx
-synth.test
-synth_xz.h
-voice.c.bak
+
+# Windows build artifacts
+stretto.exe
+stretto.packed.exe
+*.win.o
+
+# Build-time generators and their generated headers
 gen_sin_table
 gen_env_table
 gen_note_table
@@ -15,7 +16,12 @@ sin_table.h
 env_table.h
 note_table.h
 euclid_table.h
+
+# Object files
 *.o
+
+# Editor backups
+*.bak
+
+# Test outputs (typically written to /tmp; included defensively)
 /tmp/*.wav
-start.c
-stub.c
