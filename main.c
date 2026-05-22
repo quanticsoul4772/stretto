@@ -408,24 +408,18 @@ static void play_pulse(void) {
 
     /* libpulse-simple direct: avoids libasound's pulse plugin which
        glitches on sustained 48 kHz output under WSLg. Same final
-       audio path as paplay, no resampling in between. */
+       audio path as paplay, no resampling in between.
+       buffer_attr is NULL so PulseAudio picks its own sizing (matches
+       what paplay does); explicit 300 ms tlength was too tight to
+       absorb WSL scheduling pauses. */
     pa_sample_spec ss;
     ss.format = PA_SAMPLE_S16LE;
     ss.rate = SAMPLE_RATE;
     ss.channels = 2;
 
-    pa_buffer_attr ba;
-    /* tlength = target buffer in bytes = rate * channels * bytes/sample
-       * latency_us / 1e6. Other fields = -1 means "server default". */
-    ba.maxlength = (uint32_t)-1;
-    ba.tlength = (uint32_t)((uint64_t)SAMPLE_RATE * 4u * LATENCY_US / 1000000u);
-    ba.prebuf = (uint32_t)-1;
-    ba.minreq = (uint32_t)-1;
-    ba.fragsize = (uint32_t)-1;
-
     int pa_err = 0;
     pa_simple *pa = pa_simple_new(NULL, "stretto", PA_STREAM_PLAYBACK, NULL,
-                                  "music", &ss, NULL, &ba, &pa_err);
+                                  "music", &ss, NULL, NULL, &pa_err);
     if (!pa) {
         fprintf(stderr, "pulse: %s\n", pa_strerror(pa_err));
         exit(1);
