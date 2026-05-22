@@ -13,7 +13,7 @@
 #include "voice.h"
 #include "gen.h"
 
-#define SAMPLE_RATE    44100
+#define SAMPLE_RATE    48000
 #define BUFFER_FRAMES  1024
 /* 300 ms ALSA buffer. Native Linux is happy at 100 ms; WSLg's
    libasound -> pulse plugin -> WSLg -> Windows audio pipeline has
@@ -26,7 +26,7 @@
 /* Master-bus stereo delay. Two independent mono buffers (one per
    channel), 250 ms long at 44.1 kHz. Standard feed-forward + feedback
    topology: output = dry + tap*wet; delay-buffer-write = dry + tap*fb. */
-#define DELAY_SAMPLES  11025u
+#define DELAY_SAMPLES  12000u   /* 250 ms at 48 kHz */
 static int16_t *delay_l;
 static int16_t *delay_r;
 static uint32_t delay_idx = 0;
@@ -38,18 +38,22 @@ static uint16_t delay_feedback = 140;  /* 0..200, capped to avoid runaway */
    classic prime-number delay choices (Schroeder 1962) avoid metallic
    resonance. L and R channels use slightly different delays so the
    reverb tail keeps stereo separation. */
-#define REV_C1L 1557
-#define REV_C2L 1617
-#define REV_C3L 1491
-#define REV_C4L 1422
-#define REV_C1R 1580
-#define REV_C2R 1601
-#define REV_C3R 1486
-#define REV_C4R 1442
-#define REV_AP1L 225
-#define REV_AP2L 556
-#define REV_AP1R 226
-#define REV_AP2R 564
+/* Schroeder primes rescaled by 48000/44100 to preserve original
+   reverb delay times at the new sample rate. All values are primes
+   so the four combs and two all-passes remain coprime and the
+   reverb tail stays free of metallic resonance. */
+#define REV_C1L 1693
+#define REV_C2L 1759
+#define REV_C3L 1621
+#define REV_C4L 1549
+#define REV_C1R 1721
+#define REV_C2R 1747
+#define REV_C3R 1613
+#define REV_C4R 1571
+#define REV_AP1L 241
+#define REV_AP2L 607
+#define REV_AP1R 251
+#define REV_AP2R 613
 
 static int16_t *rev_c1l, *rev_c2l, *rev_c3l, *rev_c4l;
 static int16_t *rev_c1r, *rev_c2r, *rev_c3r, *rev_c4r;
