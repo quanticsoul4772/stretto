@@ -20,6 +20,28 @@ PACK_TARGET  = 12288
 
 all: synth
 
+# Windows cross-compile target (Phase 1: render-mode only).
+# Live mode (PortAudio) lands in Phase 2.
+WIN_CC     = x86_64-w64-mingw32-gcc
+WIN_CFLAGS = -O2 -DWIN32_LEAN_AND_MEAN
+WIN_OBJS   = arena.win.o voice.win.o gen.win.o main.win.o
+
+arena.win.o: arena.c arena.h
+	$(WIN_CC) $(WIN_CFLAGS) -c arena.c -o arena.win.o
+voice.win.o: voice.c voice.h arena.h $(HEADERS)
+	$(WIN_CC) $(WIN_CFLAGS) -c voice.c -o voice.win.o
+gen.win.o: gen.c gen.h voice.h euclid_table.h
+	$(WIN_CC) $(WIN_CFLAGS) -c gen.c -o gen.win.o
+main.win.o: main.c arena.h voice.h gen.h
+	$(WIN_CC) $(WIN_CFLAGS) -c main.c -o main.win.o
+
+stretto.exe: $(WIN_OBJS)
+	$(WIN_CC) $(WIN_CFLAGS) $(WIN_OBJS) -o stretto.exe
+
+win: stretto.exe
+	@echo "Built: stretto.exe (native Windows binary, render-mode only)"
+	@file stretto.exe
+
 gen_sin_table: gen_sin_table.c
 	gcc -O2 gen_sin_table.c -o gen_sin_table -lm
 gen_env_table: gen_env_table.c
@@ -64,8 +86,9 @@ pack: synth.packed
 clean:
 	rm -f synth synth.packed synth.upx synth.test synth.orig \
 	      synth.unpacked synth.xz synth.lto.o synth_xz.h \
+	      stretto.exe \
 	      start.c stub.c \
-	      $(GENS) $(HEADERS) *.o
+	      $(GENS) $(HEADERS) *.o *.win.o
 
 size: synth
 	@SIZE=$$(stat -c%s synth); \
@@ -87,4 +110,4 @@ golden: synth
 play: synth
 	./synth
 
-.PHONY: all clean size pack test golden play
+.PHONY: all clean size pack test golden play win
