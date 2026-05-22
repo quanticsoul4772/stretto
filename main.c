@@ -453,13 +453,15 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     APPEND_STR(" " COL_YELLOW "S:" COL_WHITE);
     out[p++] = "DLPlHM"[gen_get_scale() % 6];
 
-    /* V: voices, color per role - bass red, chord green, melody blue */
+    /* V: voices, color per role - bass red, chord green, melody blue,
+       drums yellow (kick/snare/hihat = slots 8/9/10). */
     APPEND_STR(" " COL_MAG "V:");
     for (int i = 0; i < N_VOICES; i++) {
         const char *role_col =
             (i < 2) ? COL_RED :         /* bass slots 0..1 */
             (i < 5) ? COL_GREEN :       /* chord slots 2..4 */
-                      COL_BLUE;         /* melody slots 5..7 */
+            (i < 8) ? COL_BLUE :        /* melody slots 5..7 */
+                      COL_YELLOW;       /* drum slots 8..10 */
         APPEND_STR(role_col);
         out[p++] = (voice_mask & (1u << i)) ? '*' : '.';
     }

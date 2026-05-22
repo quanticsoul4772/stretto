@@ -4,11 +4,15 @@
 #include <stdint.h>
 
 #define KS_MAX_LEN 512
-#define N_VOICES   8
+#define N_VOICES   11
 
-enum { VOICE_OFF = 0, VOICE_KS, VOICE_FM };
+/* Voice synthesis types. KS and FM produce pitched notes; DRUM is a
+   noise/sine percussion generator whose flavor depends on a sub-type
+   passed through note: 0 = kick, 1 = snare, 2 = hihat. */
+enum { VOICE_OFF = 0, VOICE_KS, VOICE_FM, VOICE_DRUM };
 enum { ENV_OFF = 0, ENV_A, ENV_D, ENV_R };
-enum { ROLE_BASS = 0, ROLE_CHORD, ROLE_MELODY };
+enum { ROLE_BASS = 0, ROLE_CHORD, ROLE_MELODY, ROLE_DRUM };
+enum { DRUM_KICK = 0, DRUM_SNARE, DRUM_HIHAT };
 
 typedef struct {
     int16_t l;
@@ -54,6 +58,11 @@ typedef struct {
             uint32_t inc_m;
             uint16_t mod_depth;
         } fm;
+        struct {
+            uint32_t phase;       /* sine phase for kick body */
+            uint32_t inc;         /* sine increment - decays for pitch sweep */
+            uint8_t  drum_type;   /* 0 kick, 1 snare, 2 hihat */
+        } drum;
     } u;
 } Voice;
 
@@ -63,6 +72,7 @@ int16_t voice_step(Voice *v);
 
 void    voice_pool_init(void);
 void    voice_pool_trigger_role(uint8_t note, uint8_t type, uint8_t role);
+void    voice_pool_trigger_drum(uint8_t drum_type);
 Stereo  voice_pool_mix(void);
 
 void     voice_set_mod_depth(uint16_t d);

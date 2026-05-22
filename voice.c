@@ -54,35 +54,35 @@ static int16_t prng_noise(void) {
     return (int16_t)(x >> 16);
 }
 
-/* Per-role parameters: BASS, CHORD, MELODY */
-static const uint16_t role_mod_depth[3]  = {  200, 1500, 1500 };
-static const uint8_t  role_fm_ratio[3]   = {    1,    2,    2 };
-static const uint16_t role_attack[3]     = { 2400,  960,  240 }; /* 50 / 20 / 5 ms at 48 kHz */
-static const uint16_t role_release[3]    = {48000,28800,28800 }; /* 1000 / 600 / 600 ms at 48 kHz */
+/* Per-role parameters: BASS, CHORD, MELODY, DRUM (drum row is
+   placeholder - drums use per-drum-type envelopes, not role-wide). */
+static const uint16_t role_mod_depth[4]  = {  200, 1500, 1500,    0 };
+static const uint8_t  role_fm_ratio[4]   = {    1,    2,    2,    1 };
+static const uint16_t role_attack[4]     = { 2400,  960,  240,   24 }; /* 50/20/5/0.5 ms */
+static const uint16_t role_release[4]    = {48000,28800,28800, 4800 }; /* 1000/600/600/100 ms */
 
 /* Per-voice-slot base pan position (0 = full left, 128 = center,
-   255 = full right). Bass slots 0-1 sit at center; chord slots 2-4
-   spread across the field; melody slots 5-7 lean to the outer zones
-   for the widest stage. */
+   255 = full right). Drum slots: kick center, snare slight off-center,
+   hihat slightly the other way. */
 static const uint8_t slot_base_pan[N_VOICES] = {
-    128, 128,           /* bass: center */
-     72, 128, 184,      /* chord: L, C, R */
-     56, 200,  96,      /* melody: alternating outer */
+    128, 128,            /* bass slots 0-1: center */
+     72, 128, 184,       /* chord slots 2-4: L, C, R */
+     56, 200,  96,       /* melody slots 5-7: alternating outer */
+    128, 144, 112,       /* drum slots 8-10: kick C, snare +R, hihat -L */
 };
 
-/* Per-voice-slot LFO increment for slow pan motion. Numbers are
-   uint32 phase-increments at 48 kHz; freqs ~0.07-0.18 Hz so the
-   modulation period is several seconds. Original 44.1k values scaled
-   by 44100/48000 to preserve the same frequencies at the new rate. */
+/* Per-voice-slot LFO increment for slow pan motion (~0.07-0.18 Hz).
+   Drum slots use 0 - no pan modulation on percussion. */
 static const uint32_t slot_lfo_inc[N_VOICES] = {
-     6263,  8946,       /* bass: 0.07, 0.10 Hz */
-     9841,  7603,11178, /* chord: 0.11, 0.085, 0.125 Hz */
-    13418,10737,16103,  /* melody: 0.15, 0.12, 0.18 Hz */
+     6263,  8946,        /* bass */
+     9841,  7603,11178,  /* chord */
+    13418,10737,16103,   /* melody */
+        0,    0,    0,   /* drum: no LFO */
 };
 
-/* Pan jitter range per role (centered): bass tight, chord medium,
-   melody wide. */
-static const uint8_t role_pan_jitter[3] = { 16, 32, 48 };
+/* Pan jitter range per role: bass tight, chord medium, melody wide,
+   drum minimal (drums should sound consistent in stereo position). */
+static const uint8_t role_pan_jitter[4] = { 16, 32, 48, 8 };
 
 void voice_init(Voice *v) {
     v->type = VOICE_OFF;
@@ -123,6 +123,17 @@ void voice_trigger(Voice *v, uint8_t note, uint8_t type, uint8_t role) {
         for (uint16_t i = 0; i < len; i++) {
             v->u.ks.buf[i] = (int16_t)(prng_noise() >> 1);
         }
+    } else if (type == VOICE_DRUM) {
+        /* Drum voices: note parameter holds the drum sub-type
+           (DRUM_KICK/DRUM_SNARE/DRUM_HIHAT). Initialize drum union
+           fields so drum_step reads valid state. */
+        v->role = ROLE_DRUM;
+        v->u.drum.drum_type = note;
+        v->u.drum.phase = 0;
+        /* Kick: sine starting at ~150 Hz, decays toward ~50 Hz over its
+           envelope. inc = 150 * 2^32 / 48000 = 13,421,773.
+           Snare/hihat use noise, so inc = 0. */
+        v->u.drum.inc = (note == DRUM_KICK) ? 13421773u : 0u;
     } else {
         v->u.fm.phase_c   = 0;
         v->u.fm.phase_m   = 0;
@@ -169,6 +180,14 @@ static uint16_t env_step(Voice *v) {
     uint16_t attack_n  = role_attack[v->role];
     uint16_t release_n = role_release[v->role];
 
+    /* Drum voices: per-drum-type release so hihat is short (30 ms),
+       kick medium (150 ms), snare in between (100 ms). Attack stays
+       at the role default (0.5 ms). */
+    if (v->type == VOICE_DRUM) {
+        static const uint16_t drum_release[3] = { 7200, 4800, 1440 };
+        if (v->u.drum.drum_type < 3) release_n = drum_release[v->u.drum.drum_type];
+    }
+
     switch (v->env_phase) {
         case ENV_A: {
             uint32_t idx = ((uint32_t)v->env_time * 255u) / attack_n;
@@ -176,7 +195,10 @@ static uint16_t env_step(Voice *v) {
             amp = ((uint32_t)env_table[idx] * ENV_PEAK) / 255u;
             v->env_time++;
             if (v->env_time >= attack_n) {
-                v->env_phase = ENV_D;
+                /* Drums skip the decay/sustain phases entirely - they
+                   go straight from full peak into release for a one-shot
+                   percussive envelope. */
+                v->env_phase = (v->type == VOICE_DRUM) ? ENV_R : ENV_D;
                 v->env_time = 0;
                 amp = ENV_PEAK;
             }
@@ -196,15 +218,28 @@ static uint16_t env_step(Voice *v) {
             break;
         }
         case ENV_R: {
-            uint32_t idx = ((uint32_t)v->env_time * 255u) / release_n;
-            if (idx > 255u) idx = 255u;
-            uint32_t curve = 255u - env_table[idx];
-            amp = ((uint32_t)ENV_SUSTAIN_LEVEL * curve) / 255u;
-            v->env_time++;
-            if (v->env_time >= release_n) {
-                v->env_phase = ENV_OFF;
-                v->type = VOICE_OFF;
-                amp = 0;
+            if (v->type == VOICE_DRUM) {
+                /* Drums: linear decay from PEAK to 0 over release_n
+                   samples. Simple and gives natural drum tail. */
+                if (v->env_time >= release_n) {
+                    amp = 0;
+                    v->env_phase = ENV_OFF;
+                    v->type = VOICE_OFF;
+                } else {
+                    amp = (uint32_t)ENV_PEAK * (release_n - v->env_time) / release_n;
+                }
+                v->env_time++;
+            } else {
+                uint32_t idx = ((uint32_t)v->env_time * 255u) / release_n;
+                if (idx > 255u) idx = 255u;
+                uint32_t curve = 255u - env_table[idx];
+                amp = ((uint32_t)ENV_SUSTAIN_LEVEL * curve) / 255u;
+                v->env_time++;
+                if (v->env_time >= release_n) {
+                    v->env_phase = ENV_OFF;
+                    v->type = VOICE_OFF;
+                    amp = 0;
+                }
             }
             break;
         }
@@ -216,9 +251,41 @@ static uint16_t env_step(Voice *v) {
     return (uint16_t)amp;
 }
 
+/* Drum voice: cheap percussion synthesis. Three sub-types selected
+   by u.drum.drum_type:
+     KICK  - sine sweep, pitch decays each sample for a thud envelope
+     SNARE - white noise + ~200 Hz sine, mixed
+     HIHAT - white noise only (envelope makes it short) */
+static int16_t drum_step(Voice *v) {
+    if (v->u.drum.drum_type == DRUM_KICK) {
+        int16_t s = sin_table[v->u.drum.phase >> 22];
+        v->u.drum.phase += v->u.drum.inc;
+        /* Pitch decay: drop inc by ~1/4096 per sample. Over ~100 ms
+           (4800 samples) inc drops to ~31% of its starting value -
+           a 150 Hz -> ~45 Hz sweep, which is the characteristic
+           kick-drum thump. */
+        v->u.drum.inc -= v->u.drum.inc >> 12;
+        return s;
+    }
+    if (v->u.drum.drum_type == DRUM_SNARE) {
+        int16_t noise = (int16_t)prng_noise();
+        /* Add a sine at ~200 Hz for the snare body. inc = 200 *
+           2^32 / 48000 = 17,895,697. */
+        int16_t tone = sin_table[v->u.drum.phase >> 22];
+        v->u.drum.phase += 17895697u;
+        return (int16_t)(((int32_t)noise * 7 + (int32_t)tone * 3) / 10);
+    }
+    /* DRUM_HIHAT */
+    return (int16_t)prng_noise();
+}
+
 int16_t voice_step(Voice *v) {
     if (v->env_phase == ENV_OFF) return 0;
-    int16_t raw = (v->type == VOICE_KS) ? ks_step(v) : fm_step(v);
+    int16_t raw;
+    if (v->type == VOICE_KS)        raw = ks_step(v);
+    else if (v->type == VOICE_FM)   raw = fm_step(v);
+    else if (v->type == VOICE_DRUM) raw = drum_step(v);
+    else                            raw = 0;
     uint16_t env = env_step(v);
     int16_t shaped = (int16_t)(((int32_t)raw * env) >> 15);
 
@@ -261,9 +328,11 @@ void voice_pool_init(void) {
     for (int i = 0; i < N_VOICES; i++) voice_init(&pool[i]);
 }
 
-/* Voice slot ranges per role: bass = 0..1, chord = 2..4, melody = 5..7. */
-static const uint8_t role_slot_start[3] = { 0, 2, 5 };
-static const uint8_t role_slot_end[3]   = { 2, 5, 8 };
+/* Voice slot ranges per role. Drum slots are dedicated per drum type
+   so kick/snare/hihat each have their own slot - no stealing within
+   the drum kit. */
+static const uint8_t role_slot_start[4] = { 0, 2, 5,  8 };
+static const uint8_t role_slot_end[4]   = { 2, 5, 8, 11 };
 
 static int pick_slot_range(uint8_t lo, uint8_t hi) {
     for (int i = lo; i < hi; i++) {
@@ -297,6 +366,58 @@ void voice_pool_trigger_role(uint8_t note, uint8_t type, uint8_t role) {
     pool[slot].pan = (uint8_t)p;
     pool[slot].lfo_phase = 0;
     pool[slot].lfo_inc = slot_lfo_inc[slot];
+}
+
+/* Drum trigger: one dedicated slot per drum_type (kick = 8, snare = 9,
+   hihat = 10). Sets the voice's drum sub-type and seeds kick pitch
+   sweep / leaves snare/hihat to noise. Per-drum envelope timings:
+     kick:  attack 1 ms, release 150 ms (low thump)
+     snare: attack 0.5 ms, release 100 ms (noise+sine crack)
+     hihat: attack 0.5 ms, release 30 ms (very short tick) */
+void voice_pool_trigger_drum(uint8_t drum_type) {
+    if (drum_type > DRUM_HIHAT) return;
+    int slot = 8 + drum_type;   /* 8=kick, 9=snare, 10=hihat */
+    Voice *v = &pool[slot];
+
+    v->type = VOICE_DRUM;
+    v->note = drum_type;
+    v->role = ROLE_DRUM;
+    v->env_phase = ENV_A;
+    v->env_time = 0;
+    v->env_amp = 0;
+    v->svf_lp = 0;
+    v->svf_bp = 0;
+
+    /* Per-drum envelope timing (overrides the role row in role_attack/
+       role_release - drums benefit from per-type tuning). */
+    static const uint16_t drum_attack[3]  = {  48,  24,  24 };   /* 1, 0.5, 0.5 ms */
+    static const uint16_t drum_release[3] = {7200,4800,1440 };   /* 150, 100, 30 ms */
+    /* These get applied at envelope-step time via the env_time counter;
+       role_release[ROLE_DRUM] = 4800 is the medium fallback, but for
+       crisper drum timings we want the per-type table - store the
+       chosen release in u.drum so voice_step can read it. */
+    (void)drum_attack; (void)drum_release;  /* placeholders for future */
+
+    /* Kick: sine starting at ~150 Hz, decays toward ~50 Hz over its
+       envelope. inc = 150 * 2^32 / 48000 = 13,421,773. */
+    v->u.drum.drum_type = drum_type;
+    v->u.drum.phase = 0;
+    v->u.drum.inc = (drum_type == DRUM_KICK) ? 13421773u : 0u;
+
+    v->peak_seen = 1;
+    v->gain = 256;
+    v->peak_window = 2400;
+
+    /* Pan: drum slot base + small jitter. */
+    int base = slot_base_pan[slot];
+    int jitter = (int)(prng_noise() >> 8);
+    int j = (jitter * role_pan_jitter[ROLE_DRUM]) / 128;
+    int p = base + j;
+    if (p < 0) p = 0;
+    else if (p > 255) p = 255;
+    v->pan = (uint8_t)p;
+    v->lfo_phase = 0;
+    v->lfo_inc = 0;
 }
 
 Stereo voice_pool_mix(void) {
