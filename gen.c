@@ -306,6 +306,21 @@ void gen_step(void) {
         active_mask = active_mask & (harm_mask | 0x11u);
         if (active_mask == 0) active_mask = 0x01u;
 
+        /* Drum trigger: classic 4/4 backbeat fits over the existing
+           polyrhythm.
+             kick on substeps 0 and 24       (downbeats 1 and 3)
+             snare on substeps 12 and 36     (backbeats 2 and 4)
+             hihat on every 6 substeps       (1, +, 2, +, 3, +, 4, +) */
+        if (substep_in_bar == 0u || substep_in_bar == 24u) {
+            voice_pool_trigger_drum(DRUM_KICK);
+        }
+        if (substep_in_bar == 12u || substep_in_bar == 36u) {
+            voice_pool_trigger_drum(DRUM_SNARE);
+        }
+        if (substep_in_bar % 6u == 0u) {
+            voice_pool_trigger_drum(DRUM_HIHAT);
+        }
+
         /* Bass trigger: 4 events per bar at unequal spacing for a
            bouncing feel. Beats 1 and 3 (substeps 0, 24) anchor the
            tempo; offbeats at the "and of 2" and "and of 4" (substeps
