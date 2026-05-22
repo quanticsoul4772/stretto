@@ -101,10 +101,7 @@ pack: synth.packed
 	fi
 
 clean:
-	rm -f synth synth.packed synth.upx synth.test synth.orig \
-	      synth.unpacked synth.xz synth.lto.o synth_xz.h \
-	      stretto.exe stretto.packed.exe \
-	      start.c stub.c \
+	rm -f synth synth.packed stretto.exe stretto.packed.exe \
 	      $(GENS) $(HEADERS) *.o *.win.o
 
 size: synth

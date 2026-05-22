@@ -68,8 +68,9 @@ static int16_t prng_noise(void) {
     return (int16_t)(x >> 16);
 }
 
-/* Per-role parameters: BASS, CHORD, MELODY, DRUM (drum row is
-   placeholder - drums use per-drum-type envelopes, not role-wide). */
+/* Per-role parameters: BASS, CHORD, MELODY, DRUM. The DRUM row's
+   release value is a fallback - env_step overrides it with a per-
+   drum-type table (kick 150 ms / snare 100 ms / hihat 30 ms). */
 static const uint16_t role_mod_depth[4]  = {  200, 1500, 1500,    0 };
 static const uint8_t  role_fm_ratio[4]   = {    1,    2,    2,    1 };
 static const uint16_t role_attack[4]     = { 2400,  960,  240,   24 }; /* 50/20/5/0.5 ms */
@@ -510,15 +511,9 @@ void voice_pool_trigger_drum(uint8_t drum_type) {
     v->svf_lp = 0;
     v->svf_bp = 0;
 
-    /* Per-drum envelope timing (overrides the role row in role_attack/
-       role_release - drums benefit from per-type tuning). */
-    static const uint16_t drum_attack[3]  = {  48,  24,  24 };   /* 1, 0.5, 0.5 ms */
-    static const uint16_t drum_release[3] = {7200,4800,1440 };   /* 150, 100, 30 ms */
-    /* These get applied at envelope-step time via the env_time counter;
-       role_release[ROLE_DRUM] = 4800 is the medium fallback, but for
-       crisper drum timings we want the per-type table - store the
-       chosen release in u.drum so voice_step can read it. */
-    (void)drum_attack; (void)drum_release;  /* placeholders for future */
+    /* Per-drum-type envelope release is in env_step (drum_release[]).
+       Attack uses role_attack[ROLE_DRUM] = 24 samples (0.5 ms) for
+       all three drums. */
 
     /* Kick: sine starting at ~150 Hz, decays toward ~50 Hz over its
        envelope. inc = 150 * 2^32 / 48000 = 13,421,773. */
