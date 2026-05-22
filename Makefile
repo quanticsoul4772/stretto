@@ -36,10 +36,10 @@ main.win.o: main.c arena.h voice.h gen.h
 	$(WIN_CC) $(WIN_CFLAGS) -c main.c -o main.win.o
 
 stretto.exe: $(WIN_OBJS)
-	$(WIN_CC) $(WIN_CFLAGS) $(WIN_OBJS) -o stretto.exe
+	$(WIN_CC) $(WIN_CFLAGS) $(WIN_OBJS) -lwinmm -o stretto.exe
 
 win: stretto.exe
-	@echo "Built: stretto.exe (native Windows binary, render-mode only)"
+	@echo "Built: stretto.exe (native Windows binary, live + render mode)"
 	@file stretto.exe
 
 gen_sin_table: gen_sin_table.c
