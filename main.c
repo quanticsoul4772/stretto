@@ -71,11 +71,6 @@ static struct termios saved_termios;
 static int termios_saved = 0;
 static int help_visible = 0;
 static int no_ui = 0;
-/* Throttle oscilloscope to ~12 fps so terminal I/O doesn't block
-   the audio loop. WSLg's RDP-based terminal can stall on writes,
-   and stalls > 300 ms would underrun the PulseAudio buffer. */
-static unsigned int draw_skip_count = 0;
-#define DRAW_EVERY_N_BUFFERS 4u
 
 static const char HELP_TEXT[] =
     "\x1b[H\x1b[2J"
@@ -507,15 +502,7 @@ static void play_pulse(void) {
         }
         pa_threaded_mainloop_unlock(ml);
 
-        /* Skip drawing entirely with --no-ui (diagnostic mode), and
-           when UI is enabled only draw every Nth buffer to keep terminal
-           I/O out of the audio loop's critical path. */
-        if (!no_ui && !help_visible) {
-            if (++draw_skip_count >= DRAW_EVERY_N_BUFFERS) {
-                draw_skip_count = 0;
-                draw_oscilloscope(buf, BUFFER_FRAMES);
-            }
-        }
+        if (!no_ui && !help_visible) draw_oscilloscope(buf, BUFFER_FRAMES);
 
         char ch;
         while (read(0, &ch, 1) > 0) {
