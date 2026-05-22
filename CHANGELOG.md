@@ -1,5 +1,27 @@
 # Changelog
 
+## Recent: probabilistic chord progressions
+
+- New `chord_progression.c` / `.h` module. Chord function root advances every 2 bars via a Markov chain. All chord triggers within those 2 bars share the same root, so harmonic motion happens at a slow ambient pace rather than per-bar churn.
+- Two 7x7 weight tables (~98 B `.rodata`):
+  - `CHORD_MARKOV_MAJOR` for Lydian / Mixolydian - biased toward V to I, IV to I, vii to I, ii to V.
+  - `CHORD_MARKOV_MINOR` for Dorian / Phrygian / Locrian / Harmonic Minor - modal-friendly VII-i, iv-i, no strict dominant pull.
+- Chord trigger rebases each voicing degree: `(pattern[i].degree + current_root) % 7`. Voice-leading octave-shift unchanged.
+- Bass tracks the current chord root - its root/fifth alternation now follows the chord function rather than always playing scale degree 0/4.
+- One-way coupling: gen.c passes `prng()` output and `cur_scale` to `chord_progression_step()`. The module never reads gen.c state.
+- Status row gains `Cr:<n>` field (current chord root 0..6).
+- 5 new unit tests in `tests/unit/test_chord_progression.c`. Coverage on the new module: 91.3%.
+
+## Recent: L-system melodic phrase generator
+
+- New `lsystem.c` / `.h` module replacing the Markov walker on the main melody. Counter-melody keeps Markov so the two lines contrast (phrased vs walked).
+- 6-symbol alphabet (u, U, d, D, r, .) over scale-degree relative moves + rests.
+- 3 hand-tuned characters (stepwise, leaping, sparse) selected by mutation. Each character has a 6-rule production table.
+- 3-generation rewrite into a 256-byte output buffer per `lsystem_reset()`. Walker reads sequentially, snaps each pointer position to the nearest in-mask degree, returns `LSYSTEM_REST` for the rest symbol so the caller skips the trigger (breathing).
+- `mutate()` calls `lsystem_mutate()` with ~33% probability per event. Mutation re-rolls one rule's RHS (50%), cycles character (25%), or swaps an axiom symbol (25%) - drift the melodic style across the piece.
+- Memory cost: ~410 B static state.
+- 6 new unit tests in `tests/unit/test_lsystem.c`. Coverage on the new module: 93.1%.
+
 ## Recent: testing + CI
 
 - Hand-rolled unit-test framework at `tests/unit/test.h` (~130 LOC, `TEST(name) {...}` registration via constructor attributes plus assertion macros).
