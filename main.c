@@ -411,7 +411,9 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     uint32_t h = th > 2u   ? (uint32_t)(th - 2u) : 22u;
     if (w > frames) w = frames;
 
-    static char out[8192];
+    /* 24 KB comfortable headroom for worst-case colored output:
+       24 rows * ~720 bytes/row + status row + escapes ~= 18 KB. */
+    static char out[24576];
     int p = 0;
     /* Cursor home + hide + clear line */
     out[p++] = 0x1b; out[p++] = '['; out[p++] = 'H';
@@ -539,7 +541,9 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
             out[p++] = level_chars[lvl];
         }
         if (r < h - 1) { out[p++] = '\r'; out[p++] = '\n'; }
-        if (p > (int)sizeof(out) - 256) break;  /* defensive */
+        /* Worst case (alternating colors) needs ~800 bytes per row,
+           so bail before a row that could overrun the buffer. */
+        if (p > (int)sizeof(out) - 1024) break;
     }
     APPEND_STR(COL_RESET);
     (void)!write(1, out, (size_t)p);
