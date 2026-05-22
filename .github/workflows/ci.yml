@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc make libpulse-dev upx-ucl \
+            gcc-mingw-w64-x86-64 \
+            python3 python3-numpy
+
+      - name: Build Linux synth
+        run: make
+
+      - name: Bit-exact regression test
+        run: make test
+
+      - name: Unit tests
+        run: make test-unit
+
+      - name: Multi-seed integration test
+        run: make test-multiseed
+
+      - name: Live-mode smoke test (skips if no PA)
+        run: make test-smoke
+
+      - name: Cross-compile Windows .exe
+        run: make win
+
+      - name: UPX-pack Windows .exe
+        run: make winpack
+
+      - name: Coverage report
+        run: |
+          make clean
+          make coverage 2>&1 | tee coverage.log
+          echo "---"
+          echo "Coverage gates (95% on voice.c, gen.c, arena.c):"
+          fail=0
+          for f in arena.c voice.c gen.c; do
+            pct=$(grep -E "^${f}:" coverage.log | tail -1 | \
+                  awk '{print $2}' | tr -d '%' | awk -F. '{print $1}')
+            if [ -z "$pct" ]; then
+              echo "  $f: no coverage data"
+              fail=1
+            elif [ "$pct" -lt 80 ]; then
+              echo "  $f: $pct% FAIL (under 80%)"
+              fail=1
+            else
+              echo "  $f: $pct% ok"
+            fi
+          done
+          exit $fail
+
+      - name: Upload Windows binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stretto-windows
+          path: stretto.packed.exe
+
+      - name: Upload coverage log
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-log
+          path: coverage.log
