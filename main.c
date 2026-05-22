@@ -3,11 +3,14 @@
 #include <string.h>
 #include <stdint.h>
 #include <fcntl.h>
+#include <errno.h>
+
+#ifndef _WIN32
 #include <unistd.h>
 #include <sys/ioctl.h>
-#include <errno.h>
 #include <termios.h>
 #include <pulse/pulseaudio.h>
+#endif
 
 #include "arena.h"
 #include "voice.h"
@@ -65,13 +68,17 @@ static uint16_t reverb_wet = 60;   /* 0..256, mix amount */
 #define COMB_G 180                 /* ~0.70 in 8.8 fixed, RT60 ~1.5 s */
 #define AP_G   180                 /* ~0.70 */
 
+#ifndef _WIN32
 #define TIOCGWINSZ     0x5413
 
 static struct termios saved_termios;
 static int termios_saved = 0;
+#endif
 static int help_visible = 0;
 static int no_ui = 0;
 
+#ifndef _WIN32
+/* Terminal UI helpers (Unix-only - use write() directly). */
 static const char HELP_TEXT[] =
     "\x1b[H\x1b[2J"
     "  stretto keys\r\n"
@@ -96,6 +103,7 @@ static void show_help(void) {
 static void clear_screen(void) {
     (void)!write(1, "\x1b[H\x1b[2J", 7);
 }
+#endif  /* terminal UI helpers */
 
 static inline int16_t sat16(int32_t v) {
     if (v >  32767) return  32767;
@@ -271,6 +279,7 @@ static void render_chunk(int16_t *out, uint32_t frames) {
     saturate_process(out, frames);
 }
 
+#ifndef _WIN32
 static void restore_terminal(void) {
     if (termios_saved) {
         tcsetattr(0, TCSANOW, &saved_termios);
@@ -330,6 +339,7 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     }
     (void)!write(1, out, (size_t)p);
 }
+#endif  /* restore_terminal + draw_oscilloscope */
 
 static void write_wav_header(FILE *f, uint32_t num_samples) {
     /* num_samples is per-channel frame count; stereo writes 4 bytes
@@ -377,6 +387,7 @@ static void render_wav(int seconds, const char *path) {
     fclose(f);
 }
 
+#ifndef _WIN32
 /* Threaded-mainloop pa_stream callbacks: each just wakes the
    condition variable so the main thread can re-check stream state
    or writable-size in its wait loops. */
@@ -551,6 +562,15 @@ static void play_pulse(void) {
         }
     }
 }
+#else  /* _WIN32: Windows live-mode stub (Phase 2 will add PortAudio). */
+static void play_pulse(void) {
+    fprintf(stderr,
+            "stretto: live mode is not yet supported on this Windows build.\n"
+            "Use:  stretto.exe --render <seconds> <output.wav>\n"
+            "Phase 2 will add a PortAudio (WASAPI) backend for live mode.\n");
+    exit(1);
+}
+#endif  /* _WIN32 */
 
 int main(int argc, char **argv) {
     voice_pool_init();
