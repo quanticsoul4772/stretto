@@ -10,6 +10,9 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <pulse/pulseaudio.h>
+#else
+#include <windows.h>
+#include <mmsystem.h>
 #endif
 
 #include "arena.h"
@@ -562,13 +565,67 @@ static void play_pulse(void) {
         }
     }
 }
-#else  /* _WIN32: Windows live-mode stub (Phase 2 will add PortAudio). */
+#else  /* _WIN32: Windows live audio via Win32 waveOut. */
+
+/* Four cycling buffers of BUFFER_FRAMES each (~21 ms at 48 kHz).
+   Total buffered latency ~85 ms. Uses CALLBACK_EVENT so the main
+   thread can wait on a single event handle for buffer completion -
+   no callback function needed. */
+#define WAVE_BUFFERS 4
+static HWAVEOUT hwo;
+static WAVEHDR  wave_hdrs[WAVE_BUFFERS];
+static int16_t *wave_bufs[WAVE_BUFFERS];
+static HANDLE   wave_event;
+
 static void play_pulse(void) {
-    fprintf(stderr,
-            "stretto: live mode is not yet supported on this Windows build.\n"
-            "Use:  stretto.exe --render <seconds> <output.wav>\n"
-            "Phase 2 will add a PortAudio (WASAPI) backend for live mode.\n");
-    exit(1);
+    WAVEFORMATEX wf;
+    memset(&wf, 0, sizeof(wf));
+    wf.wFormatTag     = WAVE_FORMAT_PCM;
+    wf.nChannels      = 2;
+    wf.nSamplesPerSec = SAMPLE_RATE;
+    wf.wBitsPerSample = 16;
+    wf.nBlockAlign    = (WORD)(wf.nChannels * wf.wBitsPerSample / 8);
+    wf.nAvgBytesPerSec = wf.nSamplesPerSec * wf.nBlockAlign;
+
+    wave_event = CreateEvent(NULL, FALSE, FALSE, NULL);
+    if (!wave_event) {
+        fprintf(stderr, "stretto: CreateEvent failed\n");
+        exit(1);
+    }
+
+    MMRESULT mr = waveOutOpen(&hwo, WAVE_MAPPER, &wf,
+                              (DWORD_PTR)wave_event, 0, CALLBACK_EVENT);
+    if (mr != MMSYSERR_NOERROR) {
+        fprintf(stderr, "stretto: waveOutOpen failed (code %u)\n", (unsigned)mr);
+        exit(1);
+    }
+
+    size_t buf_bytes = BUFFER_FRAMES * 2u * sizeof(int16_t);
+    for (int i = 0; i < WAVE_BUFFERS; i++) {
+        wave_bufs[i] = arena_alloc(buf_bytes);
+        memset(&wave_hdrs[i], 0, sizeof(WAVEHDR));
+        wave_hdrs[i].lpData         = (LPSTR)wave_bufs[i];
+        wave_hdrs[i].dwBufferLength = (DWORD)buf_bytes;
+        waveOutPrepareHeader(hwo, &wave_hdrs[i], sizeof(WAVEHDR));
+    }
+
+    /* Prime all four buffers with rendered audio and submit them. */
+    for (int i = 0; i < WAVE_BUFFERS; i++) {
+        render_chunk(wave_bufs[i], BUFFER_FRAMES);
+        waveOutWrite(hwo, &wave_hdrs[i], sizeof(WAVEHDR));
+    }
+
+    int next = 0;
+    for (;;) {
+        /* Wait until this slot's buffer has finished playing. */
+        while (!(wave_hdrs[next].dwFlags & WHDR_DONE)) {
+            WaitForSingleObject(wave_event, INFINITE);
+        }
+        /* Render new audio into the freed buffer and resubmit. */
+        render_chunk(wave_bufs[next], BUFFER_FRAMES);
+        waveOutWrite(hwo, &wave_hdrs[next], sizeof(WAVEHDR));
+        next = (next + 1) % WAVE_BUFFERS;
+    }
 }
 #endif  /* _WIN32 */
 
