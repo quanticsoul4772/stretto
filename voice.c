@@ -27,10 +27,24 @@
 #define PEAK_GAIN_MAX        1024    /* 4.0x in 8.8 fixed point */
 #define PEAK_GAIN_UNITY      256     /* 1.0x in 8.8 fixed point */
 
-/* SVF (2-pole Chamberlin) parameters. f=200, q=100 with >>8 shift
-   gives ~5.6 kHz cutoff and Q ~ 2.56 at 44.1 kHz sample rate. */
-#define SVF_F  200
-#define SVF_Q  100
+/* SVF (2-pole Chamberlin) parameters - now runtime-tunable. Base
+   values, with per-role offsets and per-voice LFO modulation added
+   inside voice_step. f=200 -> ~6.1 kHz at 48 kHz, Q=100 -> ~2.56. */
+static uint16_t svf_f_base = 200;
+static uint16_t svf_q_base = 100;
+
+/* Filter mode: 0 LP, 1 HP, 2 BP, 3 notch (LP+HP). */
+static uint8_t  filter_mode = 0;
+
+/* Per-voice-LFO depth driving cutoff (0..255 = 0..100% of base cutoff
+   range). LFO is the existing pan LFO; this just scales how much it
+   bends the cutoff. */
+static uint16_t lfo_filter_depth = 80;
+
+/* Per-role SVF base offset (signed). Bass darker, melody more open.
+   Drums get a low cutoff so the noise hihat doesn't sizzle the mix. */
+static const int16_t role_svf_f_off[4] = { -100, -40, 0, -120 };
+static const int16_t role_svf_q_off[4] = {  -30,   0, 0,  -50 };
 
 static uint32_t prng_state = 0xCAFEBABEu;
 static uint16_t fm_mod_depth = 1500;
@@ -97,6 +111,9 @@ void voice_init(Voice *v) {
     v->peak_seen = 1;
     v->gain = PEAK_GAIN_UNITY;
     v->peak_window = 0;
+    v->fenv_amp = 0;
+    v->fenv_time = 0;
+    v->fenv_phase = ENV_OFF;
     v->svf_lp = 0;
     v->svf_bp = 0;
 }
@@ -115,6 +132,11 @@ void voice_trigger(Voice *v, uint8_t note, uint8_t type, uint8_t role) {
     v->peak_seen = 1;
     v->gain = PEAK_GAIN_UNITY;
     v->peak_window = PEAK_WINDOW_SAMPLES;
+    /* Reset chord filter envelope on every trigger so the cutoff
+       sweep restarts for each chord change. */
+    v->fenv_amp = 0;
+    v->fenv_time = 0;
+    v->fenv_phase = ENV_A;
 
     if (type == VOICE_KS) {
         v->u.ks.len = note_ks_len[note];
@@ -283,6 +305,54 @@ static int16_t drum_step(Voice *v) {
     return (int16_t)prng_noise();
 }
 
+/* Advance the chord filter envelope (A 5 ms / D 200 ms / R 600 ms,
+   reusing the amplitude env's timing constants). Returns 0..32767. */
+static void fenv_step(Voice *v) {
+    if (v->role != ROLE_CHORD) return;
+    uint32_t amp = v->fenv_amp;
+    switch (v->fenv_phase) {
+        case ENV_A: {
+            uint32_t idx = ((uint32_t)v->fenv_time * 255u) / ENV_ATTACK_SAMPLES;
+            if (idx > 255u) idx = 255u;
+            amp = ((uint32_t)env_table[idx] * ENV_PEAK) / 255u;
+            v->fenv_time++;
+            if (v->fenv_time >= ENV_ATTACK_SAMPLES) {
+                v->fenv_phase = ENV_D;
+                v->fenv_time = 0;
+                amp = ENV_PEAK;
+            }
+            break;
+        }
+        case ENV_D: {
+            uint32_t idx = ((uint32_t)v->fenv_time * 255u) / ENV_DECAY_SAMPLES;
+            if (idx > 255u) idx = 255u;
+            uint32_t curve = 255u - env_table[idx];
+            amp = ENV_SUSTAIN_LEVEL + ((uint32_t)(ENV_PEAK - ENV_SUSTAIN_LEVEL) * curve) / 255u;
+            v->fenv_time++;
+            if (v->fenv_time >= ENV_DECAY_SAMPLES) {
+                v->fenv_phase = ENV_R;
+                v->fenv_time = 0;
+                amp = ENV_SUSTAIN_LEVEL;
+            }
+            break;
+        }
+        case ENV_R: {
+            uint32_t idx = ((uint32_t)v->fenv_time * 255u) / ENV_RELEASE_SAMPLES;
+            if (idx > 255u) idx = 255u;
+            uint32_t curve = 255u - env_table[idx];
+            amp = ((uint32_t)ENV_SUSTAIN_LEVEL * curve) / 255u;
+            v->fenv_time++;
+            if (v->fenv_time >= ENV_RELEASE_SAMPLES) {
+                v->fenv_phase = ENV_OFF;
+                amp = 0;
+            }
+            break;
+        }
+        default: amp = 0;
+    }
+    v->fenv_amp = (uint16_t)amp;
+}
+
 int16_t voice_step(Voice *v) {
     if (v->env_phase == ENV_OFF) return 0;
     int16_t raw;
@@ -291,16 +361,49 @@ int16_t voice_step(Voice *v) {
     else if (v->type == VOICE_DRUM) raw = drum_step(v);
     else                            raw = 0;
     uint16_t env = env_step(v);
+    fenv_step(v);
     int16_t shaped = (int16_t)(((int32_t)raw * env) >> 15);
 
-    int32_t hp = shaped - v->svf_lp - ((v->svf_bp * SVF_Q) >> 8);
-    int32_t bp = v->svf_bp + ((hp * SVF_F) >> 8);
-    int32_t lp = v->svf_lp + ((bp * SVF_F) >> 8);
+    /* Compute effective cutoff for this voice:
+         base + per-role offset
+         + LFO modulation (slow sweep via the same LFO that drives pan)
+         + filter-envelope modulation (chord voices only)
+       Clamp to a stable range for the SVF. */
+    int32_t f_eff = (int32_t)svf_f_base + role_svf_f_off[v->role];
+    {
+        int16_t lfo = sin_table[v->lfo_phase >> 22];  /* +/-24576 */
+        f_eff += ((int32_t)lfo * lfo_filter_depth) >> 11;
+    }
+    if (v->role == ROLE_CHORD) {
+        /* Filter env: open the cutoff a lot during attack, then close
+           during release. fenv_amp range is 0..32767 (matches env_amp). */
+        f_eff += ((int32_t)v->fenv_amp * 120) >> 10;  /* up to +~+3.7k at peak */
+    }
+    if (f_eff < 20)  f_eff = 20;
+    if (f_eff > 450) f_eff = 450;
+
+    int32_t q_eff = (int32_t)svf_q_base + role_svf_q_off[v->role];
+    if (q_eff < 0)   q_eff = 0;
+    if (q_eff > 230) q_eff = 230;  /* >240 self-oscillates with int32 state */
+
+    int32_t hp = shaped - v->svf_lp - ((v->svf_bp * q_eff) >> 8);
+    int32_t bp = v->svf_bp + ((hp * f_eff) >> 8);
+    int32_t lp = v->svf_lp + ((bp * f_eff) >> 8);
     v->svf_bp = bp;
     v->svf_lp = lp;
 
-    if (lp > 32767) lp = 32767;
-    else if (lp < -32768) lp = -32768;
+    /* Select filter mode output: LP / HP / BP / notch. */
+    int32_t out;
+    switch (filter_mode) {
+        case 1: out = hp; break;
+        case 2: out = bp; break;
+        case 3: out = hp + lp; break;
+        default: out = lp; break;
+    }
+    if (out > 32767) out = 32767;
+    else if (out < -32768) out = -32768;
+    /* Reassign to the variable the rest of voice_step works with. */
+    lp = out;
 
     /* Peak-normalize. During the measurement window, observe |lp| and
        recompute gain whenever a new peak is found. Gain can be below
@@ -469,4 +572,46 @@ uint32_t voice_pool_active_mask(void) {
         if (pool[i].env_phase != ENV_OFF) mask |= (1u << i);
     }
     return mask;
+}
+
+/* Filter control API. Clamps keep the SVF stable - too-high f or q
+   cause the state to overflow or self-oscillate uncontrollably even
+   with int32 state. */
+void voice_adjust_cutoff(int delta) {
+    int v = (int)svf_f_base + delta;
+    if (v < 30)  v = 30;
+    if (v > 350) v = 350;
+    svf_f_base = (uint16_t)v;
+}
+
+void voice_adjust_resonance(int delta) {
+    int v = (int)svf_q_base + delta;
+    if (v < 0)   v = 0;
+    if (v > 220) v = 220;
+    svf_q_base = (uint16_t)v;
+}
+
+void voice_adjust_lfo_filter_depth(int delta) {
+    int v = (int)lfo_filter_depth + delta;
+    if (v < 0)   v = 0;
+    if (v > 255) v = 255;
+    lfo_filter_depth = (uint16_t)v;
+}
+
+void voice_cycle_filter_mode(void) {
+    filter_mode = (uint8_t)((filter_mode + 1u) & 3u);
+}
+
+uint16_t voice_get_cutoff(void)           { return svf_f_base; }
+uint16_t voice_get_resonance(void)        { return svf_q_base; }
+uint16_t voice_get_lfo_filter_depth(void) { return lfo_filter_depth; }
+uint8_t  voice_get_filter_mode(void)      { return filter_mode; }
+
+/* Mutate filter params: small random drift to cutoff and Q. Called
+   from gen.c mutate() with the same PRNG word. */
+void voice_mutate_filter(uint32_t rng) {
+    int df = (int)((rng >> 16) & 0x1F) - 16;   /* -16..+15 */
+    int dq = (int)((rng >> 24) & 0x0F) - 8;    /*  -8..+7  */
+    voice_adjust_cutoff(df);
+    voice_adjust_resonance(dq);
 }

@@ -40,6 +40,13 @@ typedef struct {
     uint16_t gain;            /* 8.8 fixed: 256 = 1.0x, 1024 = 4.0x cap */
     uint16_t peak_window;     /* samples remaining in the measurement window */
     uint16_t _norm_pad;
+    /* Per-voice filter envelope (chord voices only - unused otherwise).
+       Same ADSR shape as the amplitude env but feeds cutoff modulation:
+       on trigger fenv opens the filter; during release it closes it. */
+    uint16_t fenv_amp;
+    uint16_t fenv_time;
+    uint8_t  fenv_phase;
+    uint8_t  _fenv_pad[3];
     /* SVF state is int32, not int16. At Q ~ 2.56 (q=100, damp=q/256),
        resonance can ring the filter state to roughly 2.5x input
        amplitude; int16 would wrap and produce broadband clicks. */
@@ -78,5 +85,20 @@ Stereo  voice_pool_mix(void);
 void     voice_set_mod_depth(uint16_t d);
 uint16_t voice_get_mod_depth(void);
 uint32_t voice_pool_active_mask(void);
+
+/* Filter controls (Phase A + B). All are global; per-role offsets and
+   per-voice LFO modulation get added on top inside voice_step. */
+void     voice_adjust_cutoff(int delta);
+void     voice_adjust_resonance(int delta);
+void     voice_adjust_lfo_filter_depth(int delta);
+void     voice_cycle_filter_mode(void);
+uint16_t voice_get_cutoff(void);
+uint16_t voice_get_resonance(void);
+uint16_t voice_get_lfo_filter_depth(void);
+uint8_t  voice_get_filter_mode(void);   /* 0 LP, 1 HP, 2 BP, 3 notch */
+
+/* Filter param mutation hook (gen.c mutate() calls this with a small
+   random delta on cutoff and resonance occasionally). */
+void     voice_mutate_filter(uint32_t rng);
 
 #endif

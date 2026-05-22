@@ -213,6 +213,12 @@ static void mutate(void) {
     if (((r >> 28) & 1u) == 0u) {
         eucl_k_counter = (uint8_t)(2u + ((r >> 18) % 7u));
     }
+
+    /* Drift the filter base cutoff and resonance occasionally so the
+       overall timbre evolves over long timescales. */
+    if (((r >> 30) & 1u) == 0u) {
+        voice_mutate_filter(prng());
+    }
 }
 
 /* Read the current dynamic mutation interval from the triangle LFO.
