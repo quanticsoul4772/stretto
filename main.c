@@ -13,7 +13,18 @@
 #else
 #include <windows.h>
 #include <mmsystem.h>
+#include <conio.h>
+#include <io.h>
+#define write _write
 #endif
+
+/* Platform-abstracted terminal primitives. All UI / keyboard code
+   below uses these, so the oscilloscope + status row + key handler
+   work the same on Linux and Windows. */
+static int  term_get_size(unsigned int *w, unsigned int *h);
+static int  term_read_key(char *out);
+static void term_raw_mode(void);
+static void term_restore_mode(void);
 
 #include "arena.h"
 #include "voice.h"
@@ -72,16 +83,21 @@ static uint16_t reverb_wet = 60;   /* 0..256, mix amount */
 #define AP_G   180                 /* ~0.70 */
 
 #ifndef _WIN32
-#define TIOCGWINSZ     0x5413
-
+#define TIOCGWINSZ_VAL 0x5413
 static struct termios saved_termios;
 static int termios_saved = 0;
+#else
+static DWORD g_old_in_mode  = 0;
+static DWORD g_old_out_mode = 0;
+static HANDLE g_hin  = NULL;
+static HANDLE g_hout = NULL;
+static int win_term_saved = 0;
 #endif
 static int help_visible = 0;
 static int no_ui = 0;
 
-#ifndef _WIN32
-/* Terminal UI helpers (Unix-only - use write() directly). */
+/* Portable terminal UI helpers - work on both Linux and modern
+   Windows console (after VT mode is enabled by term_raw_mode). */
 static const char HELP_TEXT[] =
     "\x1b[H\x1b[2J"
     "  stretto keys\r\n"
@@ -106,7 +122,105 @@ static void show_help(void) {
 static void clear_screen(void) {
     (void)!write(1, "\x1b[H\x1b[2J", 7);
 }
-#endif  /* terminal UI helpers */
+
+/* Platform implementations of the term_* primitives declared above. */
+
+#ifndef _WIN32
+
+static int term_get_size(unsigned int *w, unsigned int *h) {
+    unsigned short ws[4] = { 24, 80, 0, 0 };
+    if (ioctl(1, TIOCGWINSZ_VAL, ws) < 0) return 0;
+    if (ws[0]) *h = ws[0];
+    if (ws[1]) *w = ws[1];
+    return 1;
+}
+
+static int term_read_key(char *out) {
+    return (read(0, out, 1) == 1) ? 1 : 0;
+}
+
+static void term_raw_mode(void) {
+    if (tcgetattr(0, &saved_termios) < 0) {
+        fprintf(stderr, "tcgetattr: %s\n", strerror(errno));
+        exit(1);
+    }
+    termios_saved = 1;
+    struct termios raw = saved_termios;
+    raw.c_lflag &= ~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 0;
+    if (tcsetattr(0, TCSANOW, &raw) < 0) {
+        fprintf(stderr, "tcsetattr: %s\n", strerror(errno));
+        exit(1);
+    }
+    int flags = fcntl(0, F_GETFL, 0);
+    if (flags < 0 || fcntl(0, F_SETFL, flags | O_NONBLOCK) < 0) {
+        fprintf(stderr, "fcntl: %s\n", strerror(errno));
+        exit(1);
+    }
+}
+
+static void term_restore_mode(void) {
+    if (termios_saved) {
+        tcsetattr(0, TCSANOW, &saved_termios);
+        (void)!write(1, "\x1b[?25h\n", 8);
+        termios_saved = 0;
+    }
+}
+
+#else  /* _WIN32 */
+
+static int term_get_size(unsigned int *w, unsigned int *h) {
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (!GetConsoleScreenBufferInfo(g_hout ? g_hout : GetStdHandle(STD_OUTPUT_HANDLE), &csbi))
+        return 0;
+    *w = (unsigned int)(csbi.srWindow.Right  - csbi.srWindow.Left + 1);
+    *h = (unsigned int)(csbi.srWindow.Bottom - csbi.srWindow.Top  + 1);
+    if (*w == 0) *w = 80;
+    if (*h == 0) *h = 24;
+    return 1;
+}
+
+static int term_read_key(char *out) {
+    if (_kbhit()) {
+        int ch = _getch();
+        if (ch == 3) {       /* Ctrl-C arrives as 0x03 in raw mode */
+            *out = 'q';
+            return 1;
+        }
+        *out = (char)ch;
+        return 1;
+    }
+    return 0;
+}
+
+static void term_raw_mode(void) {
+    g_hin  = GetStdHandle(STD_INPUT_HANDLE);
+    g_hout = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (!GetConsoleMode(g_hin, &g_old_in_mode) ||
+        !GetConsoleMode(g_hout, &g_old_out_mode)) {
+        /* probably redirected; UI off */
+        no_ui = 1;
+        return;
+    }
+    win_term_saved = 1;
+    DWORD newin  = g_old_in_mode & ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT
+                                   | ENABLE_PROCESSED_INPUT);
+    DWORD newout = g_old_out_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    SetConsoleMode(g_hin, newin);
+    SetConsoleMode(g_hout, newout);
+}
+
+static void term_restore_mode(void) {
+    if (win_term_saved) {
+        (void)!write(1, "\x1b[?25h\n", 8);
+        SetConsoleMode(g_hin, g_old_in_mode);
+        SetConsoleMode(g_hout, g_old_out_mode);
+        win_term_saved = 0;
+    }
+}
+
+#endif
 
 static inline int16_t sat16(int32_t v) {
     if (v >  32767) return  32767;
@@ -282,29 +396,19 @@ static void render_chunk(int16_t *out, uint32_t frames) {
     saturate_process(out, frames);
 }
 
-#ifndef _WIN32
 static void restore_terminal(void) {
-    if (termios_saved) {
-        tcsetattr(0, TCSANOW, &saved_termios);
-        (void)!write(1, "\x1b[?25h\n", 8);
-    }
+    term_restore_mode();
 }
 
 /* Build the entire frame (status row + oscilloscope grid) into one
-   buffer and write it with a single write() syscall. Previously we
-   issued ~3 + 3*h syscalls per frame (~75 at h=24); under WSLg's
-   RDP-based terminal each one can stall, accumulating enough delay
-   to underrun the PulseAudio buffer. One write per frame keeps the
-   audio loop unblocked. */
+   buffer and write it with a single write() syscall. Saves ~75
+   syscalls per frame; portable across Linux and Windows. */
 static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
-    unsigned short ws[4];
-    ws[0] = 24; ws[1] = 80;
-    ioctl(1, TIOCGWINSZ, ws);
-    if (ws[1] == 0) ws[1] = 80;
-    if (ws[0] == 0) ws[0] = 24;
+    unsigned int tw = 80, th = 24;
+    term_get_size(&tw, &th);
 
-    uint32_t w = ws[1] > 120 ? 120 : ws[1];
-    uint32_t h = ws[0] > 2 ? ws[0] - 2 : 22;
+    uint32_t w = tw > 120u ? 120u : tw;
+    uint32_t h = th > 2u   ? (uint32_t)(th - 2u) : 22u;
     if (w > frames) w = frames;
 
     static char out[4096];
@@ -342,7 +446,6 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     }
     (void)!write(1, out, (size_t)p);
 }
-#endif  /* restore_terminal + draw_oscilloscope */
 
 static void write_wav_header(FILE *f, uint32_t num_samples) {
     /* num_samples is per-channel frame count; stereo writes 4 bytes
@@ -408,27 +511,8 @@ static void pa_stream_write_cb(pa_stream *s, size_t length, void *userdata) {
 }
 
 static void play_pulse(void) {
-    if (tcgetattr(0, &saved_termios) < 0) {
-        fprintf(stderr, "tcgetattr: %s\n", strerror(errno));
-        exit(1);
-    }
-    termios_saved = 1;
+    term_raw_mode();
     atexit(restore_terminal);
-
-    struct termios raw = saved_termios;
-    raw.c_lflag &= ~(ICANON | ECHO);
-    raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 0;
-    if (tcsetattr(0, TCSANOW, &raw) < 0) {
-        fprintf(stderr, "tcsetattr: %s\n", strerror(errno));
-        exit(1);
-    }
-
-    int flags = fcntl(0, F_GETFL, 0);
-    if (flags < 0 || fcntl(0, F_SETFL, flags | O_NONBLOCK) < 0) {
-        fprintf(stderr, "fcntl: %s\n", strerror(errno));
-        exit(1);
-    }
 
     /* Full pa_stream API with a threaded mainloop, matching what
        paplay does. The internal helper thread used by pa_simple was
@@ -519,7 +603,7 @@ static void play_pulse(void) {
         if (!no_ui && !help_visible) draw_oscilloscope(buf, BUFFER_FRAMES);
 
         char ch;
-        while (read(0, &ch, 1) > 0) {
+        while (term_read_key(&ch)) {
             if (ch == '?') {
                 help_visible = !help_visible;
                 if (help_visible) show_help();
@@ -577,14 +661,31 @@ static WAVEHDR  wave_hdrs[WAVE_BUFFERS];
 static int16_t *wave_bufs[WAVE_BUFFERS];
 static HANDLE   wave_event;
 
+static void win_cleanup(void) {
+    for (int i = 0; i < WAVE_BUFFERS; i++) {
+        if (wave_hdrs[i].lpData) {
+            waveOutUnprepareHeader(hwo, &wave_hdrs[i], sizeof(WAVEHDR));
+        }
+    }
+    if (hwo) {
+        waveOutReset(hwo);
+        waveOutClose(hwo);
+        hwo = NULL;
+    }
+    term_restore_mode();
+}
+
 static void play_pulse(void) {
+    term_raw_mode();
+    atexit(win_cleanup);
+
     WAVEFORMATEX wf;
     memset(&wf, 0, sizeof(wf));
-    wf.wFormatTag     = WAVE_FORMAT_PCM;
-    wf.nChannels      = 2;
-    wf.nSamplesPerSec = SAMPLE_RATE;
-    wf.wBitsPerSample = 16;
-    wf.nBlockAlign    = (WORD)(wf.nChannels * wf.wBitsPerSample / 8);
+    wf.wFormatTag      = WAVE_FORMAT_PCM;
+    wf.nChannels       = 2;
+    wf.nSamplesPerSec  = SAMPLE_RATE;
+    wf.wBitsPerSample  = 16;
+    wf.nBlockAlign     = (WORD)(wf.nChannels * wf.wBitsPerSample / 8);
     wf.nAvgBytesPerSec = wf.nSamplesPerSec * wf.nBlockAlign;
 
     wave_event = CreateEvent(NULL, FALSE, FALSE, NULL);
@@ -609,7 +710,8 @@ static void play_pulse(void) {
         waveOutPrepareHeader(hwo, &wave_hdrs[i], sizeof(WAVEHDR));
     }
 
-    /* Prime all four buffers with rendered audio and submit them. */
+    /* Prime all four buffers and submit them so playback starts
+       immediately. */
     for (int i = 0; i < WAVE_BUFFERS; i++) {
         render_chunk(wave_bufs[i], BUFFER_FRAMES);
         waveOutWrite(hwo, &wave_hdrs[i], sizeof(WAVEHDR));
@@ -617,27 +719,91 @@ static void play_pulse(void) {
 
     int next = 0;
     for (;;) {
-        /* Wait until this slot's buffer has finished playing. */
+        /* Wait until next slot's buffer has finished playing. */
         while (!(wave_hdrs[next].dwFlags & WHDR_DONE)) {
             WaitForSingleObject(wave_event, INFINITE);
         }
-        /* Render new audio into the freed buffer and resubmit. */
         render_chunk(wave_bufs[next], BUFFER_FRAMES);
         waveOutWrite(hwo, &wave_hdrs[next], sizeof(WAVEHDR));
         next = (next + 1) % WAVE_BUFFERS;
+
+        /* Same UI + keyboard handling as the Linux build. */
+        if (!no_ui && !help_visible) draw_oscilloscope(wave_bufs[next], BUFFER_FRAMES);
+
+        char ch;
+        while (term_read_key(&ch)) {
+            if (ch == '?') {
+                help_visible = !help_visible;
+                if (help_visible) show_help();
+                else clear_screen();
+                continue;
+            }
+            if (help_visible) {
+                help_visible = 0;
+                clear_screen();
+            }
+            if (ch == ' ') gen_force_mutate();
+            else if (ch == '+') gen_set_tempo(-10);
+            else if (ch == '-') gen_set_tempo(+10);
+            else if (ch == '[') {
+                uint16_t d = voice_get_mod_depth();
+                voice_set_mod_depth(d > 200 ? d - 200 : 100);
+            }
+            else if (ch == ']') {
+                voice_set_mod_depth(voice_get_mod_depth() + 200);
+            }
+            else if (ch == 's') gen_cycle_scale();
+            else if (ch == 'g') gen_adjust_gate(-16);
+            else if (ch == 'G') gen_adjust_gate(+16);
+            else if (ch == 'd') delay_adjust_wet(-16);
+            else if (ch == 'D') delay_adjust_wet(+16);
+            else if (ch == 'f') delay_adjust_feedback(-16);
+            else if (ch == 'F') delay_adjust_feedback(+16);
+            else if (ch == 'r') reverb_adjust_wet(-16);
+            else if (ch == 'R') reverb_adjust_wet(+16);
+            else if (ch == 'q') {
+                win_cleanup();
+                exit(0);
+            }
+        }
     }
 }
 #endif  /* _WIN32 */
 
 int main(int argc, char **argv) {
     voice_pool_init();
+
+    /* Pre-scan argv for --seed N. If found, fix the PRNG to that
+       value (used by the regression test and for reproducing a
+       specific run you like). If absent, gen_init seeds from the
+       system clock so every launch sounds different. */
+    int positional_argc = 1;
+    char *positional[8] = { argv[0] };
+    for (int i = 1; i < argc && positional_argc < 8; i++) {
+        if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
+            char *end;
+            unsigned long s = strtoul(argv[++i], &end, 10);
+            if (*end != '\0') {
+                fprintf(stderr, "seed: must be unsigned integer, got \"%s\"\n", argv[i]);
+                exit(1);
+            }
+            gen_seed((uint32_t)s);
+        } else {
+            positional[positional_argc++] = argv[i];
+        }
+    }
+    argc = positional_argc;
+    argv = positional;
+
     gen_init();
     reverb_init();
     delay_init();
 
     if (argc >= 2 && strcmp(argv[1], "--render") == 0) {
         if (argc != 4) {
-            fprintf(stderr, "usage: %s --render <seconds> <output.wav>\n", argv[0]);
+            fprintf(stderr,
+                "usage: %s --render <seconds> <output.wav> [--seed N]\n",
+                argv[0]);
             exit(1);
         }
         char *end;
@@ -656,7 +822,9 @@ int main(int argc, char **argv) {
         if (argc == 2) no_ui = 1;
         play_pulse();
     } else {
-        fprintf(stderr, "usage: %s [--render <seconds> <output.wav>] [--no-ui]\n", argv[0]);
+        fprintf(stderr,
+            "usage: %s [--render <seconds> <output.wav>] [--no-ui] [--seed N]\n",
+            argv[0]);
         exit(1);
     }
     return 0;

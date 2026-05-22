@@ -102,7 +102,7 @@ test: synth
 
 golden: synth
 	@mkdir -p golden
-	./synth --render 16 /tmp/golden_render.wav
+	./synth --render 16 /tmp/golden_render.wav --seed 0
 	@sha256sum /tmp/golden_render.wav | awk '{print $$1}' > golden/regression_16s.sha256
 	@echo "golden/regression_16s.sha256 updated:"
 	@cat golden/regression_16s.sha256
