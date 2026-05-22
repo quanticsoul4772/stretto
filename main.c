@@ -636,8 +636,13 @@ static void pa_stream_write_cb(pa_stream *s, size_t length, void *userdata) {
 }
 
 static void play_pulse(void) {
-    term_raw_mode();
-    atexit(restore_terminal);
+    /* --no-ui skips all terminal setup so the smoke test (which has
+       no TTY on stdin) can run cleanly. Without a TTY, tcgetattr
+       fails and the old code would exit(1). */
+    if (!no_ui) {
+        term_raw_mode();
+        atexit(restore_terminal);
+    }
 
     /* Full pa_stream API with a threaded mainloop, matching what
        paplay does. The internal helper thread used by pa_simple was
@@ -808,7 +813,9 @@ static void win_cleanup(void) {
 }
 
 static void play_pulse(void) {
-    term_raw_mode();
+    if (!no_ui) {
+        term_raw_mode();
+    }
     atexit(win_cleanup);
 
     WAVEFORMATEX wf;
