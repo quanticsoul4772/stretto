@@ -253,27 +253,31 @@ static uint16_t env_step(Voice *v) {
 
 /* Drum voice: cheap percussion synthesis. Three sub-types selected
    by u.drum.drum_type:
-     KICK  - sine sweep, pitch decays each sample for a thud envelope
-     SNARE - white noise + ~200 Hz sine, mixed
-     HIHAT - white noise only (envelope makes it short) */
+     KICK  - sine sweep + brief noise click on attack for cut-through
+     SNARE - white noise (loud) + ~200 Hz sine body
+     HIHAT - white noise only */
 static int16_t drum_step(Voice *v) {
     if (v->u.drum.drum_type == DRUM_KICK) {
-        int16_t s = sin_table[v->u.drum.phase >> 22];
+        int16_t body = sin_table[v->u.drum.phase >> 22];
         v->u.drum.phase += v->u.drum.inc;
-        /* Pitch decay: drop inc by ~1/4096 per sample. Over ~100 ms
-           (4800 samples) inc drops to ~31% of its starting value -
-           a 150 Hz -> ~45 Hz sweep, which is the characteristic
-           kick-drum thump. */
+        /* Pitch decay: drop inc by ~1/4096 per sample. */
         v->u.drum.inc -= v->u.drum.inc >> 12;
-        return s;
+        /* Attack click: first ~5 ms (240 samples) blend a noise
+           burst with the sine. Adds high-frequency content so the
+           kick is audible on speakers with weak bass response. */
+        if (v->env_time < 240) {
+            int16_t click = (int16_t)prng_noise();
+            return (int16_t)(((int32_t)body + click) / 2);
+        }
+        return body;
     }
     if (v->u.drum.drum_type == DRUM_SNARE) {
+        /* Noise-dominant snare (90/10 noise/tone) so the crack
+           cuts through on any speaker. */
         int16_t noise = (int16_t)prng_noise();
-        /* Add a sine at ~200 Hz for the snare body. inc = 200 *
-           2^32 / 48000 = 17,895,697. */
         int16_t tone = sin_table[v->u.drum.phase >> 22];
         v->u.drum.phase += 17895697u;
-        return (int16_t)(((int32_t)noise * 7 + (int32_t)tone * 3) / 10);
+        return (int16_t)(((int32_t)noise * 9 + (int32_t)tone) / 10);
     }
     /* DRUM_HIHAT */
     return (int16_t)prng_noise();
@@ -317,10 +321,15 @@ int16_t voice_step(Voice *v) {
     }
     int32_t scaled = ((int32_t)lp * v->gain) >> 8;
 
-    /* Drums get a post-normalization boost so kick/snare/hihat sit
-       audibly on top of the harmonic content. ~1.5x. */
+    /* Per-drum-type post-normalization boost: kick 3x, snare 2.5x,
+       hihat 1.5x. Low-frequency content (kick body) needs more
+       amplitude to be perceived loud on small speakers, and snare
+       needs to cut through the harmonic content. */
     if (v->role == ROLE_DRUM) {
-        scaled = (scaled * 3) / 2;
+        int numer = 3;   /* default 1.5x = 3/2 for hihat */
+        if (v->u.drum.drum_type == DRUM_KICK)       numer = 6;  /* 3.0x */
+        else if (v->u.drum.drum_type == DRUM_SNARE) numer = 5;  /* 2.5x */
+        scaled = (scaled * numer) / 2;
     }
 
     if (scaled > 32767) scaled = 32767;
