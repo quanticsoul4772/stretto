@@ -498,12 +498,14 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
         }
     }
 
-    /* chord: voicing name (white) */
+    /* chord: voicing name (white), Cr: current chord root (cyan). */
     APPEND_STR(" " COL_WHITE "chord:");
     {
         static const char *names[6] = { "triad", "7th", "sus4", "sus2", "inv1", "inv2" };
         APPEND_STR(names[gen_get_chord_pattern() % 6]);
     }
+    APPEND_STR(" " COL_CYAN "Cr:" COL_WHITE);
+    APPEND_NUM(gen_get_chord_root());
 
     /* F: filter cutoff (cyan), N: resonance (yellow), L: LFO filter depth
        (green), T: filter mode (magenta). */

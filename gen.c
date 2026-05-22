@@ -2,6 +2,7 @@
 #include "voice.h"
 #include "euclid_table.h"
 #include "lsystem.h"
+#include "chord_progression.h"
 #include <stdint.h>
 #include <time.h>
 
@@ -297,6 +298,9 @@ void gen_init(void) {
     /* Build the initial L-system expansion so the first melody trigger
        has output to walk. */
     lsystem_reset();
+
+    /* Reset chord-progression root to tonic. */
+    chord_progression_init();
 }
 
 void gen_step(void) {
@@ -314,6 +318,12 @@ void gen_step(void) {
             if (--bars_until_mutate == 0u) {
                 mutate();
                 bars_until_mutate = dynamic_mutate_interval();
+            }
+            /* Chord-progression: advance the chord root every 2 bars,
+               on the entry to even bars. All chord triggers within
+               those two bars share the same root. */
+            if ((bar_count % 2u) == 0u) {
+                chord_progression_step(prng(), cur_scale);
             }
         }
 
@@ -379,7 +389,11 @@ void gen_step(void) {
         for (int i = 0; i < 4; i++) {
             if (substep_in_bar == bass_substeps[i]) {
                 const uint8_t *degs = (bar_count & 1u) ? bass_deg_b : bass_deg_a;
-                uint8_t bass_note = (uint8_t)(SCALES[cur_scale][degs[i]] - 12);
+                /* Bass follows the current chord root: degs[i] is now a
+                   relative offset (0 = root of chord, 4 = fifth above). */
+                uint8_t chord_root = chord_progression_get_root();
+                uint8_t deg = (uint8_t)((chord_root + degs[i]) % 7u);
+                uint8_t bass_note = (uint8_t)(SCALES[cur_scale][deg] - 12);
                 voice_pool_trigger_role(bass_note, VOICE_FM, ROLE_BASS);
                 break;
             }
@@ -393,10 +407,14 @@ void gen_step(void) {
         if (substep_in_bar == 0u || substep_in_bar == 12u ||
             substep_in_bar == 24u || substep_in_bar == 36u) {
             const ChordNote *pat = CHORD_PATTERNS[bar_count % N_CHORD_PATTERNS];
+            uint8_t chord_root = chord_progression_get_root();
             uint16_t sum = 0;
             uint8_t count = 0;
             for (int i = 0; i < 3; i++) {
-                uint8_t d = (uint8_t)pat[i].degree;
+                /* Rebase voicing onto current chord function: the
+                   voicing's degree is treated as an offset above the
+                   chord root, then mod 7 to stay in scale. */
+                uint8_t d = (uint8_t)((pat[i].degree + chord_root) % 7u);
                 if (active_mask & (1u << d)) {
                     int note = (int)SCALES[cur_scale][d]
                              + (int)pat[i].octave * 12;
@@ -501,6 +519,10 @@ uint8_t gen_get_active_mask(void) {
 
 uint8_t gen_get_chord_pattern(void) {
     return (uint8_t)(bar_count % N_CHORD_PATTERNS);
+}
+
+uint8_t gen_get_chord_root(void) {
+    return chord_progression_get_root();
 }
 
 void gen_cycle_scale(void) {

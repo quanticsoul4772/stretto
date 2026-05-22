@@ -18,5 +18,6 @@ uint8_t  gen_get_gate(void);
 uint8_t  gen_get_degree(void);
 uint8_t  gen_get_active_mask(void);
 uint8_t  gen_get_chord_pattern(void);
+uint8_t  gen_get_chord_root(void);
 
 #endif
