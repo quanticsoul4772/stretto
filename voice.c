@@ -1,5 +1,6 @@
 #include "voice.h"
 #include "arena.h"
+#include "effects.h"
 #include "sin_table.h"
 #include "env_table.h"
 #include "note_table.h"
@@ -406,10 +407,8 @@ int16_t voice_step(Voice *v) {
         case 3: out = hp + lp; break;
         default: out = lp; break;
     }
-    if (out > 32767) out = 32767;
-    else if (out < -32768) out = -32768;
     /* Reassign to the variable the rest of voice_step works with. */
-    lp = out;
+    lp = sat16(out);
 
     /* Peak-normalize. During the measurement window, observe |lp| and
        recompute gain whenever a new peak is found. Gain can be below
@@ -441,9 +440,7 @@ int16_t voice_step(Voice *v) {
         scaled = (scaled * numer) / 2;
     }
 
-    if (scaled > 32767) scaled = 32767;
-    else if (scaled < -32768) scaled = -32768;
-    return (int16_t)scaled;
+    return sat16(scaled);
 }
 
 static Voice *pool;

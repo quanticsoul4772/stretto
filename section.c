@@ -2,13 +2,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* Weak stub so unit tests (which do not link main.o) still resolve
-   the reverb-bias setter that gen.c calls. main.c provides the
-   real, strong definition; the linker picks it when present. */
-__attribute__((weak)) void main_set_reverb_wet_bias(int8_t bias) {
-    (void)bias;
-}
-
 /* Per-section parameter biases. Indexed by section (INTRO, BODY,
    TENSION, RESOLVE). Continuous biases are signed deltas applied
    on top of the user's live-tunable parameter values. */

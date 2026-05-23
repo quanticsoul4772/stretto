@@ -12,7 +12,7 @@ UPX_FLAGS ?= --ultra-brute
 
 HEADERS = sin_table.h env_table.h note_table.h euclid_table.h
 GENS    = gen_sin_table gen_env_table gen_note_table gen_euclid_table
-OBJS    = arena.o voice.o gen.o lsystem.o chord_progression.o section.o main.o
+OBJS    = arena.o effects.o voice.o gen.o lsystem.o chord_progression.o section.o main.o
 
 # Size targets (bytes).
 STRIP_TARGET = 24576
@@ -30,13 +30,15 @@ WIN_CFLAGS  = -Os -flto -fuse-linker-plugin -ffunction-sections \
               -fdata-sections -fno-asynchronous-unwind-tables \
               -fno-stack-protector -Qn -DWIN32_LEAN_AND_MEAN
 WIN_LDFLAGS = -Wl,--gc-sections -s -no-pie
-WIN_OBJS    = arena.win.o voice.win.o gen.win.o lsystem.win.o chord_progression.win.o section.win.o main.win.o
+WIN_OBJS    = arena.win.o effects.win.o voice.win.o gen.win.o lsystem.win.o chord_progression.win.o section.win.o main.win.o
 
 arena.win.o: arena.c arena.h
 	$(WIN_CC) $(WIN_CFLAGS) -c arena.c -o arena.win.o
-voice.win.o: voice.c voice.h arena.h $(HEADERS)
+effects.win.o: effects.c effects.h arena.h
+	$(WIN_CC) $(WIN_CFLAGS) -c effects.c -o effects.win.o
+voice.win.o: voice.c voice.h arena.h effects.h $(HEADERS)
 	$(WIN_CC) $(WIN_CFLAGS) -c voice.c -o voice.win.o
-gen.win.o: gen.c gen.h voice.h euclid_table.h lsystem.h chord_progression.h section.h
+gen.win.o: gen.c gen.h voice.h euclid_table.h lsystem.h chord_progression.h section.h effects.h
 	$(WIN_CC) $(WIN_CFLAGS) -c gen.c -o gen.win.o
 lsystem.win.o: lsystem.c lsystem.h
 	$(WIN_CC) $(WIN_CFLAGS) -c lsystem.c -o lsystem.win.o
@@ -44,7 +46,7 @@ chord_progression.win.o: chord_progression.c chord_progression.h
 	$(WIN_CC) $(WIN_CFLAGS) -c chord_progression.c -o chord_progression.win.o
 section.win.o: section.c section.h
 	$(WIN_CC) $(WIN_CFLAGS) -c section.c -o section.win.o
-main.win.o: main.c arena.h voice.h gen.h
+main.win.o: main.c arena.h voice.h gen.h effects.h
 	$(WIN_CC) $(WIN_CFLAGS) -c main.c -o main.win.o
 
 stretto.exe: $(WIN_OBJS)
@@ -85,9 +87,11 @@ euclid_table.h: gen_euclid_table
 
 arena.o: arena.c arena.h
 	gcc $(CFLAGS) -c arena.c -o arena.o
-voice.o: voice.c voice.h arena.h $(HEADERS)
+effects.o: effects.c effects.h arena.h
+	gcc $(CFLAGS) -c effects.c -o effects.o
+voice.o: voice.c voice.h arena.h effects.h $(HEADERS)
 	gcc $(CFLAGS) -c voice.c -o voice.o
-gen.o: gen.c gen.h voice.h euclid_table.h lsystem.h chord_progression.h section.h
+gen.o: gen.c gen.h voice.h euclid_table.h lsystem.h chord_progression.h section.h effects.h
 	gcc $(CFLAGS) -c gen.c -o gen.o
 lsystem.o: lsystem.c lsystem.h
 	gcc $(CFLAGS) -c lsystem.c -o lsystem.o
@@ -95,7 +99,7 @@ chord_progression.o: chord_progression.c chord_progression.h
 	gcc $(CFLAGS) -c chord_progression.c -o chord_progression.o
 section.o: section.c section.h
 	gcc $(CFLAGS) -c section.c -o section.o
-main.o: main.c arena.h voice.h gen.h
+main.o: main.c arena.h voice.h gen.h effects.h
 	gcc $(CFLAGS) -c main.c -o main.o
 
 synth: $(OBJS)
@@ -137,8 +141,8 @@ test: synth
 UNIT_TEST_SRCS = $(wildcard tests/unit/test_*.c)
 UNIT_TEST_BINS = $(UNIT_TEST_SRCS:.c=)
 
-tests/unit/test_%: tests/unit/test_%.c tests/unit/test.h $(HEADERS) arena.o voice.o gen.o lsystem.o chord_progression.o section.o
-	gcc -O2 -Wall -no-pie -Itests/unit $< arena.o voice.o gen.o lsystem.o chord_progression.o section.o -o $@ -lm
+tests/unit/test_%: tests/unit/test_%.c tests/unit/test.h $(HEADERS) arena.o effects.o voice.o gen.o lsystem.o chord_progression.o section.o
+	gcc -O2 -Wall -no-pie -Itests/unit $< arena.o effects.o voice.o gen.o lsystem.o chord_progression.o section.o -o $@ -lm
 
 test-unit: $(UNIT_TEST_BINS)
 	@echo "=== unit tests ==="
@@ -181,25 +185,26 @@ coverage:
 	@echo "=== rebuilding instrumented ==="
 	@rm -f *.gcda *.gcno *.gcov *.o synth_cov tests/unit/*.cov
 	gcc $(COV_FLAGS) -c arena.c             -o arena.o
+	gcc $(COV_FLAGS) -c effects.c           -o effects.o
 	gcc $(COV_FLAGS) -c voice.c             -o voice.o
 	gcc $(COV_FLAGS) -c gen.c               -o gen.o
 	gcc $(COV_FLAGS) -c lsystem.c           -o lsystem.o
 	gcc $(COV_FLAGS) -c chord_progression.c -o chord_progression.o
 	gcc $(COV_FLAGS) -c section.c           -o section.o
 	gcc $(COV_FLAGS) -c main.c              -o main.o
-	gcc $(COV_FLAGS) arena.o voice.o gen.o lsystem.o chord_progression.o \
+	gcc $(COV_FLAGS) arena.o effects.o voice.o gen.o lsystem.o chord_progression.o \
 	    section.o main.o -lpulse -o synth_cov
 	@echo "=== render-mode regression ==="
 	./synth_cov --render 16 /tmp/cov_render.wav --seed 0 >/dev/null
 	@echo "=== unit suite ==="
 	@for t in $(UNIT_TEST_SRCS); do \
 		base=$${t%.c}; \
-		gcc $(COV_FLAGS) -no-pie -Itests/unit $$t arena.o voice.o gen.o \
+		gcc $(COV_FLAGS) -no-pie -Itests/unit $$t arena.o effects.o voice.o gen.o \
 		    lsystem.o chord_progression.o section.o -o $$base.cov -lm; \
 		./$$base.cov >/dev/null || true; \
 	done
 	@echo "=== per-file line coverage ==="
-	@gcov -n arena.c voice.c gen.c lsystem.c chord_progression.c section.c main.c 2>/dev/null | \
+	@gcov -n arena.c effects.c voice.c gen.c lsystem.c chord_progression.c section.c main.c 2>/dev/null | \
 		awk '/^File/ {sub(/[\x27]/,"",$$2); sub(/[\x27]/,"",$$2); f=$$2} \
 		     /^Lines/ {sub(/Lines executed:/,""); print f": "$$0}' | \
 		grep "\.c"

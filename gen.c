@@ -4,13 +4,9 @@
 #include "lsystem.h"
 #include "chord_progression.h"
 #include "section.h"
+#include "effects.h"
 #include <stdint.h>
 #include <time.h>
-
-/* Implemented in main.c (intentionally not in a header - one-way
-   reverse coupling so gen.c can push the section's reverb bias into
-   the main-bus reverb without exposing the wet variable). */
-extern void main_set_reverb_wet_bias(int8_t bias);
 
 /* Substep grid for true 3-against-4 polyrhythm. 48 = LCM(3, 4, 16):
      bass fires at 3 evenly-spaced positions (every 16 substeps)
@@ -312,7 +308,7 @@ void gen_init(void) {
     section_init();
     /* Apply initial biases so first bar of audio reflects the section. */
     voice_set_cutoff_bias(section_bias_cutoff());
-    main_set_reverb_wet_bias(section_bias_reverb());
+    reverb_set_wet_bias(section_bias_reverb());
     lsystem_set_character(section_lsystem_character());
 }
 
@@ -352,7 +348,7 @@ void gen_step(void) {
                unchanged, so this is cheap. */
             section_step(bar_count);
             voice_set_cutoff_bias(section_bias_cutoff());
-            main_set_reverb_wet_bias(section_bias_reverb());
+            reverb_set_wet_bias(section_bias_reverb());
             lsystem_set_character(section_lsystem_character());
         }
 
