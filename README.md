@@ -149,31 +149,52 @@ make golden-multiseed  # regenerate the four multi-seed reference hashes
 
 CI (GitHub Actions) runs all of the above on every push and pull request to `main`, plus the Windows cross-compile (`make winpack`). The Windows binary is uploaded as a build artifact.
 
-Approximate line coverage (unit + integration combined):
+Approximate line coverage (unit + integration combined; CI enforces these as per-file gates):
 
-| File | Coverage |
-|---|---|
-| `arena.c` | ~80% |
-| `voice.c` | ~98% |
-| `gen.c` | ~97% |
-| `lsystem.c` | ~93% |
-| `chord_progression.c` | ~91% |
-| `main.c` | ~74% (interactive audio + UI code excluded by design) |
+| File | Coverage | Gate |
+|---|---|---|
+| `arena.c` | 100% | ≥95% |
+| `effects.c` | 82% | ≥80% |
+| `voice.c` | 98% | ≥95% |
+| `gen.c` | 96% | ≥95% |
+| `lsystem.c` | 94% | ≥90% |
+| `chord_progression.c` | 91% | ≥90% |
+| `section.c` | 100% | ≥95% |
+| `mixer.c` | 100% | ≥95% |
+| `wav.c` | 95% | ≥90% |
+| `main.c` | 94% | ≥60% |
+| `ui.c`, `keys.c`, `audio_pulse.c` | — | excluded (require TTY + audio device) |
+
+Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `make coverage` can be alternated without `make clean`. Windows binary size budget (48 KB packed) is also gated in CI.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `main.c` | argv parsing, audio backend (PA / waveOut), WAV writer, terminal UI |
+| `main.c` | argv parsing + dispatch to render-mode or live-audio |
+| `mixer.c` / `.h` | `render_chunk()` — voice mix → reverb → delay → soft saturation |
 | `voice.c` / `.h` | Voice struct (KS / FM / drum), ADSR, SVF, role-based pool, peak normalization |
+| `effects.c` / `.h` | Master-bus delay, Schroeder reverb, soft saturation, shared `sat16` |
 | `gen.c` / `.h` | Sample clock, scales, CAs, counter-melody Markov, Euclidean rhythm, drum patterns, mutation, scheduling |
-| `lsystem.c` / `.h` | L-system melodic phrase generator (replaces Markov on main melody) |
+| `lsystem.c` / `.h` | L-system melodic phrase generator (main melody) |
 | `chord_progression.c` / `.h` | Markov chain over chord functions (root advances every 2 bars) |
+| `section.c` / `.h` | Song-section state machine (intro / body / tension / resolve) biasing parameters over 96-bar cycle |
+| `wav.c` / `.h` | `render_wav()` + WAV header |
+| `ui.c` / `.h` | Terminal raw mode, oscilloscope, status row, help overlay (cross-platform) |
+| `keys.c` / `.h` | Key dispatcher (`'?'`, `'q'`, tempo, scale, filter, etc.) |
+| `audio_pulse.c` | Linux live-audio backend (PulseAudio `pa_threaded_mainloop` + `pa_stream`) |
+| `audio_winmm.c` | Windows live-audio backend (Win32 `waveOut`, 4-buffer cycle) |
+| `audio.h` | One-function API (`audio_play()`); selects backend at link time |
 | `arena.c` / `.h` | Static 128 KB pool with bump allocator |
 | `gen_*_table.c` | Build-time generators for sine / envelope / MIDI note / Bjorklund tables |
-| `Makefile` | `make`, `make win`, `make winpack`, `make pack`, `make test`, `make golden` |
+| `Makefile` | `make`, `make win`, `make winpack`, `make pack`, `make test`, `make test-unit`, `make test-multiseed`, `make test-smoke`, `make coverage`, `make golden`, `make golden-multiseed` |
 | `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
+| `tests/test_multi_seed.sh` | Renders 4 seeds; determinism + audio bounds + golden hashes |
+| `tests/test_smoke_live.sh` | Spawns `./synth --no-ui` for 2 s; expects clean exit / SIGTERM |
+| `tests/unit/test_*.c` | 68 unit tests (arena, effects, voice, gen, lsystem, chord_progression, section) |
 | `golden/regression_16s.sha256` | Reference hash for the 16-second seed-0 render |
+| `golden/regression_multiseed.sha256.txt` | Reference hashes for the four multi-seed renders |
+| `.github/workflows/ci.yml` | CI: build, all tests, Windows cross-compile, coverage gates, size gate |
 | `PLAN.md` | Original design document (historical) |
 
 ## Environment notes
