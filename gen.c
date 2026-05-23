@@ -333,52 +333,177 @@ void gen_init(void) {
                                + density_bias_reverb()));
 }
 
+/* Bar-boundary work: advance CA, fire scheduled mutations, advance
+   the chord-progression Markov (every 2 bars), step the section LFO
+   and push its biases to voice / lsystem / reverb, recompute density
+   bias from current ca_row + gate. Called once per bar from gen_step
+   at substep 0. */
+static inline void schedule_bar_boundary(void) {
+    ca_row = ca_step(ca_row, RULE_110);
+    if (ca_row == 0) ca_row = 0x12345678u;
+    bar_count++;
+    mutate_lfo_phase += MUTATE_LFO_INC;
+    if (--bars_until_mutate == 0u) {
+        mutate();
+        bars_until_mutate = effective_mutate_interval();
+    }
+    if ((bar_count % 2u) == 0u) {
+        chord_progression_step(prng(), cur_scale);
+    }
+    section_step(bar_count);
+    voice_set_cutoff_bias(section_bias_cutoff());
+    lsystem_set_character(section_lsystem_character());
+    /* ca_harm has not yet updated for this bar (the % 12 advance
+       runs after this block in gen_step), so density uses ca_row
+       alone as the bar-stable active-scale-degree measure. */
+    density_update((uint8_t)(ca_row & 0x7Fu), gate_prob);
+    reverb_set_wet_bias((int8_t)(section_bias_reverb()
+                               + density_bias_reverb()));
+}
+
+/* Combine bar-scale ca_row (Rule 110) with the faster ca_harm
+   (Rule 30, advances every 12 substeps), forcing the result to a
+   non-empty 7-bit mask. The (harm | 0x11) keeps degrees 0 and 4
+   always available so the active set never starves the chord
+   progression. */
+static inline uint8_t compute_active_mask(void) {
+    uint8_t am = (uint8_t)(ca_row & 0x7Fu);
+    uint8_t hm = (uint8_t)((ca_harm >> 8) & 0x7Fu);
+    am &= (hm | 0x11u);
+    return am ? am : 0x01u;
+}
+
+/* Drum trigger: each drum has its own rotating bank of bitmask
+   patterns. Bit N of a pattern set means "trigger this drum at
+   substep N within the bar". Banks have coprime sizes (4, 3, 5)
+   so the combined kit cycles through LCM(4,3,5) = 60 bars before
+   exactly repeating. Kick bank is pinned by the current section
+   (sparse / 4-on-floor); snare and hihat advance per bar. */
+static inline void schedule_drums(uint32_t substep_in_bar) {
+    #define S(n) (1ULL << (n))
+    static const uint64_t kick_patterns[4] = {
+        /* basic 1+3 */          S(0) | S(24),
+        /* syncopated 1+3+ */    S(0) | S(24) | S(30),
+        /* four-on-the-floor */  S(0) | S(12) | S(24) | S(36),
+        /* off-kilter w/ 2+ */   S(0) | S(18) | S(24),
+    };
+    static const uint64_t snare_patterns[3] = {
+        /* classic 2+4 */        S(12) | S(36),
+        /* with ghost 2e 4e */   S(9)  | S(12) | S(33) | S(36),
+        /* half-time 3 only */   S(24),
+    };
+    static const uint64_t hihat_patterns[5] = {
+        /* 8ths every 6 */       S(0)|S(6)|S(12)|S(18)|S(24)|S(30)|S(36)|S(42),
+        /* 16ths every 3 */      S(0)|S(3)|S(6)|S(9)|S(12)|S(15)|S(18)|S(21)|
+                                 S(24)|S(27)|S(30)|S(33)|S(36)|S(39)|S(42)|S(45),
+        /* quarters only */      S(0)|S(12)|S(24)|S(36),
+        /* offbeats only */      S(6)|S(18)|S(30)|S(42),
+        /* triplet feel */       S(0)|S(8)|S(16)|S(24)|S(32)|S(40),
+    };
+    #undef S
+    uint64_t kbits = kick_patterns [section_kick_pattern() % 4u];
+    uint64_t sbits = snare_patterns[bar_count % 3u];
+    uint64_t hbits = hihat_patterns[bar_count % 5u];
+    if ((kbits >> substep_in_bar) & 1u) voice_pool_trigger_drum(DRUM_KICK);
+    if ((sbits >> substep_in_bar) & 1u) voice_pool_trigger_drum(DRUM_SNARE);
+    if ((hbits >> substep_in_bar) & 1u) voice_pool_trigger_drum(DRUM_HIHAT);
+}
+
+/* Bass trigger: 4 events per bar at unequal spacing for a bouncing
+   feel. Beats 1 and 3 (substeps 0, 24) anchor the tempo; offbeats at
+   "and of 2" and "and of 4" (substeps 18, 42) anticipate beats 3 and
+   the next bar 1 - a classic dub / reggae bass groove. Pitch
+   alternates root/fifth per event so the line moves rather than
+   thudding the same note; bar parity swaps the order so consecutive
+   bars do not duplicate. Root and fifth are computed relative to the
+   current chord function from chord_progression. */
+static inline void schedule_bass(uint32_t substep_in_bar) {
+    static const uint8_t bass_substeps[4] = { 0u, 18u, 24u, 42u };
+    static const uint8_t bass_deg_a[4]    = { 0u, 4u, 0u, 4u };
+    static const uint8_t bass_deg_b[4]    = { 4u, 0u, 4u, 0u };
+    for (int i = 0; i < 4; i++) {
+        if (substep_in_bar != bass_substeps[i]) continue;
+        const uint8_t *degs = (bar_count & 1u) ? bass_deg_b : bass_deg_a;
+        uint8_t chord_root = chord_progression_get_root();
+        uint8_t deg = (uint8_t)((chord_root + degs[i]) % 7u);
+        uint8_t bass_note = (uint8_t)(SCALES[cur_scale][deg] - 12);
+        voice_pool_trigger_role(bass_note, VOICE_FM, ROLE_BASS);
+        return;
+    }
+}
+
+/* Chord trigger: 4 evenly-spaced events per bar (substeps 0, 12, 24,
+   36) - the "4" side of the 3-against-4 polyrhythm. Voicing pattern
+   rotates per bar; root is rebased onto current chord function; each
+   pitch is octave-shifted toward the previous chord's centroid for
+   voice leading. */
+static inline void schedule_chord(uint32_t substep_in_bar, uint8_t active_mask) {
+    if (substep_in_bar != 0u && substep_in_bar != 12u &&
+        substep_in_bar != 24u && substep_in_bar != 36u) return;
+    const ChordNote *pat = CHORD_PATTERNS[bar_count % N_CHORD_PATTERNS];
+    uint8_t chord_root = chord_progression_get_root();
+    uint16_t sum = 0;
+    uint8_t  count = 0;
+    for (int i = 0; i < 3; i++) {
+        uint8_t d = (uint8_t)((pat[i].degree + chord_root) % 7u);
+        if (!(active_mask & (1u << d))) continue;
+        int note = (int)SCALES[cur_scale][d] + (int)pat[i].octave * 12;
+        while (note > (int)prev_chord_center + 8) note -= 12;
+        while (note < (int)prev_chord_center - 8) note += 12;
+        if (note < 24)  note += 12;
+        if (note > 96)  note -= 12;
+        voice_pool_trigger_role((uint8_t)note, VOICE_FM, ROLE_CHORD);
+        sum += (uint16_t)note;
+        count++;
+    }
+    if (count > 0) {
+        uint8_t new_center = (uint8_t)(sum / count);
+        prev_chord_center = (uint8_t)(((uint16_t)prev_chord_center * 3u
+                                     + (uint16_t)new_center) >> 2);
+        if (prev_chord_center < 55) prev_chord_center = 55;
+        if (prev_chord_center > 79) prev_chord_center = 79;
+    }
+}
+
+/* Melody trigger: main + counter, only on Euclidean grid substeps
+   (every MELODY_SUBSTRIDE = 3). Main melody is L-system phrased,
+   counter is Markov walked, both pitched into the active mask, both
+   probability-gated by the effective gate (user + section + density). */
+static inline void schedule_melody(uint32_t substep_in_bar, uint8_t active_mask) {
+    if (substep_in_bar % MELODY_SUBSTRIDE != 0u) return;
+    uint32_t step_in_bar = substep_in_bar / MELODY_SUBSTRIDE;
+
+    int eff_gate_i = (int)gate_prob
+                   + (int)section_bias_gate()
+                   + (int)density_bias_gate();
+    if (eff_gate_i < 32)  eff_gate_i = 32;
+    if (eff_gate_i > 255) eff_gate_i = 255;
+    uint32_t eff_gate = (uint32_t)eff_gate_i;
+
+    uint16_t hits = (uint16_t)(euclid_table[eucl_k_a] | euclid_table[eucl_k_b]);
+    if (((hits >> (15 - step_in_bar)) & 1u) && ((prng() & 0xFFu) < eff_gate)) {
+        uint8_t deg = lsystem_next(active_mask);
+        if (deg != LSYSTEM_REST) {
+            cur_degree = deg;
+            uint8_t note = SCALES[cur_scale][cur_degree];
+            uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
+            voice_pool_trigger_role(note, type, ROLE_MELODY);
+        }
+    }
+
+    uint16_t cnt_hits = (uint16_t)euclid_table[eucl_k_counter];
+    if (((cnt_hits >> (15 - step_in_bar)) & 1u) && ((prng() & 0xFFu) < eff_gate)) {
+        cur_degree_counter = markov_next(cur_degree_counter, active_mask);
+        uint8_t note = (uint8_t)(SCALES[cur_scale][cur_degree_counter] + 12);
+        voice_pool_trigger_role(note, VOICE_FM, ROLE_MELODY);
+    }
+}
+
 void gen_step(void) {
     if (sample_clock == next_step) {
         uint32_t substep_in_bar = substep_count % BAR_SUBSTEPS;
 
-        if (substep_in_bar == 0) {
-            ca_row = ca_step(ca_row, RULE_110);
-            if (ca_row == 0) ca_row = 0x12345678u;
-            bar_count++;
-            /* Advance the mutation LFO once per bar, then count down
-               toward the next mutation. When the counter reaches 0,
-               fire and reload from the current dynamic interval. */
-            mutate_lfo_phase += MUTATE_LFO_INC;
-            if (--bars_until_mutate == 0u) {
-                mutate();
-                bars_until_mutate = effective_mutate_interval();
-            }
-            /* Chord-progression: advance the chord root every 2 bars,
-               on the entry to even bars. All chord triggers within
-               those two bars share the same root. */
-            if ((bar_count % 2u) == 0u) {
-                chord_progression_step(prng(), cur_scale);
-            }
-
-            /* Section state advances per bar. Continuous biases
-               (cutoff, reverb wet) get pushed into voice / main each
-               bar. Discrete biases (L-system character) are pushed
-               every bar too - lsystem_set_character is a no-op when
-               unchanged, so this is cheap. */
-            section_step(bar_count);
-            voice_set_cutoff_bias(section_bias_cutoff());
-            lsystem_set_character(section_lsystem_character());
-
-            /* Adaptive density: short-term counter-cyclical bias on
-               top of the section's long-term bias. Uses ca_row's low
-               7 bits as the "active scale-degree" measure (ca_harm
-               updates a few substeps later, so it is not yet ready
-               at the bar boundary; ca_row alone is the bar-stable
-               component). Combined with user gate_prob. */
-            density_update((uint8_t)(ca_row & 0x7Fu), gate_prob);
-
-            /* Reverb wet bias is the sum of section + density. Each
-               is clamped at its source; effects.c clamps the final
-               sum into [0, 256] before mixing. */
-            reverb_set_wet_bias((int8_t)(section_bias_reverb()
-                                       + density_bias_reverb()));
-        }
+        if (substep_in_bar == 0) schedule_bar_boundary();
 
         /* ca_harm advances 4 times per bar - every 12 substeps. */
         if (substep_in_bar % 12u == 0u) {
@@ -386,160 +511,12 @@ void gen_step(void) {
             if (ca_harm == 0) ca_harm = 0x87654321u;
         }
 
-        uint8_t active_mask = (uint8_t)(ca_row & 0x7Fu);
-        uint8_t harm_mask = (uint8_t)((ca_harm >> 8) & 0x7Fu);
-        active_mask = active_mask & (harm_mask | 0x11u);
-        if (active_mask == 0) active_mask = 0x01u;
+        uint8_t active_mask = compute_active_mask();
 
-        /* Drum trigger: each drum has its own rotating bank of bitmask
-           patterns. Bit N of a pattern set means "trigger this drum
-           at substep N within the bar". Pattern index advances per
-           bar; banks have coprime sizes (4, 3, 5) so the combined
-           kit cycles through LCM(4,3,5) = 60 bars before exactly
-           repeating - enough variety to never feel locked. */
-        #define S(n) (1ULL << (n))
-        static const uint64_t kick_patterns[4] = {
-            /* basic 1+3 */          S(0) | S(24),
-            /* syncopated 1+3+ */    S(0) | S(24) | S(30),
-            /* four-on-the-floor */  S(0) | S(12) | S(24) | S(36),
-            /* off-kilter w/ 2+ */   S(0) | S(18) | S(24),
-        };
-        static const uint64_t snare_patterns[3] = {
-            /* classic 2+4 */        S(12) | S(36),
-            /* with ghost 2e 4e */   S(9)  | S(12) | S(33) | S(36),
-            /* half-time 3 only */   S(24),
-        };
-        static const uint64_t hihat_patterns[5] = {
-            /* 8ths every 6 */       S(0)|S(6)|S(12)|S(18)|S(24)|S(30)|S(36)|S(42),
-            /* 16ths every 3 */      S(0)|S(3)|S(6)|S(9)|S(12)|S(15)|S(18)|S(21)|
-                                     S(24)|S(27)|S(30)|S(33)|S(36)|S(39)|S(42)|S(45),
-            /* quarters only */      S(0)|S(12)|S(24)|S(36),
-            /* offbeats only */      S(6)|S(18)|S(30)|S(42),
-            /* triplet feel */       S(0)|S(8)|S(16)|S(24)|S(32)|S(40),
-        };
-        #undef S
-
-        /* Kick pattern bank index is pinned by the current section
-           (sparse / sparse / 4-on-floor / sparse). */
-        uint64_t kbits = kick_patterns [section_kick_pattern() % 4u];
-        uint64_t sbits = snare_patterns[bar_count % 3u];
-        uint64_t hbits = hihat_patterns[bar_count % 5u];
-
-        if ((kbits >> substep_in_bar) & 1u) voice_pool_trigger_drum(DRUM_KICK);
-        if ((sbits >> substep_in_bar) & 1u) voice_pool_trigger_drum(DRUM_SNARE);
-        if ((hbits >> substep_in_bar) & 1u) voice_pool_trigger_drum(DRUM_HIHAT);
-
-        /* Bass trigger: 4 events per bar at unequal spacing for a
-           bouncing feel. Beats 1 and 3 (substeps 0, 24) anchor the
-           tempo; offbeats at the "and of 2" and "and of 4" (substeps
-           18, 42) anticipate beats 3 and the next bar 1 - a classic
-           dub / reggae bass groove.
-             spacing: 18, 6, 18, 6 (long-short alternating)
-           Pitch alternates root/fifth per event so the line moves
-           rather than thudding the same note. Bar parity swaps the
-           order so consecutive bars do not duplicate. */
-        static const uint8_t bass_substeps[4]  = { 0u, 18u, 24u, 42u };
-        static const uint8_t bass_deg_a[4]     = { 0u, 4u, 0u, 4u };  /* root-fifth-root-fifth */
-        static const uint8_t bass_deg_b[4]     = { 4u, 0u, 4u, 0u };  /* mirrored */
-        for (int i = 0; i < 4; i++) {
-            if (substep_in_bar == bass_substeps[i]) {
-                const uint8_t *degs = (bar_count & 1u) ? bass_deg_b : bass_deg_a;
-                /* Bass follows the current chord root: degs[i] is now a
-                   relative offset (0 = root of chord, 4 = fifth above). */
-                uint8_t chord_root = chord_progression_get_root();
-                uint8_t deg = (uint8_t)((chord_root + degs[i]) % 7u);
-                uint8_t bass_note = (uint8_t)(SCALES[cur_scale][deg] - 12);
-                voice_pool_trigger_role(bass_note, VOICE_FM, ROLE_BASS);
-                break;
-            }
-        }
-
-        /* Chord trigger: 4 evenly-spaced events per bar (substeps 0,
-           12, 24, 36). The "4" side of the 3-against-4 polyrhythm.
-           Voicing pattern rotates per bar to keep harmonic variety,
-           and each new chord pitch is octave-shifted toward the
-           previous chord's center for smoother voice leading. */
-        if (substep_in_bar == 0u || substep_in_bar == 12u ||
-            substep_in_bar == 24u || substep_in_bar == 36u) {
-            const ChordNote *pat = CHORD_PATTERNS[bar_count % N_CHORD_PATTERNS];
-            uint8_t chord_root = chord_progression_get_root();
-            uint16_t sum = 0;
-            uint8_t count = 0;
-            for (int i = 0; i < 3; i++) {
-                /* Rebase voicing onto current chord function: the
-                   voicing's degree is treated as an offset above the
-                   chord root, then mod 7 to stay in scale. */
-                uint8_t d = (uint8_t)((pat[i].degree + chord_root) % 7u);
-                if (active_mask & (1u << d)) {
-                    int note = (int)SCALES[cur_scale][d]
-                             + (int)pat[i].octave * 12;
-                    /* Voice-lead: octave-shift so pitch sits within
-                       +/-8 semitones of the previous chord's center. */
-                    while (note > (int)prev_chord_center + 8) note -= 12;
-                    while (note < (int)prev_chord_center - 8) note += 12;
-                    if (note < 24)  note += 12;
-                    if (note > 96)  note -= 12;
-                    voice_pool_trigger_role((uint8_t)note, VOICE_FM, ROLE_CHORD);
-                    sum += (uint16_t)note;
-                    count++;
-                }
-            }
-            if (count > 0) {
-                /* Update chord center, anchored toward 67 to prevent
-                   long-term octave drift. */
-                uint8_t new_center = (uint8_t)(sum / count);
-                prev_chord_center = (uint8_t)(((uint16_t)prev_chord_center * 3u
-                                             + (uint16_t)new_center) >> 2);
-                if (prev_chord_center < 55) prev_chord_center = 55;
-                if (prev_chord_center > 79) prev_chord_center = 79;
-            }
-        }
-
-        /* Melody trigger: only on substeps aligned with the 16-step
-           Euclidean grid (every MELODY_SUBSTRIDE = 3 substeps). The
-           Euclidean lookup uses step_in_bar = substep / 3, range 0..15. */
-        if (substep_in_bar % MELODY_SUBSTRIDE == 0u) {
-            uint32_t step_in_bar = substep_in_bar / MELODY_SUBSTRIDE;
-
-            /* Main melody: Euclidean E(k_a) | E(k_b), L-system walk on
-               scale degrees, probability-gated. The L-system produces
-               phrased contours (multi-scale self-similarity from rule
-               rewrites) vs the Markov walker's first-order steps. */
-            /* Effective gate: user value + section bias, clamped to
-               [32, 255] (gate_prob's full range). */
-            int eff_gate_i = (int)gate_prob
-                           + (int)section_bias_gate()
-                           + (int)density_bias_gate();
-            if (eff_gate_i < 32)  eff_gate_i = 32;
-            if (eff_gate_i > 255) eff_gate_i = 255;
-            uint32_t eff_gate = (uint32_t)eff_gate_i;
-
-            uint16_t hits = (uint16_t)(euclid_table[eucl_k_a] | euclid_table[eucl_k_b]);
-            unsigned int hit = (unsigned int)((hits >> (15 - step_in_bar)) & 1u);
-            if (hit && ((prng() & 0xFFu) < eff_gate)) {
-                uint8_t deg = lsystem_next(active_mask);
-                if (deg != LSYSTEM_REST) {
-                    cur_degree = deg;
-                    uint8_t note = SCALES[cur_scale][cur_degree];
-                    uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
-                    voice_pool_trigger_role(note, type, ROLE_MELODY);
-                }
-            }
-
-            /* Counter-melody: independent Euclidean (eucl_k_counter)
-               and independent Markov walk on cur_degree_counter.
-               Pitched +12 semitones so it sits above the main line
-               and the two voices stay distinguishable. Shares the
-               melody voice slots - the two lines occasionally steal
-               from each other, acceptable for an ambient texture. */
-            uint16_t cnt_hits = (uint16_t)euclid_table[eucl_k_counter];
-            unsigned int cnt_hit = (unsigned int)((cnt_hits >> (15 - step_in_bar)) & 1u);
-            if (cnt_hit && ((prng() & 0xFFu) < eff_gate)) {
-                cur_degree_counter = markov_next(cur_degree_counter, active_mask);
-                uint8_t note = (uint8_t)(SCALES[cur_scale][cur_degree_counter] + 12);
-                voice_pool_trigger_role(note, VOICE_FM, ROLE_MELODY);
-            }
-        }
+        schedule_drums(substep_in_bar);
+        schedule_bass(substep_in_bar);
+        schedule_chord(substep_in_bar, active_mask);
+        schedule_melody(substep_in_bar, active_mask);
 
         substep_count++;
         next_step += samples_per_substep;
