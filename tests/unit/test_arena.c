@@ -63,6 +63,25 @@ TEST(arena_writes_persist) {
     ASSERT_TRUE(ok);
 }
 
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+TEST(arena_alloc_oom_aborts_child) {
+    /* arena_alloc exits(1) on overflow. Fork so we can observe the
+       exit without killing the test runner. */
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* child: ask for more than the arena holds. */
+        arena_alloc(HEAP_BYTES * 2);
+        _exit(0);                       /* unreachable on success */
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    ASSERT_TRUE(WIFEXITED(status));
+    ASSERT_EQ(WEXITSTATUS(status), 1);
+}
+
 int main(void) {
     return RUN_ALL();
 }
