@@ -88,12 +88,14 @@ static const ChordNote CHORD_PATTERNS[N_CHORD_PATTERNS][3] = {
     /* inv2    */ {{4,0}, {0,1}, {2,1}},
 };
 
-/* Markov transition weights for D Dorian (7 scale degrees, indices
-   0..6 = tonic, supertonic, mediant, subdominant, dominant,
-   submediant, leading-tone-flat). Rows are "from" degree, columns
-   "to" degree. Weight = unnormalised probability; markov_next sums
-   weights restricted to the active mask, then walks.
-   Tuning principles for the initial values:
+/* 1st-order Markov transition seed for D Dorian. Rows are "from"
+   degree, columns "to" degree, weights are unnormalised
+   probabilities. The runtime table is the 2nd-order markov2[7][7][7]
+   below; this 2D seed is replicated across the "previous-previous"
+   axis at gen_init time so the new code starts with the same
+   musical character as the original 1st-order chain. Mutation
+   diverges from there.
+   Tuning principles:
      - Stepwise motion (cols at +/-1) gets moderate weight (3-4).
      - Strong cadences favoured: leading tone (deg 6) and dominant
        (deg 4) bias toward tonic (deg 0) - high column-0 values in
@@ -101,12 +103,8 @@ static const ChordNote CHORD_PATTERNS[N_CHORD_PATTERNS][3] = {
      - No self-transitions (diagonal is 0) - prevents stuck notes
        on a single degree.
      - Tonic (row 0) opens out broadly to all degrees except itself,
-       slight bias to dominant (deg 4) for V-I framing.
-   These weights are MUTATED at runtime by mutate() at a dynamic
-   interval (1-16 bars, modulated by a slow triangle LFO over ~4
-   minutes) so the matrix drifts; the initial values are just a
-   musical seed. */
-static uint8_t markov[7][7] = {
+       slight bias to dominant (deg 4) for V-I framing. */
+static const uint8_t MARKOV_SEED[7][7] = {
     { 0, 4, 3, 2, 4, 1, 2 },
     { 5, 0, 3, 2, 1, 1, 0 },
     { 3, 4, 0, 4, 2, 1, 0 },
@@ -116,14 +114,25 @@ static uint8_t markov[7][7] = {
     { 5, 1, 0, 1, 2, 2, 0 },
 };
 
+/* Runtime 2nd-order Markov table, indexed [prev_prev][prev][next].
+   343 cells = 343 bytes static, vs the old 1st-order 49 cells. The
+   extra context lets stepwise motifs and cadential figures persist
+   longer (the chain remembers "we just leaped up, so we should step
+   down" rather than treating each note in isolation). Seeded by
+   replicating MARKOV_SEED across the prev_prev axis; mutation
+   drifts individual cells so distinct prev_prev contexts evolve
+   different transition tendencies. */
+static uint8_t markov2[7][7][7];
+
 static uint16_t mutate_lfo_phase = 0;
 static uint8_t  bars_until_mutate = MUTATE_DEFAULT;
 static uint8_t  cur_degree = 0;
 /* Counter-melody runs an independent Markov walk and Euclidean pattern
    alongside the main melody. Pitches are shifted up one octave so the
    two lines stay distinguishable in register. */
-static uint8_t  cur_degree_counter = 4;     /* start on dominant for harmonic interest */
-static uint8_t  eucl_k_counter     = 4;
+static uint8_t  cur_degree_counter      = 4;  /* start on dominant for harmonic interest */
+static uint8_t  cur_degree_counter_prev = 0;  /* 2nd-order context: degree before cur */
+static uint8_t  eucl_k_counter          = 4;
 /* Voice-leading anchor: rough pitch center of the previous chord trigger.
    New chord pitches octave-shift toward this so chord-to-chord motion is
    stepwise rather than leaping. Anchored to a mid-range value to prevent
@@ -170,27 +179,46 @@ static uint32_t ca_step(uint32_t row, uint8_t rule) {
     return next;
 }
 
-static uint8_t markov_next(uint8_t cur, uint8_t active_mask) {
+/* 2nd-order Markov walk: pick next degree weighted by the
+   (prev_prev, prev) context row, restricted to the active mask.
+   Falls back to prev if the active row sums to zero (defensive;
+   active mask is guaranteed non-empty upstream). */
+static uint8_t markov2_next(uint8_t prev_prev, uint8_t prev, uint8_t active_mask) {
+    const uint8_t *row = markov2[prev_prev % 7u][prev % 7u];
     uint16_t sum = 0;
     for (int i = 0; i < 7; i++) {
-        if (active_mask & (1u << i)) sum += markov[cur][i];
+        if (active_mask & (1u << i)) sum += row[i];
     }
-    if (sum == 0) return cur;
+    if (sum == 0) return prev;
     uint16_t pick = (uint16_t)(prng() % sum);
     for (int i = 0; i < 7; i++) {
         if (active_mask & (1u << i)) {
-            if (pick < markov[cur][i]) return (uint8_t)i;
-            pick = (uint16_t)(pick - markov[cur][i]);
+            if (pick < row[i]) return (uint8_t)i;
+            pick = (uint16_t)(pick - row[i]);
         }
     }
-    return cur;
+    return prev;
+}
+
+/* Replicate the 1st-order MARKOV_SEED across the prev_prev axis.
+   Called once from gen_init so the chain starts with the original
+   musical character; mutation diverges per (prev_prev, prev) row. */
+static void markov2_init(void) {
+    for (int pp = 0; pp < 7; pp++)
+        for (int p = 0; p < 7; p++)
+            for (int n = 0; n < 7; n++)
+                markov2[pp][p][n] = MARKOV_SEED[p][n];
 }
 
 static void mutate(void) {
     uint32_t r = prng();
-    int from = (r >> 0) % 7;
-    int to   = (r >> 4) % 7;
-    markov[from][to] = (uint8_t)((r >> 8) & 0x0Fu);
+    /* Drift one cell of the 2nd-order Markov table. Distinct
+       (prev_prev, prev) contexts evolve different transition
+       tendencies over the piece. */
+    int pp = (r >> 24) % 7;
+    int pv = (r >> 0)  % 7;
+    int to = (r >> 4)  % 7;
+    markov2[pp][pv][to] = (uint8_t)((r >> 8) & 0x0Fu);
 
     int bit = (r >> 12) & 31;
     ca_row ^= (1u << bit);
@@ -290,7 +318,9 @@ void gen_seed(uint32_t seed) {
 
 void gen_init(void) {
     cur_degree         = 0;
-    cur_degree_counter = 4;
+    cur_degree_counter      = 4;
+    cur_degree_counter_prev = 0;
+    markov2_init();
     eucl_k_counter     = 4;
     prev_chord_center  = 67;
     cur_scale          = 0;
@@ -493,7 +523,13 @@ static inline void schedule_melody(uint32_t substep_in_bar, uint8_t active_mask)
 
     uint16_t cnt_hits = (uint16_t)euclid_table[eucl_k_counter];
     if (((cnt_hits >> (15 - step_in_bar)) & 1u) && ((prng() & 0xFFu) < eff_gate)) {
-        cur_degree_counter = markov_next(cur_degree_counter, active_mask);
+        /* 2nd-order Markov walk: each step considers the previous
+           two degrees, so leap+resolve and step+turn motifs persist
+           longer than a memoryless first-order walk would allow. */
+        uint8_t next = markov2_next(cur_degree_counter_prev,
+                                    cur_degree_counter, active_mask);
+        cur_degree_counter_prev = cur_degree_counter;
+        cur_degree_counter      = next;
         uint8_t note = (uint8_t)(SCALES[cur_scale][cur_degree_counter] + 12);
         voice_pool_trigger_role(note, VOICE_FM, ROLE_MELODY);
     }
