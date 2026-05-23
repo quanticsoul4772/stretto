@@ -14,6 +14,10 @@ HEADERS = sin_table.h env_table.h note_table.h euclid_table.h
 GENS    = gen_sin_table gen_env_table gen_note_table gen_euclid_table
 OBJS    = arena.o effects.o voice.o gen.o lsystem.o chord_progression.o section.o main.o
 
+# Same .o set minus main.o; unit tests link this so they do not need
+# argv parsing / audio backends.
+OBJS_NO_MAIN = $(filter-out main.o,$(OBJS))
+
 # Size targets (bytes).
 STRIP_TARGET = 24576
 PACK_TARGET  = 12288
@@ -30,24 +34,17 @@ WIN_CFLAGS  = -Os -flto -fuse-linker-plugin -ffunction-sections \
               -fdata-sections -fno-asynchronous-unwind-tables \
               -fno-stack-protector -Qn -DWIN32_LEAN_AND_MEAN
 WIN_LDFLAGS = -Wl,--gc-sections -s -no-pie
-WIN_OBJS    = arena.win.o effects.win.o voice.win.o gen.win.o lsystem.win.o chord_progression.win.o section.win.o main.win.o
+WIN_OBJS    = $(OBJS:.o=.win.o)
 
-arena.win.o: arena.c arena.h
-	$(WIN_CC) $(WIN_CFLAGS) -c arena.c -o arena.win.o
-effects.win.o: effects.c effects.h arena.h
-	$(WIN_CC) $(WIN_CFLAGS) -c effects.c -o effects.win.o
-voice.win.o: voice.c voice.h arena.h effects.h $(HEADERS)
-	$(WIN_CC) $(WIN_CFLAGS) -c voice.c -o voice.win.o
-gen.win.o: gen.c gen.h voice.h euclid_table.h lsystem.h chord_progression.h section.h effects.h
-	$(WIN_CC) $(WIN_CFLAGS) -c gen.c -o gen.win.o
-lsystem.win.o: lsystem.c lsystem.h
-	$(WIN_CC) $(WIN_CFLAGS) -c lsystem.c -o lsystem.win.o
-chord_progression.win.o: chord_progression.c chord_progression.h
-	$(WIN_CC) $(WIN_CFLAGS) -c chord_progression.c -o chord_progression.win.o
-section.win.o: section.c section.h
-	$(WIN_CC) $(WIN_CFLAGS) -c section.c -o section.win.o
-main.win.o: main.c arena.h voice.h gen.h effects.h
-	$(WIN_CC) $(WIN_CFLAGS) -c main.c -o main.win.o
+# Pattern rules with auto-generated header dependencies via -MMD -MP.
+# Each compile emits a .d file alongside its .o listing every header
+# the .c included. The -include at the bottom of the file feeds those
+# back to make so editing any header triggers the right rebuilds.
+%.o: %.c $(HEADERS)
+	gcc $(CFLAGS) -MMD -MP -c $< -o $@
+
+%.win.o: %.c $(HEADERS)
+	$(WIN_CC) $(WIN_CFLAGS) -MMD -MP -MF $*.win.d -c $< -o $@
 
 stretto.exe: $(WIN_OBJS)
 	$(WIN_CC) $(WIN_CFLAGS) $(WIN_LDFLAGS) $(WIN_OBJS) -lwinmm -o stretto.exe
@@ -67,6 +64,8 @@ winpack: stretto.packed.exe
 	@stat -c "  unpacked: %s bytes" stretto.exe
 	@stat -c "  packed:   %s bytes" stretto.packed.exe
 
+# Build-time table generators. Each runs once at build to emit a
+# fixed .rodata header that voice.c / gen.c consume.
 gen_sin_table: gen_sin_table.c
 	gcc -O2 gen_sin_table.c -o gen_sin_table -lm
 gen_env_table: gen_env_table.c
@@ -85,23 +84,6 @@ note_table.h: gen_note_table
 euclid_table.h: gen_euclid_table
 	./gen_euclid_table > euclid_table.h
 
-arena.o: arena.c arena.h
-	gcc $(CFLAGS) -c arena.c -o arena.o
-effects.o: effects.c effects.h arena.h
-	gcc $(CFLAGS) -c effects.c -o effects.o
-voice.o: voice.c voice.h arena.h effects.h $(HEADERS)
-	gcc $(CFLAGS) -c voice.c -o voice.o
-gen.o: gen.c gen.h voice.h euclid_table.h lsystem.h chord_progression.h section.h effects.h
-	gcc $(CFLAGS) -c gen.c -o gen.o
-lsystem.o: lsystem.c lsystem.h
-	gcc $(CFLAGS) -c lsystem.c -o lsystem.o
-chord_progression.o: chord_progression.c chord_progression.h
-	gcc $(CFLAGS) -c chord_progression.c -o chord_progression.o
-section.o: section.c section.h
-	gcc $(CFLAGS) -c section.c -o section.o
-main.o: main.c arena.h voice.h gen.h effects.h
-	gcc $(CFLAGS) -c main.c -o main.o
-
 synth: $(OBJS)
 	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -lpulse -o synth
 	strip -s -R .comment synth
@@ -118,12 +100,11 @@ pack: synth.packed
 
 clean:
 	rm -f synth synth.packed stretto.exe stretto.packed.exe \
-	      synth_cov cov_*.o *.gcda *.gcno *.gcov \
-	      tests/unit/test_arena tests/unit/test_voice \
-	      tests/unit/test_gen tests/unit/test_lsystem \
-	      tests/unit/test_chord_progression tests/unit/test_section \
-	      tests/unit/test_effects \
-	      tests/unit/*.cov \
+	      synth_cov *.gcda *.gcno *.gcov *.d \
+	      tests/unit/test_arena tests/unit/test_effects \
+	      tests/unit/test_voice tests/unit/test_gen \
+	      tests/unit/test_lsystem tests/unit/test_chord_progression \
+	      tests/unit/test_section tests/unit/*.cov \
 	      $(GENS) $(HEADERS) *.o *.win.o
 
 size: synth
@@ -136,13 +117,13 @@ size: synth
 test: synth
 	./tests/test_bitexact.sh
 
-# Unit tests. Each tests/unit/test_*.c links against the existing
-# arena.o + voice.o + gen.o and runs as a standalone binary.
+# Unit tests. Each tests/unit/test_*.c links against OBJS_NO_MAIN
+# (all modules except main.o) and runs as a standalone binary.
 UNIT_TEST_SRCS = $(wildcard tests/unit/test_*.c)
 UNIT_TEST_BINS = $(UNIT_TEST_SRCS:.c=)
 
-tests/unit/test_%: tests/unit/test_%.c tests/unit/test.h $(HEADERS) arena.o effects.o voice.o gen.o lsystem.o chord_progression.o section.o
-	gcc -O2 -Wall -no-pie -Itests/unit $< arena.o effects.o voice.o gen.o lsystem.o chord_progression.o section.o -o $@ -lm
+tests/unit/test_%: tests/unit/test_%.c tests/unit/test.h $(OBJS_NO_MAIN)
+	gcc -O2 -Wall -no-pie -Itests/unit $< $(OBJS_NO_MAIN) -o $@ -lm
 
 test-unit: $(UNIT_TEST_BINS)
 	@echo "=== unit tests ==="
@@ -174,37 +155,30 @@ golden-multiseed: synth
 	@echo "golden/regression_multiseed.sha256.txt updated:"
 	@cat golden/regression_multiseed.sha256.txt
 
-# Coverage build: instrumented compile of the synth + each unit test,
-# run them, then print per-file line-coverage percentages. gcov
-# expects the .gcno files to be named after the source (arena.gcno
-# for arena.c) which only happens when the .o is also named that way.
-# So the coverage build uses the same .o names as the regular build;
-# `make clean` first if you mix them.
+# Coverage build: instrumented compile of every .c, run the regression
+# render + each unit test, then print per-file line coverage via gcov.
+# gcov expects each .gcno to be named after its source, which the
+# default rules give us. Run `make clean` first since the instrumented
+# .o files refuse to link without -lgcov for non-coverage builds.
 COV_FLAGS = -O0 -g -fprofile-arcs -ftest-coverage
+COV_SRCS  = arena.c effects.c voice.c gen.c lsystem.c chord_progression.c section.c main.c
+COV_OBJS  = $(COV_SRCS:.c=.o)
 coverage:
 	@echo "=== rebuilding instrumented ==="
 	@rm -f *.gcda *.gcno *.gcov *.o synth_cov tests/unit/*.cov
-	gcc $(COV_FLAGS) -c arena.c             -o arena.o
-	gcc $(COV_FLAGS) -c effects.c           -o effects.o
-	gcc $(COV_FLAGS) -c voice.c             -o voice.o
-	gcc $(COV_FLAGS) -c gen.c               -o gen.o
-	gcc $(COV_FLAGS) -c lsystem.c           -o lsystem.o
-	gcc $(COV_FLAGS) -c chord_progression.c -o chord_progression.o
-	gcc $(COV_FLAGS) -c section.c           -o section.o
-	gcc $(COV_FLAGS) -c main.c              -o main.o
-	gcc $(COV_FLAGS) arena.o effects.o voice.o gen.o lsystem.o chord_progression.o \
-	    section.o main.o -lpulse -o synth_cov
+	@for s in $(COV_SRCS); do gcc $(COV_FLAGS) -c $$s -o $${s%.c}.o; done
+	gcc $(COV_FLAGS) $(COV_OBJS) -lpulse -o synth_cov
 	@echo "=== render-mode regression ==="
 	./synth_cov --render 16 /tmp/cov_render.wav --seed 0 >/dev/null
 	@echo "=== unit suite ==="
 	@for t in $(UNIT_TEST_SRCS); do \
 		base=$${t%.c}; \
-		gcc $(COV_FLAGS) -no-pie -Itests/unit $$t arena.o effects.o voice.o gen.o \
-		    lsystem.o chord_progression.o section.o -o $$base.cov -lm; \
+		gcc $(COV_FLAGS) -no-pie -Itests/unit $$t $(OBJS_NO_MAIN) \
+		    -o $$base.cov -lm; \
 		./$$base.cov >/dev/null || true; \
 	done
 	@echo "=== per-file line coverage ==="
-	@gcov -n arena.c effects.c voice.c gen.c lsystem.c chord_progression.c section.c main.c 2>/dev/null | \
+	@gcov -n $(COV_SRCS) 2>/dev/null | \
 		awk '/^File/ {sub(/[\x27]/,"",$$2); sub(/[\x27]/,"",$$2); f=$$2} \
 		     /^Lines/ {sub(/Lines executed:/,""); print f": "$$0}' | \
 		grep "\.c"
@@ -221,3 +195,9 @@ play: synth
 
 .PHONY: all clean size pack test test-unit test-multiseed test-smoke \
         coverage golden golden-multiseed play win winpack
+
+# Pick up the auto-generated header dependencies. The leading '-'
+# silences "no such file" when these have not been generated yet
+# (first build).
+-include $(OBJS:.o=.d)
+-include $(WIN_OBJS:.o=.d)
