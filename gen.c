@@ -5,6 +5,7 @@
 #include "chord_progression.h"
 #include "section.h"
 #include "density.h"
+#include "motif.h"
 #include "effects.h"
 #include <stdint.h>
 #include <time.h>
@@ -200,6 +201,22 @@ static uint8_t markov2_next(uint8_t prev_prev, uint8_t prev, uint8_t active_mask
     return prev;
 }
 
+/* Snap an arbitrary degree (0..6) to the nearest in-mask degree.
+   Used by motif replay since the captured phrase's degrees may not
+   match the current bar's active mask (CA has moved on since
+   capture). Symmetric outward search; returns 0 if mask is empty
+   (shouldn't happen - upstream guarantees non-empty). */
+static uint8_t snap_to_active_mask(uint8_t deg, uint8_t active_mask) {
+    if (active_mask & (1u << deg)) return deg;
+    for (uint8_t off = 1; off <= 6; off++) {
+        uint8_t up = (uint8_t)((deg + off) % 7u);
+        uint8_t dn = (uint8_t)((deg + 7u - off) % 7u);
+        if (active_mask & (1u << up)) return up;
+        if (active_mask & (1u << dn)) return dn;
+    }
+    return 0;
+}
+
 /* Replicate the 1st-order MARKOV_SEED across the prev_prev axis.
    Called once from gen_init so the chain starts with the original
    musical character; mutation diverges per (prev_prev, prev) row. */
@@ -380,6 +397,9 @@ void gen_init(void) {
        has output to walk. */
     lsystem_reset();
 
+    /* Long-term motif memory. */
+    motif_init();
+
     /* Reset chord-progression root to tonic. */
     chord_progression_init();
 
@@ -425,6 +445,12 @@ static inline void schedule_bar_boundary(void) {
     density_update((uint8_t)(ca_row & 0x7Fu), gate_prob);
     reverb_set_wet_bias((int8_t)(section_bias_reverb()
                                + density_bias_reverb()));
+
+    /* Long-term motif: per-bar state machine. Decides whether to
+       enter or exit replay mode using one prng() draw. When in
+       replay, schedule_melody plays from the ring buffer instead
+       of advancing the L-system. */
+    motif_bar_step(bar_count, prng());
 }
 
 /* Combine bar-scale ca_row (Rule 110) with the faster ca_harm
@@ -567,12 +593,28 @@ static inline void schedule_melody(uint32_t substep_in_bar, uint8_t active_mask)
 
     uint16_t hits = (uint16_t)(euclid_table[eucl_k_a] | euclid_table[eucl_k_b]);
     if (((hits >> (15 - step_in_bar)) & 1u) && ((prng() & 0xFFu) < eff_gate)) {
-        uint8_t deg = lsystem_next(active_mask);
-        if (deg != LSYSTEM_REST) {
-            cur_degree = deg;
-            uint8_t note = SCALES[cur_scale][cur_degree];
-            uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
-            voice_pool_trigger_role(note, type, ROLE_MELODY);
+        /* Replay vs capture: in replay mode, pull degrees from the
+           motif ring buffer (snap to current active mask so CA-
+           suppressed degrees stay suppressed). In capture mode, run
+           the L-system and record each fired note for future replay. */
+        if (motif_in_replay()) {
+            uint8_t d = motif_replay_at((uint8_t)step_in_bar);
+            if (d != MOTIF_NO_NOTE) {
+                d = snap_to_active_mask(d, active_mask);
+                cur_degree = d;
+                uint8_t note = SCALES[cur_scale][cur_degree];
+                uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
+                voice_pool_trigger_role(note, type, ROLE_MELODY);
+            }
+        } else {
+            uint8_t deg = lsystem_next(active_mask);
+            if (deg != LSYSTEM_REST) {
+                cur_degree = deg;
+                uint8_t note = SCALES[cur_scale][cur_degree];
+                uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
+                voice_pool_trigger_role(note, type, ROLE_MELODY);
+                motif_record((uint8_t)step_in_bar, deg);
+            }
         }
     }
 
@@ -666,6 +708,10 @@ const char *gen_get_section_name(void) {
 
 uint8_t gen_get_tension(void) {
     return density_get_tension();
+}
+
+int gen_motif_replaying(void) {
+    return motif_in_replay();
 }
 
 void gen_cycle_scale(void) {

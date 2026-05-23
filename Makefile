@@ -15,7 +15,7 @@ GENS    = gen_sin_table gen_env_table gen_note_table gen_euclid_table
 # Shared synth + UI + WAV + mixer + key dispatch.
 # audio backend is platform-specific; see OBJS / WIN_OBJS below.
 COMMON_OBJS = arena.o effects.o voice.o gen.o lsystem.o \
-              chord_progression.o section.o density.o \
+              chord_progression.o section.o density.o motif.o \
               mixer.o wav.o ui.o keys.o main.o
 
 OBJS     = $(COMMON_OBJS) audio_pulse.o
@@ -28,7 +28,7 @@ WIN_OBJS = $(COMMON_OBJS:.o=.win.o) audio_winmm.win.o
 # so test_mixer and test_wav can exercise the master-bus chain
 # and the WAV writer directly.
 OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
-               chord_progression.o section.o density.o \
+               chord_progression.o section.o density.o motif.o \
                mixer.o wav.o ui.o keys.o
 
 # Size targets (bytes).
@@ -117,6 +117,7 @@ clean:
 	       tests/unit/test_voice tests/unit/test_gen \
 	       tests/unit/test_lsystem tests/unit/test_chord_progression \
 	       tests/unit/test_section tests/unit/test_density \
+	       tests/unit/test_motif \
 	       tests/unit/test_mixer tests/unit/test_wav tests/unit/test_keys \
 	       $(GENS) $(HEADERS) *.o *.win.o
 
@@ -184,7 +185,7 @@ COV_FLAGS = -O0 -g -fprofile-arcs -ftest-coverage
 #                    requires a TTY and a live audio device (live
 #                    audio loop, terminal raw mode, key handler).
 COV_SRCS_MEASURED    = arena.c effects.c voice.c gen.c lsystem.c \
-                       chord_progression.c section.c density.c \
+                       chord_progression.c section.c density.c motif.c \
                        mixer.c wav.c main.c
 COV_SRCS_INTERACTIVE = ui.c keys.c audio_pulse.c
 COV_SRCS             = $(COV_SRCS_MEASURED) $(COV_SRCS_INTERACTIVE)

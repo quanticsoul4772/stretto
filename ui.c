@@ -252,6 +252,8 @@ static void build_status_row(char *buf, int *p) {
     append_str(buf, p, gen_get_section_name());
     append_str(buf, p, " " COL_YELLOW "Td:" COL_WHITE);
     append_num(buf, p, gen_get_tension());
+    append_str(buf, p, " " COL_MAG "Mo:" COL_WHITE);
+    buf[(*p)++] = gen_motif_replaying() ? 'r' : 'c';
 
     append_str(buf, p, " " COL_CYAN "F:" COL_WHITE);
     append_num(buf, p, voice_get_cutoff());
