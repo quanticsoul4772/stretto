@@ -171,6 +171,146 @@ void ui_term_restore_mode(void) {
 
 /* --- oscilloscope + status row --- */
 
+/* ANSI 16-color escapes; cheap 5 bytes each. Shared between the
+   status row builder and the oscilloscope grid renderer. */
+#define COL_RESET  "\x1b[0m"
+#define COL_DIM    "\x1b[90m"
+#define COL_BLUE   "\x1b[34m"
+#define COL_CYAN   "\x1b[36m"
+#define COL_GREEN  "\x1b[32m"
+#define COL_YELLOW "\x1b[33m"
+#define COL_MAG    "\x1b[35m"
+#define COL_RED    "\x1b[31m"
+#define COL_WHITE  "\x1b[97m"
+
+/* Append an unsigned decimal value to buf, advancing *p. */
+static inline void append_num(char *buf, int *p, unsigned v) {
+    char t[6]; int n = 0;
+    do { t[n++] = '0' + (char)(v % 10); v /= 10; } while (v);
+    while (n > 0) buf[(*p)++] = t[--n];
+}
+
+/* Append a NUL-terminated string to buf, advancing *p. */
+static inline void append_str(char *buf, int *p, const char *s) {
+    while (*s) buf[(*p)++] = *s++;
+}
+
+/* Build one status row of synth state into buf, advancing *p.
+   Field order is stable; consumers (README) reference field labels
+   by name (M, S, V, G, R, D, deg, act, chord, Cr, Sec, Td, F, N, L, T). */
+static void build_status_row(char *buf, int *p) {
+    uint32_t voice_mask = voice_pool_active_mask();
+
+    append_str(buf, p, COL_CYAN "M:" COL_WHITE);
+    append_num(buf, p, voice_get_mod_depth());
+
+    append_str(buf, p, " " COL_YELLOW "S:" COL_WHITE);
+    buf[(*p)++] = "DLPlHM"[gen_get_scale() % 6];
+
+    append_str(buf, p, " " COL_MAG "V:");
+    for (int i = 0; i < N_VOICES; i++) {
+        const char *role_col =
+            (i < 2) ? COL_RED :
+            (i < 5) ? COL_GREEN :
+            (i < 8) ? COL_BLUE :
+                      COL_YELLOW;
+        append_str(buf, p, role_col);
+        buf[(*p)++] = (voice_mask & (1u << i)) ? '*' : '.';
+    }
+
+    append_str(buf, p, " " COL_CYAN "G:" COL_WHITE);
+    append_num(buf, p, gen_get_gate());
+
+    append_str(buf, p, " " COL_GREEN "R:" COL_WHITE);
+    append_num(buf, p, reverb_get_wet());
+
+    append_str(buf, p, " " COL_YELLOW "D:" COL_WHITE);
+    append_num(buf, p, delay_get_wet());
+    buf[(*p)++] = '/';
+    append_num(buf, p, delay_get_feedback());
+
+    append_str(buf, p, " " COL_MAG "deg:" COL_WHITE);
+    append_num(buf, p, gen_get_degree());
+
+    append_str(buf, p, " " COL_RED "act:");
+    {
+        uint8_t am = gen_get_active_mask();
+        for (int i = 0; i < 7; i++) {
+            if (am & (1u << i)) { append_str(buf, p, COL_RED); buf[(*p)++] = '#'; }
+            else                { append_str(buf, p, COL_DIM); buf[(*p)++] = '.'; }
+        }
+    }
+
+    append_str(buf, p, " " COL_WHITE "chord:");
+    {
+        static const char *names[6] = { "triad", "7th", "sus4", "sus2", "inv1", "inv2" };
+        append_str(buf, p, names[gen_get_chord_pattern() % 6]);
+    }
+    append_str(buf, p, " " COL_CYAN "Cr:" COL_WHITE);
+    append_num(buf, p, gen_get_chord_root());
+    append_str(buf, p, " " COL_CYAN "Sec:" COL_WHITE);
+    append_str(buf, p, gen_get_section_name());
+    append_str(buf, p, " " COL_YELLOW "Td:" COL_WHITE);
+    append_num(buf, p, gen_get_tension());
+
+    append_str(buf, p, " " COL_CYAN "F:" COL_WHITE);
+    append_num(buf, p, voice_get_cutoff());
+    append_str(buf, p, " " COL_YELLOW "N:" COL_WHITE);
+    append_num(buf, p, voice_get_resonance());
+    append_str(buf, p, " " COL_GREEN "L:" COL_WHITE);
+    append_num(buf, p, voice_get_lfo_filter_depth());
+    append_str(buf, p, " " COL_MAG "T:" COL_WHITE);
+    {
+        static const char *modes[4] = { "LP", "HP", "BP", "NO" };
+        append_str(buf, p, modes[voice_get_filter_mode() & 3u]);
+    }
+
+    append_str(buf, p, COL_RESET);
+    buf[(*p)++] = '\r'; buf[(*p)++] = '\n';
+}
+
+/* Render the oscilloscope grid into buf using `frames` of stereo
+   samples from `signal`. `w` columns x `h` rows; per-cell intensity
+   mapped to a 7-level heat-map palette, RLE-emitted so the color
+   escape only appears when the cell intensity changes. Bails before
+   overrunning `cap` bytes of buf. */
+static void build_oscilloscope_grid(char *buf, int *p, int cap,
+                                    int16_t *signal, uint32_t frames,
+                                    uint32_t w, uint32_t h) {
+    static const char *level_colors[7] = {
+        COL_DIM, COL_BLUE, COL_CYAN, COL_GREEN, COL_YELLOW, COL_MAG, COL_RED,
+    };
+    static const char level_chars[7] = { ' ', '.', '-', '+', '*', '#', '@' };
+
+    int last_lvl = -1;
+    for (uint32_t r = 0; r < h; r++) {
+        buf[(*p)++] = 0x1b; buf[(*p)++] = '['; buf[(*p)++] = '2'; buf[(*p)++] = 'K';
+        int32_t thresh = 8000 - (int32_t)((r * 16000u) / h);
+        for (uint32_t c = 0; c < w; c++) {
+            int16_t samp = signal[2 * ((c * frames) / w)];
+            int32_t a = samp < 0 ? -samp : samp;
+            int lvl;
+            if (!(a > thresh))      lvl = 0;
+            else if (a > 7000)      lvl = 6;
+            else if (a > 5000)      lvl = 5;
+            else if (a > 3500)      lvl = 4;
+            else if (a > 2500)      lvl = 3;
+            else if (a > 1500)      lvl = 2;
+            else                    lvl = 1;
+            if (lvl != last_lvl) {
+                append_str(buf, p, level_colors[lvl]);
+                last_lvl = lvl;
+            }
+            buf[(*p)++] = level_chars[lvl];
+        }
+        if (r < h - 1) { buf[(*p)++] = '\r'; buf[(*p)++] = '\n'; }
+        /* Worst case alternating colors ~800 bytes per row; bail
+           before overrunning the buffer. */
+        if (*p > cap - 1024) break;
+    }
+    append_str(buf, p, COL_RESET);
+}
+
 void ui_draw_oscilloscope(int16_t *buf, uint32_t frames) {
     unsigned int tw = 80, th = 24;
     ui_term_get_size(&tw, &th);
@@ -183,130 +323,13 @@ void ui_draw_oscilloscope(int16_t *buf, uint32_t frames) {
        24 rows * ~720 bytes/row + status row + escapes ~= 18 KB. */
     static char out[24576];
     int p = 0;
+    /* Cursor home, hide cursor, clear status row. */
     out[p++] = 0x1b; out[p++] = '['; out[p++] = 'H';
     out[p++] = 0x1b; out[p++] = '['; out[p++] = '?'; out[p++] = '2'; out[p++] = '5'; out[p++] = 'l';
     out[p++] = 0x1b; out[p++] = '['; out[p++] = '2'; out[p++] = 'K';
 
-    #define APPEND_NUM(val) do { \
-        unsigned _v = (unsigned)(val); \
-        char _t[6]; int _n = 0; \
-        do { _t[_n++] = '0' + _v % 10; _v /= 10; } while (_v); \
-        while (_n > 0) out[p++] = _t[--_n]; \
-    } while (0)
-    #define APPEND_STR(s) do { const char *_s = (s); while (*_s) out[p++] = *_s++; } while (0)
-    #define COL_RESET  "\x1b[0m"
-    #define COL_DIM    "\x1b[90m"
-    #define COL_BLUE   "\x1b[34m"
-    #define COL_CYAN   "\x1b[36m"
-    #define COL_GREEN  "\x1b[32m"
-    #define COL_YELLOW "\x1b[33m"
-    #define COL_MAG    "\x1b[35m"
-    #define COL_RED    "\x1b[31m"
-    #define COL_WHITE  "\x1b[97m"
+    build_status_row(out, &p);
+    build_oscilloscope_grid(out, &p, (int)sizeof(out), buf, frames, w, h);
 
-    uint32_t voice_mask = voice_pool_active_mask();
-
-    APPEND_STR(COL_CYAN "M:" COL_WHITE);
-    APPEND_NUM(voice_get_mod_depth());
-
-    APPEND_STR(" " COL_YELLOW "S:" COL_WHITE);
-    out[p++] = "DLPlHM"[gen_get_scale() % 6];
-
-    APPEND_STR(" " COL_MAG "V:");
-    for (int i = 0; i < N_VOICES; i++) {
-        const char *role_col =
-            (i < 2) ? COL_RED :
-            (i < 5) ? COL_GREEN :
-            (i < 8) ? COL_BLUE :
-                      COL_YELLOW;
-        APPEND_STR(role_col);
-        out[p++] = (voice_mask & (1u << i)) ? '*' : '.';
-    }
-
-    APPEND_STR(" " COL_CYAN "G:" COL_WHITE);
-    APPEND_NUM(gen_get_gate());
-
-    APPEND_STR(" " COL_GREEN "R:" COL_WHITE);
-    APPEND_NUM(reverb_get_wet());
-
-    APPEND_STR(" " COL_YELLOW "D:" COL_WHITE);
-    APPEND_NUM(delay_get_wet());
-    out[p++] = '/';
-    APPEND_NUM(delay_get_feedback());
-
-    APPEND_STR(" " COL_MAG "deg:" COL_WHITE);
-    APPEND_NUM(gen_get_degree());
-
-    APPEND_STR(" " COL_RED "act:");
-    {
-        uint8_t am = gen_get_active_mask();
-        for (int i = 0; i < 7; i++) {
-            if (am & (1u << i)) { APPEND_STR(COL_RED); out[p++] = '#'; }
-            else                { APPEND_STR(COL_DIM); out[p++] = '.'; }
-        }
-    }
-
-    APPEND_STR(" " COL_WHITE "chord:");
-    {
-        static const char *names[6] = { "triad", "7th", "sus4", "sus2", "inv1", "inv2" };
-        APPEND_STR(names[gen_get_chord_pattern() % 6]);
-    }
-    APPEND_STR(" " COL_CYAN "Cr:" COL_WHITE);
-    APPEND_NUM(gen_get_chord_root());
-    APPEND_STR(" " COL_CYAN "Sec:" COL_WHITE);
-    APPEND_STR(gen_get_section_name());
-    APPEND_STR(" " COL_YELLOW "Td:" COL_WHITE);
-    APPEND_NUM(gen_get_tension());
-
-    APPEND_STR(" " COL_CYAN "F:" COL_WHITE);
-    APPEND_NUM(voice_get_cutoff());
-    APPEND_STR(" " COL_YELLOW "N:" COL_WHITE);
-    APPEND_NUM(voice_get_resonance());
-    APPEND_STR(" " COL_GREEN "L:" COL_WHITE);
-    APPEND_NUM(voice_get_lfo_filter_depth());
-    APPEND_STR(" " COL_MAG "T:" COL_WHITE);
-    {
-        static const char *modes[4] = { "LP", "HP", "BP", "NO" };
-        APPEND_STR(modes[voice_get_filter_mode() & 3u]);
-    }
-
-    APPEND_STR(COL_RESET);
-    out[p++] = '\r'; out[p++] = '\n';
-
-    static const char *level_colors[7] = {
-        COL_DIM, COL_BLUE, COL_CYAN, COL_GREEN, COL_YELLOW, COL_MAG, COL_RED,
-    };
-    static const char level_chars[7] = { ' ', '.', '-', '+', '*', '#', '@' };
-
-    int last_lvl = -1;
-    for (uint32_t r = 0; r < h; r++) {
-        out[p++] = 0x1b; out[p++] = '['; out[p++] = '2'; out[p++] = 'K';
-        int32_t thresh = 8000 - (int32_t)((r * 16000u) / h);
-        for (uint32_t c = 0; c < w; c++) {
-            int16_t samp = buf[2 * ((c * frames) / w)];
-            int32_t a = samp < 0 ? -samp : samp;
-            int lvl;
-            if (!(a > thresh))      lvl = 0;
-            else if (a > 7000)      lvl = 6;
-            else if (a > 5000)      lvl = 5;
-            else if (a > 3500)      lvl = 4;
-            else if (a > 2500)      lvl = 3;
-            else if (a > 1500)      lvl = 2;
-            else                    lvl = 1;
-            if (lvl != last_lvl) {
-                APPEND_STR(level_colors[lvl]);
-                last_lvl = lvl;
-            }
-            out[p++] = level_chars[lvl];
-        }
-        if (r < h - 1) { out[p++] = '\r'; out[p++] = '\n'; }
-        /* Worst case alternating colors ~800 bytes per row; bail
-           before overrunning the buffer. */
-        if (p > (int)sizeof(out) - 1024) break;
-    }
-    APPEND_STR(COL_RESET);
     (void)!write(1, out, (size_t)p);
-
-    #undef APPEND_NUM
-    #undef APPEND_STR
 }
