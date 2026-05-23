@@ -1,5 +1,51 @@
 # Changelog
 
+## Recent: CI per-file gates + size budget + arena to 100%
+
+- CI workflow gates per file with a threshold map: pure-synth modules (arena, voice, gen, section, mixer) at ≥95%; lsystem / chord_progression / wav at ≥90%; effects at ≥80%; main at ≥60%. Tightens over time as coverage grows.
+- Interactive modules (ui.c, keys.c, audio_pulse.c) excluded from measurement; comment in the workflow documents why.
+- New CI step: Windows packed binary size budget of 48 KB (current is 32 KB; "<64 KB" stated goal). PRs that exceed the budget fail.
+- arena.c driven from 80% to 100% by a new fork-based test that verifies the OOM exit path. Total unit tests: 68.
+
+## Recent: coverage build isolated under build_cov/
+
+- `make coverage` now writes every artifact (instrumented `.o`, `.gcno`, `.gcda`, `synth_cov`, `.cov` test binaries) into `build_cov/`. The repo root sees only the normal build's outputs.
+- `make coverage` and `make test-unit` can be alternated without `make clean`. The known issue documented in earlier commit messages is fixed.
+- Silent bug fix: unit-test coverage was previously linking the non-instrumented `.o` files (so coverage was never aggregated correctly). Now correctly uses the instrumented subset.
+- `.gitignore` extended to cover `*.d` (gcc -MMD output), `build_cov/`, `synth_cov`, `*.gcda/gcno/gcov`, and unit-test binaries.
+
+## Recent: main.c split into ui / audio / mixer / wav / keys
+
+- `main.c` 783 → **78 LOC** (90% reduction). Six new modules carve out tightly-scoped concerns:
+  - `mixer.c` (19 LOC) — `render_chunk()`, single source of the master-bus chain.
+  - `wav.c` (52 LOC) — `render_wav()` + WAV header.
+  - `ui.c` (308 LOC) — terminal raw mode, oscilloscope, status row, help overlay.
+  - `keys.c` (47 LOC) — key dispatcher. Removed ~50 LOC of duplication between the Linux and Windows audio backends.
+  - `audio_pulse.c` (147 LOC) — Linux PulseAudio playback.
+  - `audio_winmm.c` (102 LOC) — Windows waveOut playback.
+- `audio.h` provides a one-function interface (`audio_play()`); platform backend selected at link time.
+- Bit-exact regression PASSES with the existing golden — the refactor is purely mechanical.
+
+## Recent: Makefile pattern rules + auto-deps
+
+- Replaced 16 hand-written per-file recipes with 2 pattern rules (`%.o: %.c`, `%.win.o: %.c`).
+- Added `-MMD -MP` so gcc auto-generates `.d` files capturing real `#include` dependencies; the trailing `-include` picks them up.
+- Adding a new module is now 2 lines (OBJS and WIN_OBJS). Header-dependency bugs become impossible.
+- `OBJS_NO_MAIN = $(filter-out main.o,$(OBJS))` so the unit-test link line auto-extends with new modules.
+
+## Recent: effects extraction
+
+- New `effects.c` / `effects.h` module pulls master-bus delay, Schroeder reverb, soft saturation, and the shared `sat16` helper out of `main.c`.
+- Removed the three-file weak-stub workaround that the section-bias work had introduced. `reverb_set_wet_bias()` is now a normal exported function.
+- `voice.c`'s two inline int16-saturation expressions replaced with `sat16()` calls (no behavior change; less duplication).
+
+## Recent: song-section state machine
+
+- New `section.c` / `section.h` module — 4-section state machine (INTRO → BODY → TENSION → RESOLVE), 96-bar full cycle (24 bars per section).
+- Per-section biases on gate, filter cutoff, reverb wet, mutation interval (continuous, crossfade across 8 bars centered on each boundary); kick pattern + L-system character (discrete, switch at boundary).
+- Determinism preserved (section is a pure function of `bar_count`, no PRNG).
+- Status row gains `Sec:<name>` field. 10-minute renders now have audible long-form shape.
+
 ## Recent: probabilistic chord progressions
 
 - New `chord_progression.c` / `.h` module. Chord function root advances every 2 bars via a Markov chain. All chord triggers within those 2 bars share the same root, so harmonic motion happens at a slow ambient pace rather than per-bar churn.

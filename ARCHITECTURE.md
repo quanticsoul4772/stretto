@@ -14,23 +14,45 @@
 ## Module layout
 
 ```
-main.c                  argv, audio backend (PulseAudio / waveOut),
-                        WAV writer, terminal UI (cross-platform raw mode
-                        + key polling + oscilloscope + status row),
-                        master-bus delay + reverb + soft saturation
+main.c                  argv + dispatch only (~80 LOC)
+mixer.c   / .h          render_chunk(): voice mix -> reverb -> delay
+                        -> soft saturation. Single source of the
+                        master-bus chain
+wav.c     / .h          render_wav() + WAV header writer
+ui.c      / .h          cross-platform terminal raw mode, oscilloscope,
+                        status row, help overlay (Linux termios +
+                        Windows console)
+keys.c    / .h          keys_dispatch(char): single source of truth
+                        for the live-mode key map. Returns KEY_QUIT
+                        / KEY_CONSUMED / KEY_IGNORED
+audio.h                 one-function interface (audio_play())
+audio_pulse.c           Linux live-audio backend (PulseAudio:
+                        pa_threaded_mainloop + pa_stream)
+audio_winmm.c           Windows live-audio backend (Win32 waveOut,
+                        CALLBACK_EVENT + 4-buffer cycle)
 voice.c / .h            Voice struct (KS / FM / drum), ADSR, SVF,
                         per-voice peak normalization, role-scoped
                         voice pool of 11 slots
+effects.c / .h          master-bus delay (250 ms stereo), Schroeder
+                        reverb (4 combs + 2 all-passes/channel),
+                        soft cubic saturation, sat16 clamp
 gen.c   / .h            sample clock, six scales, Rule-110 + Rule-30
                         CAs, counter-melody Markov chain, Bjorklund
                         Euclidean rhythm, drum pattern banks, bass /
                         chord / melody / counter-melody / drum
-                        scheduling, dynamic mutation rate
+                        scheduling, dynamic mutation rate, section
+                        bias application
 lsystem.c / .h          L-system phrase generator for the main melody
                         (6-symbol alphabet, 3 hand-tuned characters,
                         3 generations of rewrite into a 256 B buffer)
 chord_progression.c/.h  Markov chain over chord functions; chord root
                         advances every 2 bars
+section.c / .h          Song-section state machine (intro / body /
+                        tension / resolve), 96-bar cycle, crossfades
+                        biases (gate, cutoff, reverb wet, mutation
+                        interval) across an 8-bar window centered on
+                        each boundary; pins discrete biases (kick
+                        pattern, L-system character)
 arena.c / .h            static pool[131072], 8-byte-aligned bump allocator
 gen_sin_table.c         build-time: 1024-entry int16 sine LUT (peak 24576)
 gen_env_table.c         build-time: 256-entry uint8 exponential env curve
@@ -38,6 +60,21 @@ gen_note_table.c        build-time: 128 MIDI notes -> {phase inc, KS len}
                         at the 48 kHz sample rate
 gen_euclid_table.c      build-time: 17 16-bit Bjorklund masks E(0..16, 16)
 ```
+
+Dependency direction is strictly one-way:
+
+```
+main.c -> {wav, audio, ui, gen, effects, voice, arena}
+audio_*.c -> {mixer, ui, keys, arena}
+wav.c -> {mixer, arena}
+mixer.c -> {gen, voice, effects}
+keys.c -> {ui, gen, voice, effects}
+ui.c -> {voice, gen, effects}
+gen.c -> {voice, lsystem, chord_progression, section, effects}
+voice.c -> {arena, effects (for sat16), build-time tables}
+```
+
+No reverse calls; no extern declarations across module boundaries; no weak symbols (the old `main_set_reverb_wet_bias` weak-stub workaround was eliminated when the master-bus moved into `effects.c`).
 
 The `gen_*` programs run during `make` and emit C headers (`sin_table.h`, `env_table.h`, `note_table.h`, `euclid_table.h`) that are `#include`d by `voice.c` and `gen.c`. Tables end up in `.rodata` of the final binary; they do not consume arena space.
 
@@ -330,7 +367,24 @@ True Bjorklund (recursive bucket merge). The 17-entry `euclid_table[]` holds `E(
 
 ### Dynamic mutation rate
 
-A triangle LFO sweeps the mutation interval between `MUTATE_MIN = 1` bar (busy section) and `MUTATE_MAX = 16` bars (calm section) over a 128-bar period (~4.3 min). At each bar boundary, `bars_until_mutate` decrements; on zero, `mutate()` fires and the counter reloads from the current LFO-derived interval. This gives natural alternation between dense and sparse passages.
+A triangle LFO sweeps the mutation interval between `MUTATE_MIN = 1` bar (busy section) and `MUTATE_MAX = 16` bars (calm section) over a 128-bar period (~4.3 min). At each bar boundary, `bars_until_mutate` decrements; on zero, `mutate()` fires and the counter reloads from the current LFO-derived interval. This gives natural alternation between dense and sparse passages. The current section's `mutation_interval` bias is added on top, so TENSION sections fire mutations faster than INTRO.
+
+### Song-section state machine
+
+`section.c` runs a 96-bar cycle of four sections — INTRO (24 bars) → BODY (24) → TENSION (24) → RESOLVE (24) — that biases gate density, filter cutoff, reverb wet, mutation interval, drum-kick pattern index, and L-system character. Section is a pure function of `bar_count`; no PRNG involvement (preserves `--seed N` reproducibility).
+
+| Bias | INTRO | BODY | TENSION | RESOLVE | Type |
+|---|---|---|---|---|---|
+| `gate` | −64 | 0 | +32 | −16 | crossfaded |
+| `cutoff` | −40 | 0 | +30 | −10 | crossfaded |
+| `reverb wet` | +40 | 0 | −20 | +20 | crossfaded |
+| `mutation interval` | +8 | 0 | −4 | +4 | crossfaded |
+| `kick pattern idx` | 0 | 0 | 2 | 0 | discrete |
+| `L-system character` | sparse | stepwise | leaping | stepwise | discrete |
+
+Continuous biases interpolate linearly across an 8-bar window centered on each boundary: the last 4 bars of a section blend toward the next, the first 4 bars finish the blend. At the boundary exactly the value is halfway between adjacent sections. Discrete biases (kick pattern, L-system character) switch instantly. 10-minute renders now have audible long-form shape — intro feels sparse, tension feels dense and bright, resolve settles back.
+
+Status row shows the current section as `Sec:<name>` (intro / body / tens / res) so the listener can see boundaries align with the audible changes.
 
 ### Mutation
 
@@ -413,14 +467,23 @@ The framework header `tests/unit/test.h` (~130 LOC) provides `TEST(name) {...}` 
 
 Approximate line coverage:
 
-| File | Coverage |
-|---|---|
-| `arena.c` | ~80% (OOM exit path excluded; not exercised by tests) |
-| `voice.c` | ~98% |
-| `gen.c` | ~97% |
-| `lsystem.c` | ~93% |
-| `chord_progression.c` | ~91% |
-| `main.c` | ~74% (live-audio + interactive UI excluded by design) |
+| File | Coverage | CI gate |
+|---|---|---|
+| `arena.c` | 100% (OOM exit covered via fork) | ≥95% |
+| `effects.c` | 82% | ≥80% |
+| `voice.c` | 98% | ≥95% |
+| `gen.c` | 96% | ≥95% |
+| `lsystem.c` | 94% | ≥90% |
+| `chord_progression.c` | 91% | ≥90% |
+| `section.c` | 100% | ≥95% |
+| `mixer.c` | 100% | ≥95% |
+| `wav.c` | 95% | ≥90% |
+| `main.c` | 94% | ≥60% |
+| `ui.c`, `keys.c`, `audio_pulse.c` | — | excluded (interactive; require TTY + audio device) |
+
+The coverage build (`make coverage`) writes every artifact (instrumented `.o`, `.gcno`, `.gcda`, `synth_cov`, `.cov` test binaries) into `build_cov/` so it does not clobber the normal build. `make coverage` and `make test-unit` can be alternated freely without `make clean`. CI's "Coverage gates" step parses the per-file numbers and fails if any drop below the gate.
+
+CI also enforces a Windows packed binary size budget of 48 KB (current is 32 KB; "<64 KB" was the original goal from PLAN.md). A PR that doubles the binary fails CI immediately.
 
 CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `main`, plus the Windows cross-compile (`make winpack`). Coverage gate at 80% per file on `arena.c`, `voice.c`, `gen.c`. The Windows binary and coverage log are uploaded as build artifacts.
 
