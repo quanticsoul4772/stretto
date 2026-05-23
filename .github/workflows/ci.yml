@@ -41,24 +41,55 @@ jobs:
       - name: UPX-pack Windows .exe
         run: make winpack
 
+      - name: Windows packed binary size budget
+        # Project's stated goal is "<64 KB packed". Current is ~32 KB.
+        # 48 KB budget = 50% headroom for future features. Doubling
+        # the binary requires explicit budget bump in this workflow.
+        run: |
+          size=$(stat -c%s stretto.packed.exe)
+          budget=49152
+          echo "stretto.packed.exe: $size bytes (budget $budget)"
+          if [ "$size" -gt "$budget" ]; then
+            echo "FAIL: exceeds size budget"
+            exit 1
+          fi
+
       - name: Coverage report
         run: |
-          make clean
           make coverage 2>&1 | tee coverage.log
-          echo "---"
-          echo "Coverage gates (95% on voice.c, gen.c, arena.c):"
+
+      - name: Coverage gates
+        # Per-file gates against the measured subset (interactive
+        # modules ui.c, keys.c, audio_pulse.c are excluded by
+        # COV_SRCS_INTERACTIVE in Makefile - they need a TTY + audio
+        # device that CI does not have). Tightening these forces
+        # the project's coverage discipline to ratchet up over time.
+        run: |
+          declare -A thresholds=(
+            [arena.c]=95
+            [effects.c]=80
+            [voice.c]=95
+            [gen.c]=95
+            [lsystem.c]=90
+            [chord_progression.c]=90
+            [section.c]=95
+            [mixer.c]=95
+            [wav.c]=90
+            [main.c]=60
+          )
           fail=0
-          for f in arena.c voice.c gen.c; do
+          for f in "${!thresholds[@]}"; do
             pct=$(grep -E "^${f}:" coverage.log | tail -1 | \
                   awk '{print $2}' | tr -d '%' | awk -F. '{print $1}')
+            need=${thresholds[$f]}
             if [ -z "$pct" ]; then
-              echo "  $f: no coverage data"
+              echo "  $f: no coverage data (need >=${need}%)  FAIL"
               fail=1
-            elif [ "$pct" -lt 80 ]; then
-              echo "  $f: $pct% FAIL (under 80%)"
+            elif [ "$pct" -lt "$need" ]; then
+              echo "  $f: $pct%  FAIL (need >=${need}%)"
               fail=1
             else
-              echo "  $f: $pct% ok"
+              echo "  $f: $pct%  ok (need >=${need}%)"
             fi
           done
           exit $fail

@@ -170,12 +170,21 @@ golden-multiseed: synth
 # `make` / `make test-unit` without an intervening `make clean`.
 BUILD_COV = build_cov
 COV_FLAGS = -O0 -g -fprofile-arcs -ftest-coverage
-COV_SRCS  = arena.c effects.c voice.c gen.c lsystem.c \
-            chord_progression.c section.c mixer.c wav.c \
-            ui.c keys.c audio_pulse.c main.c
-COV_OBJS  = $(addprefix $(BUILD_COV)/,$(COV_SRCS:.c=.o))
+
+# Source files split into two groups:
+#   MEASURED       - line coverage is reported and CI-gated.
+#   INTERACTIVE    - compiled+linked so synth_cov runs, but excluded
+#                    from the coverage report because exercising them
+#                    requires a TTY and a live audio device (live
+#                    audio loop, terminal raw mode, key handler).
+COV_SRCS_MEASURED    = arena.c effects.c voice.c gen.c lsystem.c \
+                       chord_progression.c section.c mixer.c wav.c \
+                       main.c
+COV_SRCS_INTERACTIVE = ui.c keys.c audio_pulse.c
+COV_SRCS             = $(COV_SRCS_MEASURED) $(COV_SRCS_INTERACTIVE)
+COV_OBJS             = $(addprefix $(BUILD_COV)/,$(COV_SRCS:.c=.o))
 # Pure-synth subset of instrumented .o files - what unit tests link.
-COV_TEST_OBJS = $(addprefix $(BUILD_COV)/,$(OBJS_NO_MAIN))
+COV_TEST_OBJS        = $(addprefix $(BUILD_COV)/,$(OBJS_NO_MAIN))
 
 $(BUILD_COV):
 	@mkdir -p $(BUILD_COV) $(BUILD_COV)/tests/unit
@@ -195,11 +204,12 @@ coverage: $(COV_OBJS)
 		    -o $$out -lm; \
 		./$$out >/dev/null || true; \
 	done
-	@echo "=== per-file line coverage ==="
-	@cd $(BUILD_COV) && gcov -n $(addprefix ../,$(COV_SRCS)) 2>/dev/null | \
+	@echo "=== per-file line coverage (measured set only) ==="
+	@cd $(BUILD_COV) && gcov -n -o . $(addprefix ../,$(COV_SRCS_MEASURED)) 2>/dev/null | \
 		awk '/^File/ {sub(/[\x27]/,"",$$2); sub(/[\x27]/,"",$$2); f=$$2} \
 		     /^Lines/ {sub(/Lines executed:/,""); print f": "$$0}' | \
 		grep "\.c"
+	@echo "(interactive modules ui.c keys.c audio_pulse.c excluded - require TTY + audio device)"
 
 golden: synth
 	@mkdir -p golden
