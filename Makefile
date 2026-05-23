@@ -21,10 +21,15 @@ COMMON_OBJS = arena.o effects.o voice.o gen.o lsystem.o \
 OBJS     = $(COMMON_OBJS) audio_pulse.o
 WIN_OBJS = $(COMMON_OBJS:.o=.win.o) audio_winmm.win.o
 
-# Pure-synth subset (no main / no UI / no audio / no wav) - this is
-# what unit tests link against.
+# Everything except main.o and audio backends - this is what unit
+# tests link against. Includes ui.o and keys.o so test_keys can
+# invoke the live-mode key dispatcher with ui_set_no_ui(1) keeping
+# the terminal output side quiet. Also includes mixer.o and wav.o
+# so test_mixer and test_wav can exercise the master-bus chain
+# and the WAV writer directly.
 OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
-               chord_progression.o section.o
+               chord_progression.o section.o mixer.o wav.o \
+               ui.o keys.o
 
 # Size targets (bytes).
 STRIP_TARGET = 24576
@@ -111,7 +116,8 @@ clean:
 	       tests/unit/test_arena tests/unit/test_effects \
 	       tests/unit/test_voice tests/unit/test_gen \
 	       tests/unit/test_lsystem tests/unit/test_chord_progression \
-	       tests/unit/test_section \
+	       tests/unit/test_section tests/unit/test_mixer \
+	       tests/unit/test_wav tests/unit/test_keys \
 	       $(GENS) $(HEADERS) *.o *.win.o
 
 size: synth

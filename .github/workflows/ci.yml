@@ -67,7 +67,7 @@ jobs:
         run: |
           declare -A thresholds=(
             [arena.c]=95
-            [effects.c]=80
+            [effects.c]=95
             [voice.c]=95
             [gen.c]=95
             [lsystem.c]=90
@@ -75,7 +75,7 @@ jobs:
             [section.c]=95
             [mixer.c]=95
             [wav.c]=90
-            [main.c]=60
+            [main.c]=90
           )
           fail=0
           for f in "${!thresholds[@]}"; do
