@@ -246,6 +246,18 @@ static uint8_t dynamic_mutate_interval(void) {
     return (uint8_t)v;
 }
 
+/* Effective mutation interval = dynamic LFO value + section bias,
+   clamped to [1, 32]. Single source of truth so new bias sources
+   (density, future modulators) extend this function instead of the
+   gen_step call-site. */
+static uint8_t effective_mutate_interval(void) {
+    int v = (int)dynamic_mutate_interval()
+          + (int)section_bias_mutation_interval();
+    if (v < 1)  v = 1;
+    if (v > 32) v = 32;
+    return (uint8_t)v;
+}
+
 /* Flag set by gen_seed; gen_init checks it and seeds from clock if
    never explicitly seeded. */
 static int gen_seeded_explicitly = 0;
@@ -335,13 +347,7 @@ void gen_step(void) {
             mutate_lfo_phase += MUTATE_LFO_INC;
             if (--bars_until_mutate == 0u) {
                 mutate();
-                /* Apply section bias on top of the dynamic interval.
-                   Positive bias = stiller, negative = busier. */
-                int eff_iv = (int)dynamic_mutate_interval()
-                           + (int)section_bias_mutation_interval();
-                if (eff_iv < 1)  eff_iv = 1;
-                if (eff_iv > 32) eff_iv = 32;
-                bars_until_mutate = (uint8_t)eff_iv;
+                bars_until_mutate = effective_mutate_interval();
             }
             /* Chord-progression: advance the chord root every 2 bars,
                on the entry to even bars. All chord triggers within

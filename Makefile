@@ -111,8 +111,8 @@ pack: synth.packed
 	fi
 
 clean:
-	rm -rf synth synth.packed stretto.exe stretto.packed.exe \
-	       $(BUILD_COV) *.d \
+	rm -rf synth synth.packed synth_debug stretto.exe stretto.packed.exe \
+	       $(BUILD_COV) *.d *.dbg.o *.dbg.d \
 	       tests/unit/test_arena tests/unit/test_effects \
 	       tests/unit/test_voice tests/unit/test_gen \
 	       tests/unit/test_lsystem tests/unit/test_chord_progression \
@@ -227,8 +227,25 @@ golden: synth
 play: synth
 	./synth
 
+# Debug build: -O0 -g -DDEBUG, assertions enabled, no LTO, no strip.
+# For stepping through SVF / envelope / scheduler behaviour in gdb.
+# Output: synth_debug. The normal build's .o files are untouched
+# (separate output names) so `make` and `make debug` can be alternated.
+DEBUG_FLAGS  = -O0 -g -DDEBUG -Wall -Wextra
+DEBUG_OBJS   = $(OBJS:.o=.dbg.o)
+
+%.dbg.o: %.c
+	gcc $(DEBUG_FLAGS) -MMD -MP -MF $*.dbg.d -c $< -o $@
+
+synth_debug: $(DEBUG_OBJS)
+	gcc $(DEBUG_FLAGS) $(DEBUG_OBJS) -lpulse -o synth_debug
+
+debug: synth_debug
+	@echo "Built: synth_debug (unoptimized, asserts enabled, gdb-friendly)"
+	@file synth_debug
+
 .PHONY: all clean size pack test test-unit test-multiseed test-smoke \
-        coverage golden golden-multiseed play win winpack
+        coverage golden golden-multiseed play win winpack debug
 
 # Pick up the auto-generated header dependencies. The leading '-'
 # silences "no such file" when these have not been generated yet

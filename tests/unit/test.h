@@ -22,6 +22,26 @@
 #include <string.h>
 #include <math.h>
 
+/* Common synth-init for tests. Runs voice_pool_init + effects_init +
+   gen_seed(0) + gen_init exactly once per test binary (each binary
+   has its own static guard). Tests that need a deterministic synth
+   state should call test_init_synth() at the top of each TEST(). The
+   init is idempotent thanks to the guard, so calling it from every
+   test is cheap. */
+#include "../../voice.h"
+#include "../../effects.h"
+#include "../../gen.h"
+
+static inline void test_init_synth(void) {
+    static int done = 0;
+    if (done) return;
+    voice_pool_init();
+    effects_init();
+    gen_seed(0);
+    gen_init();
+    done = 1;
+}
+
 #define MAX_TESTS 256
 
 typedef void (*test_fn)(int *failed);

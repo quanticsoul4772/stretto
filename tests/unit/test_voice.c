@@ -11,15 +11,9 @@
 #include <stdint.h>
 #include <string.h>
 
-/* The pool is allocated lazily by voice_pool_init(). Call once at
-   start; static, no teardown. */
-static int pool_initialized = 0;
-static void ensure_pool_init(void) {
-    if (!pool_initialized) {
-        voice_pool_init();
-        pool_initialized = 1;
-    }
-}
+/* Uses test_init_synth() from test.h; legacy alias kept so the
+   existing TEST bodies (which call ensure_pool_init()) still work. */
+#define ensure_pool_init() test_init_synth()
 
 /* ---- voice_init contract ---- */
 
