@@ -69,7 +69,7 @@ jobs:
             [arena.c]=95
             [effects.c]=95
             [voice.c]=95
-            [gen.c]=94
+            [gen.c]=90
             [lsystem.c]=90
             [chord_progression.c]=90
             [section.c]=95

@@ -32,6 +32,7 @@ static const uint8_t CHORD_MARKOV_MINOR[7][7] = {
 };
 
 static uint8_t current_root = 0;
+static uint8_t prev_root    = 0;
 
 static const uint8_t (*select_table(uint8_t scale))[7] {
     /* Lydian (1) and Mixolydian (5) get the major table. */
@@ -41,9 +42,13 @@ static const uint8_t (*select_table(uint8_t scale))[7] {
 
 void chord_progression_init(void) {
     current_root = 0;
+    prev_root    = 0;
 }
 
 void chord_progression_step(uint32_t rng, uint8_t scale) {
+    /* Capture before walking so the bass scheduler can read the
+       direction of motion at the first bass event of the new chord. */
+    prev_root = current_root;
     const uint8_t (*table)[7] = select_table(scale);
     const uint8_t *row = table[current_root % CHORD_N_DEGREES];
 
@@ -68,4 +73,8 @@ void chord_progression_step(uint32_t rng, uint8_t scale) {
 
 uint8_t chord_progression_get_root(void) {
     return current_root;
+}
+
+uint8_t chord_progression_get_prev_root(void) {
+    return prev_root;
 }

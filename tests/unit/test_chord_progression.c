@@ -68,6 +68,17 @@ TEST(chord_progression_different_scales_can_differ) {
     ASSERT_TRUE(differ > 0);
 }
 
+TEST(chord_progression_tracks_prev_root) {
+    chord_progression_init();
+    ASSERT_EQ(chord_progression_get_prev_root(), 0);
+    chord_progression_step(0xABCDEF01u, 1);
+    uint8_t after_first = chord_progression_get_root();
+    chord_progression_step(0x12345678u, 1);
+    /* prev_root captured at the top of the second step should equal
+       what current_root was after the first step. */
+    ASSERT_EQ(chord_progression_get_prev_root(), after_first);
+}
+
 int main(void) {
     return RUN_ALL();
 }
