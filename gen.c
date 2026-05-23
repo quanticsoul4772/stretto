@@ -3,8 +3,14 @@
 #include "euclid_table.h"
 #include "lsystem.h"
 #include "chord_progression.h"
+#include "section.h"
 #include <stdint.h>
 #include <time.h>
+
+/* Implemented in main.c (intentionally not in a header - one-way
+   reverse coupling so gen.c can push the section's reverb bias into
+   the main-bus reverb without exposing the wet variable). */
+extern void main_set_reverb_wet_bias(int8_t bias);
 
 /* Substep grid for true 3-against-4 polyrhythm. 48 = LCM(3, 4, 16):
      bass fires at 3 evenly-spaced positions (every 16 substeps)
@@ -301,6 +307,13 @@ void gen_init(void) {
 
     /* Reset chord-progression root to tonic. */
     chord_progression_init();
+
+    /* Reset song-section state to the start of INTRO. */
+    section_init();
+    /* Apply initial biases so first bar of audio reflects the section. */
+    voice_set_cutoff_bias(section_bias_cutoff());
+    main_set_reverb_wet_bias(section_bias_reverb());
+    lsystem_set_character(section_lsystem_character());
 }
 
 void gen_step(void) {
@@ -317,7 +330,13 @@ void gen_step(void) {
             mutate_lfo_phase += MUTATE_LFO_INC;
             if (--bars_until_mutate == 0u) {
                 mutate();
-                bars_until_mutate = dynamic_mutate_interval();
+                /* Apply section bias on top of the dynamic interval.
+                   Positive bias = stiller, negative = busier. */
+                int eff_iv = (int)dynamic_mutate_interval()
+                           + (int)section_bias_mutation_interval();
+                if (eff_iv < 1)  eff_iv = 1;
+                if (eff_iv > 32) eff_iv = 32;
+                bars_until_mutate = (uint8_t)eff_iv;
             }
             /* Chord-progression: advance the chord root every 2 bars,
                on the entry to even bars. All chord triggers within
@@ -325,6 +344,16 @@ void gen_step(void) {
             if ((bar_count % 2u) == 0u) {
                 chord_progression_step(prng(), cur_scale);
             }
+
+            /* Section state advances per bar. Continuous biases
+               (cutoff, reverb wet) get pushed into voice / main each
+               bar. Discrete biases (L-system character) are pushed
+               every bar too - lsystem_set_character is a no-op when
+               unchanged, so this is cheap. */
+            section_step(bar_count);
+            voice_set_cutoff_bias(section_bias_cutoff());
+            main_set_reverb_wet_bias(section_bias_reverb());
+            lsystem_set_character(section_lsystem_character());
         }
 
         /* ca_harm advances 4 times per bar - every 12 substeps. */
@@ -366,7 +395,9 @@ void gen_step(void) {
         };
         #undef S
 
-        uint64_t kbits = kick_patterns [bar_count % 4u];
+        /* Kick pattern bank index is pinned by the current section
+           (sparse / sparse / 4-on-floor / sparse). */
+        uint64_t kbits = kick_patterns [section_kick_pattern() % 4u];
         uint64_t sbits = snare_patterns[bar_count % 3u];
         uint64_t hbits = hihat_patterns[bar_count % 5u];
 
@@ -450,9 +481,16 @@ void gen_step(void) {
                scale degrees, probability-gated. The L-system produces
                phrased contours (multi-scale self-similarity from rule
                rewrites) vs the Markov walker's first-order steps. */
+            /* Effective gate: user value + section bias, clamped to
+               [32, 255] (gate_prob's full range). */
+            int eff_gate_i = (int)gate_prob + (int)section_bias_gate();
+            if (eff_gate_i < 32)  eff_gate_i = 32;
+            if (eff_gate_i > 255) eff_gate_i = 255;
+            uint32_t eff_gate = (uint32_t)eff_gate_i;
+
             uint16_t hits = (uint16_t)(euclid_table[eucl_k_a] | euclid_table[eucl_k_b]);
             unsigned int hit = (unsigned int)((hits >> (15 - step_in_bar)) & 1u);
-            if (hit && ((prng() & 0xFFu) < (uint32_t)gate_prob)) {
+            if (hit && ((prng() & 0xFFu) < eff_gate)) {
                 uint8_t deg = lsystem_next(active_mask);
                 if (deg != LSYSTEM_REST) {
                     cur_degree = deg;
@@ -470,7 +508,7 @@ void gen_step(void) {
                from each other, acceptable for an ambient texture. */
             uint16_t cnt_hits = (uint16_t)euclid_table[eucl_k_counter];
             unsigned int cnt_hit = (unsigned int)((cnt_hits >> (15 - step_in_bar)) & 1u);
-            if (cnt_hit && ((prng() & 0xFFu) < (uint32_t)gate_prob)) {
+            if (cnt_hit && ((prng() & 0xFFu) < eff_gate)) {
                 cur_degree_counter = markov_next(cur_degree_counter, active_mask);
                 uint8_t note = (uint8_t)(SCALES[cur_scale][cur_degree_counter] + 12);
                 voice_pool_trigger_role(note, VOICE_FM, ROLE_MELODY);
@@ -523,6 +561,10 @@ uint8_t gen_get_chord_pattern(void) {
 
 uint8_t gen_get_chord_root(void) {
     return chord_progression_get_root();
+}
+
+const char *gen_get_section_name(void) {
+    return section_name();
 }
 
 void gen_cycle_scale(void) {

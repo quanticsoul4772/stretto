@@ -191,3 +191,10 @@ void lsystem_mutate(uint32_t rng) {
 
     lsystem_reset();
 }
+
+void lsystem_set_character(uint8_t idx) {
+    uint8_t target = (uint8_t)(idx % N_CHARACTERS);
+    if (target == cur_character) return;
+    cur_character = target;
+    lsystem_reset();
+}

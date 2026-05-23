@@ -28,4 +28,9 @@ void    lsystem_reset(void);
 uint8_t lsystem_next(uint8_t active_mask);
 void    lsystem_mutate(uint32_t rng);
 
+/* Force the current grammar character (0..2). If different from the
+   current character, re-expands the output buffer immediately so
+   the next phrase uses the new grammar. No-op if already set. */
+void    lsystem_set_character(uint8_t idx);
+
 #endif
