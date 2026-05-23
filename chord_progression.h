@@ -19,5 +19,9 @@
 void    chord_progression_init(void);
 void    chord_progression_step(uint32_t rng, uint8_t scale);
 uint8_t chord_progression_get_root(void);
+/* Previous chord root, captured at the top of chord_progression_step.
+   Used by the bass scheduler in gen.c to play a one-step diatonic
+   approach note at the very first bass event of each new chord. */
+uint8_t chord_progression_get_prev_root(void);
 
 #endif

@@ -210,6 +210,42 @@ static void markov2_init(void) {
                 markov2[pp][p][n] = MARKOV_SEED[p][n];
 }
 
+/* 2nd-order Markov walk with interval-bias against the main melody's
+   most recent degree. Same algorithm as markov2_next, but each
+   per-degree row weight is multiplied by a consonance factor before
+   sampling. Degree-distance (not semitone-distance) because the
+   counter-melody is pitched +12 from the main: same-degree means
+   pitch-class unison regardless of mode. Bias factors:
+     interval 0 (unison):   x   0   - avoid landing on main's note
+     interval 1 (2nd/7th):  x  64   - mild dissonance, low weight
+     interval 2 (3rd/6th):  x 192   - preferred consonance
+     interval 3 (4th/5th):  x 128   - neutral
+   If the active-mask row sums to zero after bias (e.g. only the
+   unison degree was allowed), falls back to prev unchanged - same
+   safety net as markov2_next, no extra prng() calls. */
+static uint8_t markov2_next_voiced(uint8_t prev_prev, uint8_t prev,
+                                   uint8_t active_mask, uint8_t main_deg) {
+    static const uint8_t bias_by_interval[4] = { 0u, 64u, 192u, 128u };
+    const uint8_t *row = markov2[prev_prev % 7u][prev % 7u];
+    uint16_t weights[7];
+    uint16_t sum = 0;
+    for (int i = 0; i < 7; i++) {
+        if (!(active_mask & (1u << i))) { weights[i] = 0; continue; }
+        int interval = i - (int)main_deg;
+        if (interval < 0)  interval = -interval;
+        if (interval > 3)  interval = 7 - interval;
+        weights[i] = ((uint16_t)row[i] * bias_by_interval[interval]) >> 8;
+        sum += weights[i];
+    }
+    if (sum == 0) return prev;
+    uint16_t pick = (uint16_t)(prng() % sum);
+    for (int i = 0; i < 7; i++) {
+        if (pick < weights[i]) return (uint8_t)i;
+        pick = (uint16_t)(pick - weights[i]);
+    }
+    return prev;
+}
+
 static void mutate(void) {
     uint32_t r = prng();
     /* Drift one cell of the 2nd-order Markov table. Distinct
@@ -456,6 +492,25 @@ static inline void schedule_bass(uint32_t substep_in_bar) {
         const uint8_t *degs = (bar_count & 1u) ? bass_deg_b : bass_deg_a;
         uint8_t chord_root = chord_progression_get_root();
         uint8_t deg = (uint8_t)((chord_root + degs[i]) % 7u);
+
+        /* Stepwise approach at chord changes: at the very first
+           bass event of a new chord (substep 0 of an even-numbered
+           bar, where chord_progression_step just fired), play a
+           one-step diatonic approach in the direction of the
+           previous chord root instead of jumping to the new root.
+           The next bass event (substep 18) plays the actual root,
+           giving an approach -> root resolution. */
+        if (substep_in_bar == 0u && (bar_count % 2u) == 0u) {
+            uint8_t prev = chord_progression_get_prev_root();
+            if (prev != chord_root) {
+                int delta = (int)prev - (int)chord_root;
+                while (delta >  3) delta -= 7;
+                while (delta < -3) delta += 7;
+                if      (delta > 0) deg = (uint8_t)((chord_root + 1u) % 7u);
+                else if (delta < 0) deg = (uint8_t)((chord_root + 6u) % 7u);
+            }
+        }
+
         uint8_t bass_note = (uint8_t)(SCALES[cur_scale][deg] - 12);
         voice_pool_trigger_role(bass_note, VOICE_FM, ROLE_BASS);
         return;
@@ -523,11 +578,14 @@ static inline void schedule_melody(uint32_t substep_in_bar, uint8_t active_mask)
 
     uint16_t cnt_hits = (uint16_t)euclid_table[eucl_k_counter];
     if (((cnt_hits >> (15 - step_in_bar)) & 1u) && ((prng() & 0xFFu) < eff_gate)) {
-        /* 2nd-order Markov walk: each step considers the previous
-           two degrees, so leap+resolve and step+turn motifs persist
-           longer than a memoryless first-order walk would allow. */
-        uint8_t next = markov2_next(cur_degree_counter_prev,
-                                    cur_degree_counter, active_mask);
+        /* 2nd-order Markov walk biased away from the main melody's
+           most recent degree: avoids unison (perceptual same-pitch
+           since counter is +12), prefers 3rd/6th intervals. The
+           counter-melody now sounds responsive to the main line
+           instead of an independent parallel stream. */
+        uint8_t next = markov2_next_voiced(cur_degree_counter_prev,
+                                           cur_degree_counter,
+                                           active_mask, cur_degree);
         cur_degree_counter_prev = cur_degree_counter;
         cur_degree_counter      = next;
         uint8_t note = (uint8_t)(SCALES[cur_scale][cur_degree_counter] + 12);
