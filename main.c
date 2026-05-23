@@ -79,6 +79,11 @@ static uint16_t i_c1r, i_c2r, i_c3r, i_c4r;
 static uint16_t i_ap1l, i_ap2l, i_ap1r, i_ap2r;
 
 static uint16_t reverb_wet = 60;   /* 0..256, mix amount */
+static int8_t   reverb_wet_bias = 0;  /* section-driven additive bias on reverb_wet, applied per-sample */
+
+/* gen.c sets this each bar from section_bias_reverb(). Not exported
+   in a header - declared extern in gen.c. */
+void main_set_reverb_wet_bias(int8_t bias) { reverb_wet_bias = bias; }
 #define COMB_G 180                 /* ~0.70 in 8.8 fixed, RT60 ~1.5 s */
 #define AP_G   180                 /* ~0.70 */
 
@@ -311,9 +316,13 @@ static void reverb_process(int16_t *buf, uint32_t frames) {
         int16_t ap_r = ap_step(rev_ap1r, REV_AP1R, &i_ap1r, (int16_t)sum_r);
                 ap_r = ap_step(rev_ap2r, REV_AP2R, &i_ap2r, ap_r);
 
-        /* Mix wet onto dry. */
-        int32_t out_l = in_l + ((ap_l * (int32_t)reverb_wet) >> 8);
-        int32_t out_r = in_r + ((ap_r * (int32_t)reverb_wet) >> 8);
+        /* Mix wet onto dry. Apply section bias on top of user wet,
+           clamped to the same [0, 256] range. */
+        int eff_wet = (int)reverb_wet + (int)reverb_wet_bias;
+        if (eff_wet < 0) eff_wet = 0;
+        if (eff_wet > 256) eff_wet = 256;
+        int32_t out_l = in_l + ((ap_l * eff_wet) >> 8);
+        int32_t out_r = in_r + ((ap_r * eff_wet) >> 8);
         buf[2 * i]     = sat16(out_l);
         buf[2 * i + 1] = sat16(out_r);
     }
@@ -498,7 +507,7 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
         }
     }
 
-    /* chord: voicing name (white), Cr: current chord root (cyan). */
+    /* chord: voicing name (white), Cr: chord root (cyan), Sec: section name (cyan). */
     APPEND_STR(" " COL_WHITE "chord:");
     {
         static const char *names[6] = { "triad", "7th", "sus4", "sus2", "inv1", "inv2" };
@@ -506,6 +515,8 @@ static void draw_oscilloscope(int16_t *buf, uint32_t frames) {
     }
     APPEND_STR(" " COL_CYAN "Cr:" COL_WHITE);
     APPEND_NUM(gen_get_chord_root());
+    APPEND_STR(" " COL_CYAN "Sec:" COL_WHITE);
+    APPEND_STR(gen_get_section_name());
 
     /* F: filter cutoff (cyan), N: resonance (yellow), L: LFO filter depth
        (green), T: filter mode (magenta). */

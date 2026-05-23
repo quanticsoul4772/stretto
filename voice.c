@@ -32,6 +32,7 @@
    inside voice_step. f=200 -> ~6.1 kHz at 48 kHz, Q=100 -> ~2.56. */
 static uint16_t svf_f_base = 200;
 static uint16_t svf_q_base = 100;
+static int8_t   cutoff_bias = 0;     /* section-driven additive bias on f_eff */
 
 /* Filter mode: 0 LP, 1 HP, 2 BP, 3 notch (LP+HP). */
 static uint8_t  filter_mode = 0;
@@ -369,7 +370,8 @@ int16_t voice_step(Voice *v) {
        f * pi / 2 < 1, i.e. f < 256/pi ~= 81 in our >>8 units... but
        in practice with int32 state and Q ~= 2.5 it stays sensible up
        to ~230. Clamp at 220 to leave margin. */
-    int32_t f_eff = (int32_t)svf_f_base + role_svf_f_off[v->role];
+    int32_t f_eff = (int32_t)svf_f_base + role_svf_f_off[v->role]
+                  + (int32_t)cutoff_bias;
     {
         /* LFO contributes up to +/-60 units (sin peak 24576 * 80 / 32768). */
         int16_t lfo = sin_table[v->lfo_phase >> 22];
@@ -615,4 +617,8 @@ void voice_mutate_filter(uint32_t rng) {
     int dq = (int)((rng >> 24) & 0x0F) - 8;    /*  -8..+7  */
     voice_adjust_cutoff(df);
     voice_adjust_resonance(dq);
+}
+
+void voice_set_cutoff_bias(int8_t bias) {
+    cutoff_bias = bias;
 }

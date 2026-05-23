@@ -101,4 +101,9 @@ uint8_t  voice_get_filter_mode(void);   /* 0 LP, 1 HP, 2 BP, 3 notch */
    random delta on cutoff and resonance occasionally). */
 void     voice_mutate_filter(uint32_t rng);
 
+/* Section-driven additive cutoff bias. gen.c updates this per bar
+   from section_bias_cutoff(). Applied on top of svf_f_base and the
+   per-role offset and the LFO modulation, before the [20,230] clamp. */
+void     voice_set_cutoff_bias(int8_t bias);
+
 #endif
