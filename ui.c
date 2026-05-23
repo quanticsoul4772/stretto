@@ -55,10 +55,12 @@ static const char HELP_TEXT[] =
     "  (any key dismisses)\r\n";
 
 void ui_show_help(void) {
+    if (no_ui_flag) return;
     (void)!write(1, HELP_TEXT, sizeof(HELP_TEXT) - 1);
 }
 
 void ui_clear_screen(void) {
+    if (no_ui_flag) return;
     (void)!write(1, "\x1b[H\x1b[2J", 7);
 }
 
