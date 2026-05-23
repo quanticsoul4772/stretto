@@ -10,16 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 
-static int env_ready = 0;
-static void ensure_init(void) {
-    if (!env_ready) {
-        voice_pool_init();
-        effects_init();
-        gen_seed(0);
-        gen_init();
-        env_ready = 1;
-    }
-}
+#define ensure_init() test_init_synth()
 
 /* Helpers to read little-endian fields from the WAV header. */
 static uint32_t rd32(const uint8_t *p) {

@@ -14,13 +14,9 @@
 #include <stdint.h>
 #include <string.h>
 
-static int pool_ready = 0;
-static void ensure_pool(void) {
-    if (!pool_ready) {
-        voice_pool_init();
-        pool_ready = 1;
-    }
-}
+/* Uses test_init_synth() from test.h. Each test calling ensure_pool()
+   still works through the macro alias. */
+#define ensure_pool() test_init_synth()
 
 /* Drive the generator for n samples; return how many voice triggers
    landed in the active mask along the way (rough activity measure). */

@@ -1,6 +1,9 @@
 # Linux build artifacts
 synth
 synth.packed
+synth_debug
+*.dbg.o
+*.dbg.d
 
 # Windows build artifacts
 stretto.exe

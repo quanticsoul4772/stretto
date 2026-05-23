@@ -11,16 +11,12 @@
 #include "../../effects.h"
 #include <stdint.h>
 
-static int pool_ready = 0;
-static void ensure_init(void) {
-    if (!pool_ready) {
-        voice_pool_init();
-        effects_init();
-        gen_seed(0);
-        gen_init();
-        ui_set_no_ui(1);                /* keep ui_show_help / clear_screen quiet */
-        pool_ready = 1;
-    }
+/* test_init_synth + ui_set_no_ui (keeps ui_show_help / clear_screen
+   quiet during the test run). */
+static inline void ensure_init(void) {
+    static int done = 0;
+    test_init_synth();
+    if (!done) { ui_set_no_ui(1); done = 1; }
 }
 
 TEST(keys_q_returns_quit) {

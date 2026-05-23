@@ -6,16 +6,7 @@
 #include "../../effects.h"
 #include <stdint.h>
 
-static int pool_ready = 0;
-static void ensure_init(void) {
-    if (!pool_ready) {
-        voice_pool_init();
-        effects_init();
-        gen_seed(0);
-        gen_init();
-        pool_ready = 1;
-    }
-}
+#define ensure_init() test_init_synth()
 
 TEST(render_chunk_produces_audio) {
     /* Render 1 second; expect at least some non-zero output. */
