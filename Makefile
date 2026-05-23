@@ -12,11 +12,19 @@ UPX_FLAGS ?= --ultra-brute
 
 HEADERS = sin_table.h env_table.h note_table.h euclid_table.h
 GENS    = gen_sin_table gen_env_table gen_note_table gen_euclid_table
-OBJS    = arena.o effects.o voice.o gen.o lsystem.o chord_progression.o section.o main.o
+# Shared synth + UI + WAV + mixer + key dispatch.
+# audio backend is platform-specific; see OBJS / WIN_OBJS below.
+COMMON_OBJS = arena.o effects.o voice.o gen.o lsystem.o \
+              chord_progression.o section.o mixer.o wav.o \
+              ui.o keys.o main.o
 
-# Same .o set minus main.o; unit tests link this so they do not need
-# argv parsing / audio backends.
-OBJS_NO_MAIN = $(filter-out main.o,$(OBJS))
+OBJS     = $(COMMON_OBJS) audio_pulse.o
+WIN_OBJS = $(COMMON_OBJS:.o=.win.o) audio_winmm.win.o
+
+# Pure-synth subset (no main / no UI / no audio / no wav) - this is
+# what unit tests link against.
+OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
+               chord_progression.o section.o
 
 # Size targets (bytes).
 STRIP_TARGET = 24576
@@ -34,7 +42,6 @@ WIN_CFLAGS  = -Os -flto -fuse-linker-plugin -ffunction-sections \
               -fdata-sections -fno-asynchronous-unwind-tables \
               -fno-stack-protector -Qn -DWIN32_LEAN_AND_MEAN
 WIN_LDFLAGS = -Wl,--gc-sections -s -no-pie
-WIN_OBJS    = $(OBJS:.o=.win.o)
 
 # Pattern rules with auto-generated header dependencies via -MMD -MP.
 # Each compile emits a .d file alongside its .o listing every header
@@ -161,7 +168,9 @@ golden-multiseed: synth
 # default rules give us. Run `make clean` first since the instrumented
 # .o files refuse to link without -lgcov for non-coverage builds.
 COV_FLAGS = -O0 -g -fprofile-arcs -ftest-coverage
-COV_SRCS  = arena.c effects.c voice.c gen.c lsystem.c chord_progression.c section.c main.c
+COV_SRCS  = arena.c effects.c voice.c gen.c lsystem.c \
+            chord_progression.c section.c mixer.c wav.c \
+            ui.c keys.c audio_pulse.c main.c
 COV_OBJS  = $(COV_SRCS:.c=.o)
 coverage:
 	@echo "=== rebuilding instrumented ==="
