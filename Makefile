@@ -106,13 +106,13 @@ pack: synth.packed
 	fi
 
 clean:
-	rm -f synth synth.packed stretto.exe stretto.packed.exe \
-	      synth_cov *.gcda *.gcno *.gcov *.d \
-	      tests/unit/test_arena tests/unit/test_effects \
-	      tests/unit/test_voice tests/unit/test_gen \
-	      tests/unit/test_lsystem tests/unit/test_chord_progression \
-	      tests/unit/test_section tests/unit/*.cov \
-	      $(GENS) $(HEADERS) *.o *.win.o
+	rm -rf synth synth.packed stretto.exe stretto.packed.exe \
+	       $(BUILD_COV) *.d \
+	       tests/unit/test_arena tests/unit/test_effects \
+	       tests/unit/test_voice tests/unit/test_gen \
+	       tests/unit/test_lsystem tests/unit/test_chord_progression \
+	       tests/unit/test_section \
+	       $(GENS) $(HEADERS) *.o *.win.o
 
 size: synth
 	@SIZE=$$(stat -c%s synth); \
@@ -162,32 +162,41 @@ golden-multiseed: synth
 	@echo "golden/regression_multiseed.sha256.txt updated:"
 	@cat golden/regression_multiseed.sha256.txt
 
-# Coverage build: instrumented compile of every .c, run the regression
-# render + each unit test, then print per-file line coverage via gcov.
-# gcov expects each .gcno to be named after its source, which the
-# default rules give us. Run `make clean` first since the instrumented
-# .o files refuse to link without -lgcov for non-coverage builds.
+# Coverage build: instrumented compile of every .c into a dedicated
+# build_cov/ directory so the instrumented artifacts do not collide
+# with the normal build. Runs the regression render + each unit test
+# from inside build_cov/, then invokes gcov pointing at the
+# instrumented objects. Lets you alternate `make coverage` and
+# `make` / `make test-unit` without an intervening `make clean`.
+BUILD_COV = build_cov
 COV_FLAGS = -O0 -g -fprofile-arcs -ftest-coverage
 COV_SRCS  = arena.c effects.c voice.c gen.c lsystem.c \
             chord_progression.c section.c mixer.c wav.c \
             ui.c keys.c audio_pulse.c main.c
-COV_OBJS  = $(COV_SRCS:.c=.o)
-coverage:
-	@echo "=== rebuilding instrumented ==="
-	@rm -f *.gcda *.gcno *.gcov *.o synth_cov tests/unit/*.cov
-	@for s in $(COV_SRCS); do gcc $(COV_FLAGS) -c $$s -o $${s%.c}.o; done
-	gcc $(COV_FLAGS) $(COV_OBJS) -lpulse -o synth_cov
+COV_OBJS  = $(addprefix $(BUILD_COV)/,$(COV_SRCS:.c=.o))
+# Pure-synth subset of instrumented .o files - what unit tests link.
+COV_TEST_OBJS = $(addprefix $(BUILD_COV)/,$(OBJS_NO_MAIN))
+
+$(BUILD_COV):
+	@mkdir -p $(BUILD_COV) $(BUILD_COV)/tests/unit
+
+$(BUILD_COV)/%.o: %.c | $(BUILD_COV)
+	gcc $(COV_FLAGS) -c $< -o $@
+
+coverage: $(COV_OBJS)
+	gcc $(COV_FLAGS) $(COV_OBJS) -lpulse -o $(BUILD_COV)/synth_cov
 	@echo "=== render-mode regression ==="
-	./synth_cov --render 16 /tmp/cov_render.wav --seed 0 >/dev/null
+	./$(BUILD_COV)/synth_cov --render 16 /tmp/cov_render.wav --seed 0 >/dev/null
 	@echo "=== unit suite ==="
 	@for t in $(UNIT_TEST_SRCS); do \
 		base=$${t%.c}; \
-		gcc $(COV_FLAGS) -no-pie -Itests/unit $$t $(OBJS_NO_MAIN) \
-		    -o $$base.cov -lm; \
-		./$$base.cov >/dev/null || true; \
+		out=$(BUILD_COV)/$$base.cov; \
+		gcc $(COV_FLAGS) -no-pie -Itests/unit $$t $(COV_TEST_OBJS) \
+		    -o $$out -lm; \
+		./$$out >/dev/null || true; \
 	done
 	@echo "=== per-file line coverage ==="
-	@gcov -n $(COV_SRCS) 2>/dev/null | \
+	@cd $(BUILD_COV) && gcov -n $(addprefix ../,$(COV_SRCS)) 2>/dev/null | \
 		awk '/^File/ {sub(/[\x27]/,"",$$2); sub(/[\x27]/,"",$$2); f=$$2} \
 		     /^Lines/ {sub(/Lines executed:/,""); print f": "$$0}' | \
 		grep "\.c"
