@@ -2,9 +2,7 @@
 #define MIXER_H
 
 #include <stdint.h>
-
-#define SAMPLE_RATE    48000
-#define BUFFER_FRAMES  1024
+#include "config.h"
 
 /* Produce `frames` interleaved stereo int16 samples into `out`
    (sized 2*frames). Advances the generator, pulls the voice pool

@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <math.h>
+#include "config.h"
 
-#define SAMPLE_RATE 48000
 #define KS_MAX_LEN  512
 
 int main(void) {

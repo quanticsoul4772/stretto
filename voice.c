@@ -28,9 +28,24 @@
 #define PEAK_GAIN_MAX        1024    /* 4.0x in 8.8 fixed point */
 #define PEAK_GAIN_UNITY      256     /* 1.0x in 8.8 fixed point */
 
-/* SVF (2-pole Chamberlin) parameters - now runtime-tunable. Base
-   values, with per-role offsets and per-voice LFO modulation added
-   inside voice_step. f=200 -> ~6.1 kHz at 48 kHz, Q=100 -> ~2.56. */
+/* KS averaging-filter feedback coefficient. 32440/65536 ~= 0.9897.
+   Higher values let the pluck ring longer; lower values dampen it
+   faster. Calibrated empirically for the existing pluck character. */
+#define KS_AVG_COEF       32440
+
+/* Cutoff modulation scales for voice_step's f_eff composition.
+   LFO contribution: sin_table peak 24576 * lfo_filter_depth (0..255)
+   gives up to ~6.3M; >>15 shifts that into a +/-60-unit swing on
+   the cutoff. Chord fenv contribution: fenv_amp peak 32767 * 30
+   = ~983k; >>14 shifts into a 0..+60-unit opening sweep. Both
+   stay well within the [20, 230] effective cutoff clamp. */
+#define CUTOFF_LFO_SHIFT  15
+#define CUTOFF_FENV_GAIN  30
+#define CUTOFF_FENV_SHIFT 14
+
+/* SVF (2-pole Chamberlin) parameters - runtime-tunable. Base values,
+   with per-role offsets and per-voice LFO modulation added inside
+   voice_step. f=200 -> ~6.1 kHz at 48 kHz, Q=100 -> ~2.56. */
 static uint16_t svf_f_base = 200;
 static uint16_t svf_q_base = 100;
 static int8_t   cutoff_bias = 0;     /* section-driven additive bias on f_eff */
@@ -175,7 +190,7 @@ static int16_t ks_step(Voice *v) {
     if (next >= len) next = 0;
     int16_t a = v->u.ks.buf[idx];
     int16_t b = v->u.ks.buf[next];
-    int16_t avg = (int16_t)((((int32_t)a + b) * 32440) >> 16);
+    int16_t avg = (int16_t)((((int32_t)a + b) * KS_AVG_COEF) >> 16);
     v->u.ks.buf[idx] = avg;
     v->u.ks.idx = next;
     return a;
@@ -376,12 +391,12 @@ int16_t voice_step(Voice *v) {
     {
         /* LFO contributes up to +/-60 units (sin peak 24576 * 80 / 32768). */
         int16_t lfo = sin_table[v->lfo_phase >> 22];
-        f_eff += ((int32_t)lfo * lfo_filter_depth) >> 15;
+        f_eff += ((int32_t)lfo * lfo_filter_depth) >> CUTOFF_LFO_SHIFT;
     }
     if (v->role == ROLE_CHORD) {
         /* Filter env opens the cutoff by up to +60 units at peak
            (fenv_amp 32767 * 30 / 16384 ~= 60). Subtle sweep. */
-        f_eff += ((int32_t)v->fenv_amp * 30) >> 14;
+        f_eff += ((int32_t)v->fenv_amp * CUTOFF_FENV_GAIN) >> CUTOFF_FENV_SHIFT;
     }
     /* Effective f_eff range [20, 230] gives 50 units of headroom above
        the user's base ceiling (180) for LFO sweep and filter-envelope
