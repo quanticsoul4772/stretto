@@ -15,13 +15,17 @@
 
 ```
 main.c                  argv + dispatch only (~80 LOC)
+config.h                Project-wide constants (SAMPLE_RATE,
+                        BUFFER_FRAMES). Single source of truth so
+                        the runtime synth and the build-time
+                        generators stay in sync.
 mixer.c   / .h          render_chunk(): voice mix -> reverb -> delay
                         -> soft saturation. Single source of the
                         master-bus chain
 wav.c     / .h          render_wav() + WAV header writer
-ui.c      / .h          cross-platform terminal raw mode, oscilloscope,
-                        status row, help overlay (Linux termios +
-                        Windows console)
+ui.c      / .h          cross-platform terminal raw mode, oscilloscope
+                        grid renderer, status row builder, help
+                        overlay (Linux termios + Windows console)
 keys.c    / .h          keys_dispatch(char): single source of truth
                         for the live-mode key map. Returns KEY_QUIT
                         / KEY_CONSUMED / KEY_IGNORED
@@ -38,10 +42,11 @@ effects.c / .h          master-bus delay (250 ms stereo), Schroeder
                         soft cubic saturation, sat16 clamp
 gen.c   / .h            sample clock, six scales, Rule-110 + Rule-30
                         CAs, counter-melody Markov chain, Bjorklund
-                        Euclidean rhythm, drum pattern banks, bass /
-                        chord / melody / counter-melody / drum
-                        scheduling, dynamic mutation rate, section
-                        bias application
+                        Euclidean rhythm. gen_step is a ~25-LOC
+                        dispatcher that delegates to five per-concern
+                        static-inline schedulers (schedule_bar_boundary,
+                        schedule_drums, schedule_bass, schedule_chord,
+                        schedule_melody) plus compute_active_mask.
 lsystem.c / .h          L-system phrase generator for the main melody
                         (6-symbol alphabet, 3 hand-tuned characters,
                         3 generations of rewrite into a 256 B buffer)
@@ -53,11 +58,15 @@ section.c / .h          Song-section state machine (intro / body /
                         interval) across an 8-bar window centered on
                         each boundary; pins discrete biases (kick
                         pattern, L-system character)
+density.c / .h          Adaptive density: tension = popcount(active)
+                        * 18 + gate >> 2. Counter-cyclical biases
+                        (gate +/-16, reverb wet +/-32) sum on top of
+                        section biases at the gen.c call sites
 arena.c / .h            static pool[131072], 8-byte-aligned bump allocator
 gen_sin_table.c         build-time: 1024-entry int16 sine LUT (peak 24576)
 gen_env_table.c         build-time: 256-entry uint8 exponential env curve
 gen_note_table.c        build-time: 128 MIDI notes -> {phase inc, KS len}
-                        at the 48 kHz sample rate
+                        at the SAMPLE_RATE from config.h
 gen_euclid_table.c      build-time: 17 16-bit Bjorklund masks E(0..16, 16)
 ```
 
@@ -386,6 +395,18 @@ Continuous biases interpolate linearly across an 8-bar window centered on each b
 
 Status row shows the current section as `Sec:<name>` (intro / body / tens / res) so the listener can see boundaries align with the audible changes.
 
+### Adaptive density
+
+`density.c` derives a per-bar tension scalar from the current bar-stable active mask and the user gate probability, then biases gate and reverb wet **counter-cyclically** — busy textures pull back a touch, sparse textures fill in a touch. Energy self-balances over bar timescales while staying responsive to the section state machine.
+
+```
+tension = popcount(ca_row & 0x7F) * 18 + gate_prob >> 2;   /* 0..189 */
+gate_bias   = (128 - tension) / 8   /* approx +/-16 */
+reverb_bias = (128 - tension) / 4   /* approx +/-32 */
+```
+
+Composes with `section.c` additively. Both reverb biases sum and are pushed to `effects.c` via `reverb_set_wet_bias`; the gate bias adds to the section + user values at the melody trigger's clamp step. Density is a pure function of the current bar's CA + gate inputs — no PRNG, no persistent state beyond the cached tension. Status row shows the tension as `Td:<n>` (yellow).
+
 ### Mutation
 
 Per call (`mutate()`):
@@ -470,15 +491,16 @@ Approximate line coverage:
 | File | Coverage | CI gate |
 |---|---|---|
 | `arena.c` | 100% (OOM exit covered via fork) | ≥95% |
-| `effects.c` | 82% | ≥80% |
+| `effects.c` | 100% (test_keys exercises every setter) | ≥95% |
 | `voice.c` | 98% | ≥95% |
-| `gen.c` | 96% | ≥95% |
+| `gen.c` | 95% | ≥94% |
 | `lsystem.c` | 94% | ≥90% |
 | `chord_progression.c` | 91% | ≥90% |
 | `section.c` | 100% | ≥95% |
+| `density.c` | 100% | ≥95% |
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
-| `main.c` | 94% | ≥60% |
+| `main.c` | 96% | ≥90% |
 | `ui.c`, `keys.c`, `audio_pulse.c` | — | excluded (interactive; require TTY + audio device) |
 
 The coverage build (`make coverage`) writes every artifact (instrumented `.o`, `.gcno`, `.gcda`, `synth_cov`, `.cov` test binaries) into `build_cov/` so it does not clobber the normal build. `make coverage` and `make test-unit` can be alternated freely without `make clean`. CI's "Coverage gates" step parses the per-file numbers and fails if any drop below the gate.

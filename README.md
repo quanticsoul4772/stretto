@@ -88,7 +88,7 @@ Fixes the PRNG / cellular automaton / Markov seeds to `N`. Same `--seed` always 
 Colored single-line status at the top of the terminal:
 
 ```
-M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2 Cr:4 F:200 N:100 L:80 T:LP
+M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2 Cr:4 Sec:body Td:118 F:200 N:100 L:80 T:LP
 ```
 
 | Field | Meaning |
@@ -103,6 +103,8 @@ M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2 Cr:4 
 | `act` | Active scale-degree mask (7 chars, `#` = active, `.` = suppressed by CA) |
 | `chord` | Current bar's voicing: `triad`, `7th`, `sus4`, `sus2`, `inv1`, `inv2` |
 | `Cr` | Current chord root (0–6, advances every 2 bars via the chord-progression Markov chain) |
+| `Sec` | Current song section (`intro` / `body` / `tens` / `res`, cycles every 96 bars) |
+| `Td` | Adaptive density tension (0–255; biases gate and reverb counter-cyclically — busy textures pull back, sparse fill in) |
 | `F` | SVF filter cutoff base (30–180 user-tunable; per-role offsets + LFO + chord fenv modulate this per voice) |
 | `N` | SVF resonance base (0–180; per-role offsets apply per voice) |
 | `L` | Filter LFO depth (0–255; scales how much the per-voice pan LFO sweeps the cutoff) |
@@ -133,11 +135,13 @@ See `ARCHITECTURE.md` for the detailed walkthrough.
 
 ```
 make test            # bit-exact regression (renders 16 s at seed 0, sha256 check)
-make test-unit       # ~50 unit tests for arena, voice synthesis, gen state machine
+make test-unit       # 95 unit tests across all pure-synth modules + keys
 make test-multiseed  # renders 4 seeds, checks determinism + audio bounds + golden
 make test-smoke      # spawns ./synth for 2 s, expects clean exit / SIGTERM
 make coverage        # rebuilds with -fprofile-arcs -ftest-coverage and prints
-                     # per-file line coverage via gcov
+                     # per-file line coverage via gcov (output to build_cov/)
+make debug           # builds synth_debug: -O0 -g -DDEBUG, no LTO, gdb-friendly
+                     # (co-exists with synth; separate .dbg.o filenames)
 ```
 
 After an intentional synth change:
@@ -154,15 +158,16 @@ Approximate line coverage (unit + integration combined; CI enforces these as per
 | File | Coverage | Gate |
 |---|---|---|
 | `arena.c` | 100% | ≥95% |
-| `effects.c` | 82% | ≥80% |
+| `effects.c` | 100% | ≥95% |
 | `voice.c` | 98% | ≥95% |
-| `gen.c` | 96% | ≥95% |
+| `gen.c` | 95% | ≥94% |
 | `lsystem.c` | 94% | ≥90% |
 | `chord_progression.c` | 91% | ≥90% |
 | `section.c` | 100% | ≥95% |
+| `density.c` | 100% | ≥95% |
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
-| `main.c` | 94% | ≥60% |
+| `main.c` | 96% | ≥90% |
 | `ui.c`, `keys.c`, `audio_pulse.c` | — | excluded (require TTY + audio device) |
 
 Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `make coverage` can be alternated without `make clean`. Windows binary size budget (48 KB packed) is also gated in CI.
@@ -172,26 +177,28 @@ Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `
 | File | Purpose |
 |---|---|
 | `main.c` | argv parsing + dispatch to render-mode or live-audio |
+| `config.h` | Project-wide audio constants (`SAMPLE_RATE`, `BUFFER_FRAMES`) |
 | `mixer.c` / `.h` | `render_chunk()` — voice mix → reverb → delay → soft saturation |
 | `voice.c` / `.h` | Voice struct (KS / FM / drum), ADSR, SVF, role-based pool, peak normalization |
 | `effects.c` / `.h` | Master-bus delay, Schroeder reverb, soft saturation, shared `sat16` |
-| `gen.c` / `.h` | Sample clock, scales, CAs, counter-melody Markov, Euclidean rhythm, drum patterns, mutation, scheduling |
+| `gen.c` / `.h` | Sample clock, scales, CAs, counter-melody Markov, Euclidean rhythm, drum patterns, mutation, scheduler dispatcher (`schedule_bar_boundary`, `schedule_drums`, `schedule_bass`, `schedule_chord`, `schedule_melody`) |
 | `lsystem.c` / `.h` | L-system melodic phrase generator (main melody) |
 | `chord_progression.c` / `.h` | Markov chain over chord functions (root advances every 2 bars) |
 | `section.c` / `.h` | Song-section state machine (intro / body / tension / resolve) biasing parameters over 96-bar cycle |
+| `density.c` / `.h` | Adaptive density: counter-cyclical gate + reverb biases derived from active-mask popcount + gate |
 | `wav.c` / `.h` | `render_wav()` + WAV header |
-| `ui.c` / `.h` | Terminal raw mode, oscilloscope, status row, help overlay (cross-platform) |
+| `ui.c` / `.h` | Terminal raw mode, oscilloscope, status row builder, help overlay (cross-platform) |
 | `keys.c` / `.h` | Key dispatcher (`'?'`, `'q'`, tempo, scale, filter, etc.) |
 | `audio_pulse.c` | Linux live-audio backend (PulseAudio `pa_threaded_mainloop` + `pa_stream`) |
 | `audio_winmm.c` | Windows live-audio backend (Win32 `waveOut`, 4-buffer cycle) |
 | `audio.h` | One-function API (`audio_play()`); selects backend at link time |
 | `arena.c` / `.h` | Static 128 KB pool with bump allocator |
 | `gen_*_table.c` | Build-time generators for sine / envelope / MIDI note / Bjorklund tables |
-| `Makefile` | `make`, `make win`, `make winpack`, `make pack`, `make test`, `make test-unit`, `make test-multiseed`, `make test-smoke`, `make coverage`, `make golden`, `make golden-multiseed` |
+| `Makefile` | `make`, `make win`, `make winpack`, `make pack`, `make test`, `make test-unit`, `make test-multiseed`, `make test-smoke`, `make coverage`, `make debug`, `make golden`, `make golden-multiseed` |
 | `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
 | `tests/test_multi_seed.sh` | Renders 4 seeds; determinism + audio bounds + golden hashes |
 | `tests/test_smoke_live.sh` | Spawns `./synth --no-ui` for 2 s; expects clean exit / SIGTERM |
-| `tests/unit/test_*.c` | 68 unit tests (arena, effects, voice, gen, lsystem, chord_progression, section) |
+| `tests/unit/test_*.c` | 95 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, mixer, wav, keys |
 | `golden/regression_16s.sha256` | Reference hash for the 16-second seed-0 render |
 | `golden/regression_multiseed.sha256.txt` | Reference hashes for the four multi-seed renders |
 | `.github/workflows/ci.yml` | CI: build, all tests, Windows cross-compile, coverage gates, size gate |

@@ -1,5 +1,32 @@
 # Changelog
 
+## Recent: Tier-3 cleanup wave (4 PRs)
+
+Finished the post-audit Tier-3 cleanup:
+
+- **config.h + named constants** — `SAMPLE_RATE` / `BUFFER_FRAMES` centralized; `gen_note_table.c` now reads them too (was duplicated). Three magic numbers in `voice.c` named (`KS_AVG_COEF`, `CUTOFF_LFO_SHIFT`, `CUTOFF_FENV_GAIN` / `CUTOFF_FENV_SHIFT`).
+- **Test/build/bias cleanup** — `test_init_synth()` in `test.h` replaces five per-file setup helpers (legacy names kept as macro aliases so existing TEST bodies don't change). New `make debug` target builds `synth_debug` with `-O0 -g -DDEBUG` and separate `.dbg.o` filenames so it co-exists with the release build. `effective_mutate_interval()` centralizes the mutation-bias math that was inline at the gen_step call site.
+- **`gen_step` decomposition** — was ~210 LOC, now ~25 LOC dispatcher delegating to five static-inline schedulers (`schedule_bar_boundary`, `schedule_drums`, `schedule_bass`, `schedule_chord`, `schedule_melody`) plus `compute_active_mask`. LTO folds the inlines; Windows binary size unchanged.
+- **Status row decomposition** — `ui_draw_oscilloscope` was 138 LOC doing two jobs; split into `build_status_row` and `build_oscilloscope_grid` with shared `append_num` / `append_str` helpers and file-scope `COL_*` ANSI macros.
+
+All four refactors are mechanical — bit-exact regression passes with the existing golden across every PR.
+
+## Recent: adaptive density
+
+- New `density.c` / `.h` module. `tension = popcount(active_mask) * 18 + gate_prob >> 2`. Counter-cyclical biases: high tension yields negative gate/reverb deltas (pull back when busy), low tension yields positive (fill in when sparse).
+- Composes with `section.c` additively. Both modules' reverb biases sum before being pushed to `effects.c::reverb_set_wet_bias`. Gate bias adds to the section + user value at the melody trigger clamp step.
+- Pure function of current bar state — no PRNG, no persistent state beyond the cached tension byte. `--seed N` reproducibility preserved.
+- Status row gains `Td:<n>` field (yellow).
+- 7 new unit tests, `density.c` at 100%. Total unit tests 88 → 95.
+
+## Recent: unit tests for mixer / wav / keys
+
+- 20 new tests across `tests/unit/test_mixer.c` (3), `tests/unit/test_wav.c` (2), `tests/unit/test_keys.c` (15). Covers `render_chunk` contract, WAV header bytes against RIFF/WAVE/fmt/data spec, and every key dispatcher branch.
+- `effects.c` coverage jumped 82% → **100%** (test_keys exercises every effects setter).
+- `main.c` coverage rose to 96%.
+- CI gates raised: `effects.c` 80% → 95%, `main.c` 60% → 90%.
+- `ui.c` gains a small ergonomic fix: `ui_show_help` and `ui_clear_screen` early-return when `no_ui` is set, matching the existing `--no-ui` "no terminal I/O" contract and keeping test output quiet.
+
 ## Recent: CI per-file gates + size budget + arena to 100%
 
 - CI workflow gates per file with a threshold map: pure-synth modules (arena, voice, gen, section, mixer) at ≥95%; lsystem / chord_progression / wav at ≥90%; effects at ≥80%; main at ≥60%. Tightens over time as coverage grows.
