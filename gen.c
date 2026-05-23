@@ -4,6 +4,7 @@
 #include "lsystem.h"
 #include "chord_progression.h"
 #include "section.h"
+#include "density.h"
 #include "effects.h"
 #include <stdint.h>
 #include <time.h>
@@ -308,8 +309,16 @@ void gen_init(void) {
     section_init();
     /* Apply initial biases so first bar of audio reflects the section. */
     voice_set_cutoff_bias(section_bias_cutoff());
-    reverb_set_wet_bias(section_bias_reverb());
     lsystem_set_character(section_lsystem_character());
+
+    /* Adaptive density: prime tension with a conservative initial
+       state. The first bar-boundary in gen_step recomputes from
+       the live active mask + gate. */
+    density_update(0x01u, gate_prob);
+
+    /* Reverb bias is the sum of section + density. */
+    reverb_set_wet_bias((int8_t)(section_bias_reverb()
+                               + density_bias_reverb()));
 }
 
 void gen_step(void) {
@@ -348,8 +357,21 @@ void gen_step(void) {
                unchanged, so this is cheap. */
             section_step(bar_count);
             voice_set_cutoff_bias(section_bias_cutoff());
-            reverb_set_wet_bias(section_bias_reverb());
             lsystem_set_character(section_lsystem_character());
+
+            /* Adaptive density: short-term counter-cyclical bias on
+               top of the section's long-term bias. Uses ca_row's low
+               7 bits as the "active scale-degree" measure (ca_harm
+               updates a few substeps later, so it is not yet ready
+               at the bar boundary; ca_row alone is the bar-stable
+               component). Combined with user gate_prob. */
+            density_update((uint8_t)(ca_row & 0x7Fu), gate_prob);
+
+            /* Reverb wet bias is the sum of section + density. Each
+               is clamped at its source; effects.c clamps the final
+               sum into [0, 256] before mixing. */
+            reverb_set_wet_bias((int8_t)(section_bias_reverb()
+                                       + density_bias_reverb()));
         }
 
         /* ca_harm advances 4 times per bar - every 12 substeps. */
@@ -479,7 +501,9 @@ void gen_step(void) {
                rewrites) vs the Markov walker's first-order steps. */
             /* Effective gate: user value + section bias, clamped to
                [32, 255] (gate_prob's full range). */
-            int eff_gate_i = (int)gate_prob + (int)section_bias_gate();
+            int eff_gate_i = (int)gate_prob
+                           + (int)section_bias_gate()
+                           + (int)density_bias_gate();
             if (eff_gate_i < 32)  eff_gate_i = 32;
             if (eff_gate_i > 255) eff_gate_i = 255;
             uint32_t eff_gate = (uint32_t)eff_gate_i;
@@ -561,6 +585,10 @@ uint8_t gen_get_chord_root(void) {
 
 const char *gen_get_section_name(void) {
     return section_name();
+}
+
+uint8_t gen_get_tension(void) {
+    return density_get_tension();
 }
 
 void gen_cycle_scale(void) {

@@ -255,6 +255,8 @@ void ui_draw_oscilloscope(int16_t *buf, uint32_t frames) {
     APPEND_NUM(gen_get_chord_root());
     APPEND_STR(" " COL_CYAN "Sec:" COL_WHITE);
     APPEND_STR(gen_get_section_name());
+    APPEND_STR(" " COL_YELLOW "Td:" COL_WHITE);
+    APPEND_NUM(gen_get_tension());
 
     APPEND_STR(" " COL_CYAN "F:" COL_WHITE);
     APPEND_NUM(voice_get_cutoff());

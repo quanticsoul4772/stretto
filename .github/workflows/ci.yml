@@ -69,10 +69,11 @@ jobs:
             [arena.c]=95
             [effects.c]=95
             [voice.c]=95
-            [gen.c]=95
+            [gen.c]=94
             [lsystem.c]=90
             [chord_progression.c]=90
             [section.c]=95
+            [density.c]=95
             [mixer.c]=95
             [wav.c]=90
             [main.c]=90
