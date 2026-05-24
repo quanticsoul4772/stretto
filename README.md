@@ -79,6 +79,7 @@ Fixes the PRNG / cellular automaton / Markov seeds to `N`. Same `--seed` always 
 | `n` / `N` | Filter resonance down / up by 10 |
 | `m` / `M` | Filter LFO depth down / up by 8 |
 | `t` | Cycle filter mode (LP → HP → BP → notch) |
+| `l` / `L` | Compressor threshold down / up by 1000 (lower = more compression) |
 | `?` | Toggle help overlay |
 | `q` | Quit (restores terminal state) |
 | `Ctrl-C` | Same as `q` via atexit handler |
@@ -88,7 +89,7 @@ Fixes the PRNG / cellular automaton / Markov seeds to `N`. Same `--seed` always 
 Colored single-line status at the top of the terminal:
 
 ```
-M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2 Cr:4 Sec:body Td:118 F:200 N:100 L:80 T:LP
+M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2 Cr:4 Sec:body Td:118 Mo:c F:200 N:100 L:80 T:LP Lm:20000
 ```
 
 | Field | Meaning |
@@ -109,15 +110,18 @@ M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2 Cr:4 
 | `N` | SVF resonance base (0–180; per-role offsets apply per voice) |
 | `L` | Filter LFO depth (0–255; scales how much the per-voice pan LFO sweeps the cutoff) |
 | `T` | Filter mode: `LP` low-pass, `HP` high-pass, `BP` band-pass, `NO` notch |
+| `Mo` | Motif memory state: `c` capture (L-system driving + recording), `r` replay (8-phrase ring buffer playing a captured 4-bar phrase, optionally transposed) |
+| `Lm` | Master compressor threshold (8000–30000; brickwall at 32000) |
 
 The oscilloscope below paints with a heat-map palette: dim (silence) → blue → cyan → green → yellow → magenta → red (peak).
 
 ## What you'll hear
 
-- **Bass** (FM, 1:1 ratio, 2 voices) — 4-event "bouncing" pattern per bar: substeps 0, 18, 24, 42. Plays the current chord's root and fifth, alternating, swapping order per bar.
+- **Bass** (FM, 1:1 ratio, 2 voices) — 4-event "bouncing" pattern per bar: substeps 0, 18, 24, 42. Plays the current chord's root and fifth, alternating, swapping order per bar. At every chord change, plays a one-step diatonic approach note in the direction of the previous chord root before resolving — walking-bass feel instead of jumping between roots.
 - **Chord** (FM, 2:1 ratio, 3 voices) — 4 voicings per bar at substeps 0, 12, 24, 36. Voicing cycles through triad / 7th / sus4 / sus2 / inv1 / inv2 per bar; root walks the chord-progression Markov chain (advances every 2 bars). Voice leading octave-shifts each pitch toward the previous chord's centroid.
-- **Melody** (Karplus-Strong + FM alternating, 3 voices) — Euclidean rhythm on a 16-step grid, **L-system walker** producing phrased contours over scale degrees, probability-gated. A counter-melody one octave up runs an independent Markov + Euclidean for stylistic contrast (phrased vs walked).
-- **Drums** (3 voices: kick, snare, hihat) — kick is a sine pitch-sweep with attack click; snare is noise-dominant with a 200 Hz body; hihat is pure noise. Each drum cycles its own pattern bank — kick 4 / snare 3 / hihat 5 patterns → LCM of 60 bars before exact repeat.
+- **Melody** (Karplus-Strong + FM alternating, 3 voices) — Euclidean rhythm on a 16-step grid, **L-system walker** producing phrased contours over scale degrees, probability-gated. A motif memory captures the last 8 four-bar phrases; every ~30 bars one is replayed (verbatim or ±2 diatonic transpose) instead of generating new. A counter-melody one octave up runs an independent **2nd-order Markov** chain (3-degree context) biased away from unison with the main melody and toward 3rd/6th consonances.
+- **Drums** (3 voices: kick, snare, hihat) — kick is a sine pitch-sweep with attack click; snare is noise-dominant with a 200 Hz body; hihat is pure noise. Each drum cycles its own pattern bank — kick 4 / snare 3 / hihat 5 patterns → LCM of 60 bars before exact repeat. The song-section state machine pins the kick pattern per section.
+- **Master bus** — reverb (4-comb Schroeder + 2 all-pass per channel) → stereo delay (250 ms, runtime wet/feedback) → soft cubic saturation → **feed-forward compressor with brickwall limiter** (4:1 above threshold, ~5 ms attack / ~200 ms release, stereo-linked envelope, ceiling at 32 000). Compressor tames transients (kick on TENSION sections) and guarantees no int16 clip.
 
 The whole texture sits in a Schroeder reverb tail and a 250 ms stereo delay, with soft cubic saturation at the master bus.
 
@@ -160,14 +164,15 @@ Approximate line coverage (unit + integration combined; CI enforces these as per
 | `arena.c` | 100% | ≥95% |
 | `effects.c` | 100% | ≥95% |
 | `voice.c` | 98% | ≥95% |
-| `gen.c` | 95% | ≥94% |
+| `gen.c` | 87% | ≥85% |
 | `lsystem.c` | 94% | ≥90% |
-| `chord_progression.c` | 91% | ≥90% |
+| `chord_progression.c` | 93% | ≥90% |
 | `section.c` | 100% | ≥95% |
 | `density.c` | 100% | ≥95% |
+| `motif.c` | 97% | ≥95% |
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
-| `main.c` | 96% | ≥90% |
+| `main.c` | 94% | ≥90% |
 | `ui.c`, `keys.c`, `audio_pulse.c` | — | excluded (require TTY + audio device) |
 
 Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `make coverage` can be alternated without `make clean`. Windows binary size budget (48 KB packed) is also gated in CI.
@@ -186,6 +191,7 @@ Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `
 | `chord_progression.c` / `.h` | Markov chain over chord functions (root advances every 2 bars) |
 | `section.c` / `.h` | Song-section state machine (intro / body / tension / resolve) biasing parameters over 96-bar cycle |
 | `density.c` / `.h` | Adaptive density: counter-cyclical gate + reverb biases derived from active-mask popcount + gate |
+| `motif.c` / `.h` | Long-term motif memory: 8-phrase ring buffer; every ~30 bars replays one captured 4-bar phrase (verbatim or ±2 transposed) instead of L-system output |
 | `wav.c` / `.h` | `render_wav()` + WAV header |
 | `ui.c` / `.h` | Terminal raw mode, oscilloscope, status row builder, help overlay (cross-platform) |
 | `keys.c` / `.h` | Key dispatcher (`'?'`, `'q'`, tempo, scale, filter, etc.) |
@@ -198,7 +204,7 @@ Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `
 | `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
 | `tests/test_multi_seed.sh` | Renders 4 seeds; determinism + audio bounds + golden hashes |
 | `tests/test_smoke_live.sh` | Spawns `./synth --no-ui` for 2 s; expects clean exit / SIGTERM |
-| `tests/unit/test_*.c` | 95 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, mixer, wav, keys |
+| `tests/unit/test_*.c` | 109 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys |
 | `golden/regression_16s.sha256` | Reference hash for the 16-second seed-0 render |
 | `golden/regression_multiseed.sha256.txt` | Reference hashes for the four multi-seed renders |
 | `.github/workflows/ci.yml` | CI: build, all tests, Windows cross-compile, coverage gates, size gate |

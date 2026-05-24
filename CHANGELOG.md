@@ -1,5 +1,42 @@
 # Changelog
 
+## Recent: master compressor + brickwall limiter
+
+- New `compressor_process()` in `effects.c`. Feed-forward, stereo-linked envelope (drives both channels from `max(|L|, |R|)`). 4:1 ratio above threshold, ~5 ms attack / ~200 ms release at 48 kHz, +1 dB makeup gain, brickwall ceiling at 32 000.
+- Master chain becomes: voice mix → reverb → delay → soft sat → compressor → `sat16`.
+- Threshold runtime-tunable in `[8000, 30000]` via `l` / `L` keys; default 20 000.
+- Status row gains `Lm:<n>` field.
+- 5 new tests in new `tests/unit/test_effects.c`.
+- Multi-seed clip count drops from "≤100 per render" to **0** on every seed.
+
+## Recent: spec-kit + baseline spec
+
+- Installed GitHub Spec Kit (`.specify/`, `.claude/skills/speckit-*`, `CLAUDE.md`).
+- Wrote `.specify/memory/constitution.md` v1.0.0 encoding the 10 principles the project already enforces (3 NON-NEGOTIABLE: size budget, determinism, test discipline).
+- Wrote `specs/001-stretto-baseline/spec.md` documenting what stretto does today across 3 prioritized user stories + functional requirements + measurable success criteria.
+
+## Recent: long-term motifs
+
+- New `motif.c` / `.h`. Ring buffer of the last 8 four-bar main-melody phrases (512 B + ~13 B state). Every ~30 bars with ~25% per-bar probability, replay one (verbatim or ±2 diatonic transpose) instead of L-system output for 4 bars.
+- `gen.c` integrates: `gen_init` calls `motif_init`; `schedule_bar_boundary` calls `motif_bar_step`; `schedule_melody` swaps L-system for `motif_replay_at` (snapped to active mask) when `motif_in_replay()`.
+- Counter-melody continues its 2nd-order Markov walk during replay — familiar main over a fresh counter is the contrast that makes the replay feel like a return.
+- Status row gains `Mo:c` / `Mo:r` field (capture / replay).
+- 8 new tests; `motif.c` at 97%.
+
+## Recent: inter-voice listening
+
+- Counter-melody now reads `cur_degree` (main melody's most recent degree) and biases the 2nd-order Markov walk away from unison and toward 3rd/6th consonances. Per-degree weight multiplied by an interval-consonance factor before sampling: unison × 0, 2nd × 64, 3rd × 192, 4th × 128.
+- Bass plays a one-step diatonic approach note at the very first bass event of every new chord. Direction follows the previous chord root. Listener hears approach → root resolution instead of bass jumping between chord roots.
+- `chord_progression.h` exposes `chord_progression_get_prev_root()`.
+- Voices stop sounding like 5 parallel streams.
+
+## Recent: 2nd-order Markov for counter-melody
+
+- 1st-order `markov[7][7]` replaced with 2nd-order `markov2[7][7][7]` (343 B vs 49 B). Indexed by `[prev_prev][prev][next]`.
+- Seeded at `gen_init` by replicating the existing 1st-order tuning across the prev_prev axis so day 1 character matches the old chain.
+- `mutate()` drifts cells of `markov2` so distinct `(prev_prev, prev)` contexts evolve different transition tendencies over the piece.
+- Pre-first-mutation behavior is byte-identical to the old code (multi-seed 4-second hashes unchanged); 16-second hash regenerated.
+
 ## Recent: Tier-3 cleanup wave (4 PRs)
 
 Finished the post-audit Tier-3 cleanup:
