@@ -85,6 +85,14 @@ TEST(section_chord_voice_type_per_section) {
     section_step(72);   ASSERT_EQ(section_chord_voice_type(), VOICE_WT);
 }
 
+TEST(section_chord_arpeggio_per_section) {
+    section_init();
+    section_step(0);    ASSERT_EQ(section_chord_arpeggio(), 0);  /* INTRO block */
+    section_step(24);   ASSERT_EQ(section_chord_arpeggio(), 0);  /* BODY block */
+    section_step(48);   ASSERT_EQ(section_chord_arpeggio(), 1);  /* TENSION arp */
+    section_step(72);   ASSERT_EQ(section_chord_arpeggio(), 0);  /* RESOLVE block */
+}
+
 int main(void) {
     return RUN_ALL();
 }

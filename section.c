@@ -97,3 +97,13 @@ static const uint8_t SECTION_CHORD_VOICE[SECTION_COUNT] = {
     VOICE_WT, VOICE_ADD, VOICE_FM, VOICE_WT,
 };
 uint8_t section_chord_voice_type(void) { return SECTION_CHORD_VOICE[section_current()]; }
+
+/* Chord arpeggio toggle per section.
+     INTRO    block      (sparse pad-like)
+     BODY     block      (steady chord pulse)
+     TENSION  arpeggio   (energy, sequential note motion)
+     RESOLVE  block      (settle back to pads)
+   Discrete bias - switches instantly at section boundary like the
+   voice-type selection above. */
+static const uint8_t SECTION_CHORD_ARP[SECTION_COUNT] = { 0, 0, 1, 0 };
+uint8_t section_chord_arpeggio(void) { return SECTION_CHORD_ARP[section_current()]; }

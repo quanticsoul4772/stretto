@@ -43,5 +43,9 @@ uint8_t section_lsystem_character(void);
 /* Chord voice type: VOICE_FM (cutting glassy) or VOICE_WT (animated
    pad). INTRO + BODY use WT; TENSION + RESOLVE use FM. */
 uint8_t section_chord_voice_type(void);
+/* Chord playback mode: 0 = block (3 simultaneous voices on chord beat),
+   1 = arpeggio (one voice per arp step, cycling chord notes). TENSION
+   arpeggiates for energy; other sections play blocks. */
+uint8_t section_chord_arpeggio(void);
 
 #endif

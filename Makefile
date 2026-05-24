@@ -206,7 +206,11 @@ $(BUILD_COV)/%.o: %.c | $(BUILD_COV)
 coverage: $(COV_OBJS)
 	gcc $(COV_FLAGS) $(COV_OBJS) -lpulse -o $(BUILD_COV)/synth_cov
 	@echo "=== render-mode regression ==="
-	./$(BUILD_COV)/synth_cov --render 16 /tmp/cov_render.wav --seed 0 >/dev/null
+	# 110 s (~55 bars at 2.00 s/bar) covers INTRO (bars 0-23), BODY (24-47)
+	# and TENSION (48+) so section-gated branches in gen.c - chord
+	# arpeggio, TENSION kick pattern, density swings - all execute under
+	# the render binary's coverage measurement.
+	./$(BUILD_COV)/synth_cov --render 110 /tmp/cov_render.wav --seed 0 >/dev/null
 	@echo "=== unit suite ==="
 	@for t in $(UNIT_TEST_SRCS); do \
 		base=$${t%.c}; \
