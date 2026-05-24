@@ -16,4 +16,5 @@ void render_chunk(int16_t *out, uint32_t frames) {
     reverb_process(out, frames);
     delay_process(out, frames);
     saturate_process(out, frames);
+    compressor_process(out, frames);
 }

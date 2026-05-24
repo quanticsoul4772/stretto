@@ -201,9 +201,79 @@ void saturate_process(int16_t *buf, uint32_t frames) {
     }
 }
 
+/* ---- master compressor + brickwall limiter ------------------- */
+/* Feed-forward, stereo-linked. Envelope tracks max(|L|,|R|) so the
+   gain reduction is identical on both channels and stereo imaging
+   is preserved. 4:1 ratio above threshold, attack ~5 ms and release
+   ~200 ms at 48 kHz, +1 dB makeup gain, brickwall ceiling just
+   below int16 max so sat16 still has margin. */
+#define COMP_THRESHOLD_DEFAULT  20000        /* int16 amplitude */
+#define COMP_THRESHOLD_MIN       8000
+#define COMP_THRESHOLD_MAX      30000
+#define COMP_RATIO                  4        /* 4:1 above threshold */
+#define COMP_ATTACK_COEF          268        /* (1-exp(-1/(0.005*48000)))*65536 */
+#define COMP_RELEASE_COEF           7        /* (1-exp(-1/(0.200*48000)))*65536 */
+#define COMP_MAKEUP_GAIN          288        /* ~+1 dB in 8.8 fixed */
+#define LIMIT_CEILING           32000        /* brickwall, below int16 max */
+
+static int32_t comp_env       = 0;
+static int32_t comp_threshold = COMP_THRESHOLD_DEFAULT;
+
+void compressor_process(int16_t *buf, uint32_t frames) {
+    for (uint32_t i = 0; i < frames; i++) {
+        int32_t l = buf[2 * i];
+        int32_t r = buf[2 * i + 1];
+        int32_t al = l < 0 ? -l : l;
+        int32_t ar = r < 0 ? -r : r;
+        int32_t a  = al > ar ? al : ar;
+
+        /* Asymmetric envelope follower: fast attack, slow release. */
+        if (a > comp_env) {
+            comp_env += ((a - comp_env) * COMP_ATTACK_COEF) >> 16;
+        } else {
+            comp_env -= ((comp_env - a) * COMP_RELEASE_COEF) >> 16;
+        }
+
+        /* Gain reduction: 1.0 below threshold, compressed above.
+           gain is 8.8 fixed; target_env = threshold + over/ratio. */
+        int32_t gain = 256;
+        if (comp_env > comp_threshold) {
+            int32_t over   = comp_env - comp_threshold;
+            int32_t target = comp_threshold + over / COMP_RATIO;
+            gain = (target * 256) / comp_env;
+        }
+
+        /* Apply gain + makeup, then brickwall. */
+        int32_t yl = (l * gain) >> 8;
+        int32_t yr = (r * gain) >> 8;
+        yl = (yl * COMP_MAKEUP_GAIN) >> 8;
+        yr = (yr * COMP_MAKEUP_GAIN) >> 8;
+        if (yl >  LIMIT_CEILING) yl =  LIMIT_CEILING;
+        if (yl < -LIMIT_CEILING) yl = -LIMIT_CEILING;
+        if (yr >  LIMIT_CEILING) yr =  LIMIT_CEILING;
+        if (yr < -LIMIT_CEILING) yr = -LIMIT_CEILING;
+
+        buf[2 * i]     = sat16(yl);
+        buf[2 * i + 1] = sat16(yr);
+    }
+}
+
+void compressor_adjust_threshold(int delta) {
+    int v = (int)comp_threshold + delta;
+    if (v < COMP_THRESHOLD_MIN) v = COMP_THRESHOLD_MIN;
+    if (v > COMP_THRESHOLD_MAX) v = COMP_THRESHOLD_MAX;
+    comp_threshold = v;
+}
+
+uint16_t compressor_get_threshold(void) {
+    return (uint16_t)comp_threshold;
+}
+
 /* ---- one-shot init ------------------------------------------- */
 
 void effects_init(void) {
     delay_init();
     reverb_init();
+    comp_env       = 0;
+    comp_threshold = COMP_THRESHOLD_DEFAULT;
 }

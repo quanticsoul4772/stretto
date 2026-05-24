@@ -41,6 +41,8 @@ int keys_dispatch(char ch) {
     else if (ch == 'm')  voice_adjust_lfo_filter_depth(-8);
     else if (ch == 'M')  voice_adjust_lfo_filter_depth(+8);
     else if (ch == 't')  voice_cycle_filter_mode();
+    else if (ch == 'l')  compressor_adjust_threshold(-1000);
+    else if (ch == 'L')  compressor_adjust_threshold(+1000);
     else if (ch == 'q')  return KEY_QUIT;
     else                 return KEY_IGNORED;
     return KEY_CONSUMED;

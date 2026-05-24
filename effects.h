@@ -29,6 +29,16 @@ void     reverb_set_wet_bias(int8_t bias);
 
 void     saturate_process(int16_t *buf, uint32_t frames);
 
+/* Master-bus compressor + brickwall limiter. Runs after
+   saturate_process and before sat16 in the master chain. Feed-
+   forward, stereo-linked envelope (drives both channels from
+   max(|L|,|R|) so stereo imaging is preserved). 4:1 ratio above
+   threshold, ~5 ms attack, ~200 ms release at 48 kHz, +1 dB
+   makeup gain, brickwall ceiling at 32000 (just below int16 max). */
+void     compressor_process(int16_t *buf, uint32_t frames);
+void     compressor_adjust_threshold(int delta);
+uint16_t compressor_get_threshold(void);
+
 /* int16 saturating clamp. Shared so voice.c can call it instead of
    the inline if/else duplicated in voice_step. */
 int16_t  sat16(int32_t v);
