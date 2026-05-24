@@ -522,16 +522,54 @@ static inline void schedule_bass(uint32_t substep_in_bar) {
     }
 }
 
-/* Chord trigger: 4 evenly-spaced events per bar (substeps 0, 12, 24,
-   36) - the "4" side of the 3-against-4 polyrhythm. Voicing pattern
-   rotates per bar; root is rebased onto current chord function; each
-   pitch is octave-shifted toward the previous chord's centroid for
-   voice leading. */
+/* Chord trigger.
+   Block mode (default): 4 evenly-spaced events per bar (substeps 0, 12,
+   24, 36) - the "4" side of the 3-against-4 polyrhythm. All 3 voicing
+   notes fire simultaneously.
+   Arpeggio mode (section-gated, currently TENSION only): 8 evenly-spaced
+   events per bar (substeps 0, 6, 12, ..., 42) - one voicing note per
+   step, cycled up. Same voicing pattern table, same voice-leading
+   octave shift, same active_mask CA gating.
+   In both modes: voicing rotates per bar; root rebases onto current
+   chord function; each pitch is octave-shifted toward the previous
+   chord's centroid for voice leading. */
 static inline void schedule_chord(uint32_t substep_in_bar, uint8_t active_mask) {
-    if (substep_in_bar != 0u && substep_in_bar != 12u &&
-        substep_in_bar != 24u && substep_in_bar != 36u) return;
+    uint8_t arp = section_chord_arpeggio();
+    if (arp) {
+        if (substep_in_bar % 6u != 0u) return;
+    } else {
+        if (substep_in_bar != 0u && substep_in_bar != 12u &&
+            substep_in_bar != 24u && substep_in_bar != 36u) return;
+    }
+
     const ChordNote *pat = CHORD_PATTERNS[bar_count % N_CHORD_PATTERNS];
     uint8_t chord_root = chord_progression_get_root();
+    uint8_t voice_type = section_chord_voice_type();
+
+    if (arp) {
+        /* Pick one voicing-note index, cycling up across bars so the
+           arp keeps moving (8 steps/bar % 3 notes = phases against the
+           bar - 8,8,8,... → indices 0,1,2,0,1,2,0,1 then 2,0,1,2,0,1,2,0
+           on the next bar, etc.). */
+        uint32_t arp_step = (uint32_t)bar_count * 8u + substep_in_bar / 6u;
+        int i = (int)(arp_step % 3u);
+        uint8_t d = (uint8_t)((pat[i].degree + chord_root) % 7u);
+        if (!(active_mask & (1u << d))) return;
+        int note = (int)SCALES[cur_scale][d] + (int)pat[i].octave * 12;
+        while (note > (int)prev_chord_center + 8) note -= 12;
+        while (note < (int)prev_chord_center - 8) note += 12;
+        if (note < 24)  note += 12;
+        if (note > 96)  note -= 12;
+        voice_pool_trigger_role((uint8_t)note, voice_type, ROLE_CHORD);
+        /* Single-note centroid update: pull prev_chord_center toward
+           this note's pitch with the same 3:1 smoothing as block mode. */
+        prev_chord_center = (uint8_t)(((uint16_t)prev_chord_center * 3u
+                                     + (uint16_t)note) >> 2);
+        if (prev_chord_center < 55) prev_chord_center = 55;
+        if (prev_chord_center > 79) prev_chord_center = 79;
+        return;
+    }
+
     uint16_t sum = 0;
     uint8_t  count = 0;
     for (int i = 0; i < 3; i++) {
@@ -542,7 +580,7 @@ static inline void schedule_chord(uint32_t substep_in_bar, uint8_t active_mask) 
         while (note < (int)prev_chord_center - 8) note += 12;
         if (note < 24)  note += 12;
         if (note > 96)  note -= 12;
-        voice_pool_trigger_role((uint8_t)note, section_chord_voice_type(), ROLE_CHORD);
+        voice_pool_trigger_role((uint8_t)note, voice_type, ROLE_CHORD);
         sum += (uint16_t)note;
         count++;
     }
