@@ -1,4 +1,5 @@
 #include "section.h"
+#include "voice.h"      /* for VOICE_FM / VOICE_WT enum values */
 #include <stdint.h>
 #include <stddef.h>
 
@@ -85,3 +86,10 @@ int8_t section_bias_mutation_interval(void)  { return lerp_bias(BIAS_MUT); }
 
 uint8_t section_kick_pattern(void)     { return KICK_PATTERN[section_current()]; }
 uint8_t section_lsystem_character(void){ return LSYS_CHARACTER[section_current()]; }
+
+/* Chord voice type per section. INTRO + BODY use wavetable (animated
+   pad character); TENSION + RESOLVE use FM (cutting glassy attack). */
+static const uint8_t SECTION_CHORD_VOICE[SECTION_COUNT] = {
+    VOICE_WT, VOICE_WT, VOICE_FM, VOICE_FM,
+};
+uint8_t section_chord_voice_type(void) { return SECTION_CHORD_VOICE[section_current()]; }

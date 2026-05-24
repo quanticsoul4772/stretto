@@ -10,8 +10,8 @@ LDFLAGS = -Wl,--gc-sections -Wl,-z,norelro \
 UPX_BIN   ?= upx
 UPX_FLAGS ?= --ultra-brute
 
-HEADERS = sin_table.h env_table.h note_table.h euclid_table.h
-GENS    = gen_sin_table gen_env_table gen_note_table gen_euclid_table
+HEADERS = sin_table.h env_table.h note_table.h euclid_table.h wavetable.h
+GENS    = gen_sin_table gen_env_table gen_note_table gen_euclid_table gen_wavetable
 # Shared synth + UI + WAV + mixer + key dispatch.
 # audio backend is platform-specific; see OBJS / WIN_OBJS below.
 COMMON_OBJS = arena.o effects.o voice.o gen.o lsystem.o \
@@ -86,6 +86,8 @@ gen_note_table: gen_note_table.c
 	gcc -O2 gen_note_table.c -o gen_note_table -lm
 gen_euclid_table: gen_euclid_table.c
 	gcc -O2 gen_euclid_table.c -o gen_euclid_table
+gen_wavetable: gen_wavetable.c
+	gcc -O2 gen_wavetable.c -o gen_wavetable -lm
 
 sin_table.h: gen_sin_table
 	./gen_sin_table > sin_table.h
@@ -95,6 +97,8 @@ note_table.h: gen_note_table
 	./gen_note_table > note_table.h
 euclid_table.h: gen_euclid_table
 	./gen_euclid_table > euclid_table.h
+wavetable.h: gen_wavetable
+	./gen_wavetable > wavetable.h
 
 synth: $(OBJS)
 	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -lpulse -o synth

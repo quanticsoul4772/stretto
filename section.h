@@ -40,5 +40,8 @@ int8_t  section_bias_mutation_interval(void);
 /* Discrete biases: switch at section boundary. */
 uint8_t section_kick_pattern(void);
 uint8_t section_lsystem_character(void);
+/* Chord voice type: VOICE_FM (cutting glassy) or VOICE_WT (animated
+   pad). INTRO + BODY use WT; TENSION + RESOLVE use FM. */
+uint8_t section_chord_voice_type(void);
 
 #endif

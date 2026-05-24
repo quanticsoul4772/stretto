@@ -15,10 +15,12 @@ gen_sin_table
 gen_env_table
 gen_note_table
 gen_euclid_table
+gen_wavetable
 sin_table.h
 env_table.h
 note_table.h
 euclid_table.h
+wavetable.h
 
 # Object files
 *.o

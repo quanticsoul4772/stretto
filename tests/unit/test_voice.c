@@ -292,6 +292,41 @@ TEST(voice_pool_mix_returns_stereo) {
     ASSERT_TRUE(peak_l > 0 || peak_r > 0);
 }
 
+/* ---- wavetable voice (VOICE_WT) ---- */
+
+TEST(voice_trigger_wt_sets_state) {
+    Voice v;
+    voice_init(&v);
+    voice_trigger(&v, 60, VOICE_WT, ROLE_CHORD);
+    ASSERT_EQ(v.type, VOICE_WT);
+    ASSERT_EQ(v.env_phase, ENV_A);
+    ASSERT_TRUE(v.u.wt.inc > 0);
+    ASSERT_EQ(v.u.wt.position, 0);
+}
+
+TEST(voice_step_wt_produces_audio) {
+    Voice v;
+    voice_init(&v);
+    voice_trigger(&v, 64, VOICE_WT, ROLE_CHORD);
+    int32_t peak = peak_over_n(&v, 4800);
+    ASSERT_TRUE(peak > 1000);
+}
+
+TEST(voice_wt_position_advances_with_lfo) {
+    /* lfo_phase is normally advanced by voice_pool_mix, not voice_step.
+       Mimic that here so the WT position update inside voice_step
+       sees a moving lfo_phase. lfo_inc=9841 mirrors a chord slot. */
+    Voice v;
+    voice_init(&v);
+    voice_trigger(&v, 64, VOICE_WT, ROLE_CHORD);
+    v.lfo_inc = 9841u;
+    for (int i = 0; i < 96000; i++) {
+        voice_step(&v);
+        v.lfo_phase += v.lfo_inc;
+    }
+    ASSERT_TRUE(v.u.wt.position != 0);
+}
+
 int main(void) {
     return RUN_ALL();
 }
