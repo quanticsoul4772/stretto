@@ -42,12 +42,21 @@ for s in "${SEEDS[@]}"; do
     hashes[$h]=$s
 done
 
-echo "=== audio sanity bounds ==="
-# Use python to compute peak / rms / clip-count and apply bounds.
-# Catches SVF runaway, reverb feedback overflow, drum saturation, etc.
+echo "=== audio characteristic bounds ==="
+# Compute time- and frequency-domain features per render. Catches:
+#   - SVF runaway / reverb feedback overflow (peak / clip)
+#   - drum or voice saturation (peak / clip)
+#   - filter blown wide open (centroid above ambient range)
+#   - filter stuck closed / synth gone to subsonic (centroid low)
+#   - synth gone to noise (ZCR high)
+#   - synth gone to drone (ZCR low)
+# Spectral centroid + ZCR catch character drift without forcing
+# golden regen on every algorithmic tweak (those bounds are wide).
 python3 - <<'PY' "$TMPDIR" "${SEEDS[@]}"
 import sys, struct, os
 import numpy as np
+
+SAMPLE_RATE = 48000
 
 tmpdir = sys.argv[1]
 seeds = sys.argv[2:]
@@ -64,23 +73,41 @@ for s in seeds:
     clip = int(np.sum((samples == 32767) | (samples == -32768)))
     nonzero = int(np.sum(samples != 0))
 
-    # Sanity bounds. The render is 4 seconds stereo at 48 kHz = 384k
-    # samples. We expect:
-    #   - some signal: peak > 500 (not silent)
-    #   - bounded: peak < 32000 (not saturated)
-    #   - low clipping: clip < 100 samples out of 384000
-    #   - mostly non-zero: > 50% of samples not exactly 0
+    # Mono-mix for spectral analysis.
+    mono = (samples[0::2].astype(np.float32) + samples[1::2].astype(np.float32)) * 0.5
+
+    # Spectral centroid: magnitude-weighted mean frequency. A measure of
+    # spectral brightness; correlates roughly with perceived tone color.
+    spec = np.abs(np.fft.rfft(mono))
+    freqs = np.fft.rfftfreq(len(mono), 1.0 / SAMPLE_RATE)
+    mag_sum = float(spec.sum())
+    centroid = float((freqs * spec).sum() / mag_sum) if mag_sum > 0 else 0.0
+
+    # Zero-crossing rate: fraction of adjacent-sample sign changes.
+    # Crude spectral-content proxy that doesn't need an FFT to interpret.
+    sign_changes = int(np.sum(mono[1:] * mono[:-1] < 0))
+    zcr = sign_changes / max(len(mono) - 1, 1)
+
+    # Sanity bounds. Wide enough to absorb normal algorithmic tweaks,
+    # tight enough to catch the failure modes above.
     errs = []
-    if peak < 500:       errs.append(f"peak too low ({peak})")
-    if peak >= 32767:    errs.append(f"saturated peak ({peak})")
-    if clip > 100:       errs.append(f"clipping count ({clip})")
+    if peak < 500:                 errs.append(f"peak too low ({peak})")
+    if peak >= 32767:              errs.append(f"saturated peak ({peak})")
+    if clip > 100:                 errs.append(f"clipping count ({clip})")
     if nonzero < len(samples) // 2: errs.append(f"too many silent samples ({nonzero})")
+    if not (100.0 <= centroid <= 5000.0):
+        errs.append(f"centroid out of [100, 5000] Hz ({centroid:.0f})")
+    if not (0.01 <= zcr <= 0.30):
+        errs.append(f"ZCR out of [0.01, 0.30] ({zcr:.3f})")
 
     if errs:
         ok = False
-        print(f"  seed {s}: FAIL -- {', '.join(errs)}  [peak={peak} rms={rms:.0f} clip={clip}]")
+        print(f"  seed {s}: FAIL -- {', '.join(errs)}  "
+              f"[peak={peak} rms={rms:.0f} clip={clip} "
+              f"centroid={centroid:.0f}Hz zcr={zcr:.3f}]")
     else:
-        print(f"  seed {s}: ok  peak={peak} rms={rms:.0f} clip={clip}")
+        print(f"  seed {s}: ok  peak={peak} rms={rms:.0f} clip={clip} "
+              f"centroid={centroid:.0f}Hz zcr={zcr:.3f}")
 
 sys.exit(0 if ok else 1)
 PY
