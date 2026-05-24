@@ -400,6 +400,68 @@ TEST(voice_step_sub_phases_diverge) {
     ASSERT_TRUE(v.u.sub.phase[1] != v.u.sub.phase[2]);
 }
 
+/* ---- portamento (glide) on legato SUB bass re-trigger ---- */
+
+TEST(voice_glide_arms_on_legato_sub_trigger) {
+    /* Trigger A; step partway through attack so env_amp clears the
+       legato threshold (8192). After 1000 samples of a 2400-sample
+       attack, env_amp ~ 13653 > 8192. Re-trigger with a different
+       note: glide should be armed, inc[0] unchanged, inc_target set
+       to the new note's inc. */
+    Voice v;
+    voice_init(&v);
+    voice_trigger(&v, 36, VOICE_SUB, ROLE_BASS);
+    uint32_t inc_before = v.u.sub.inc[0];
+    for (int i = 0; i < 1000; i++) voice_step(&v);
+    ASSERT_TRUE(v.env_amp > 8192);
+    voice_trigger(&v, 48, VOICE_SUB, ROLE_BASS);
+    ASSERT_EQ(v.note, 48);
+    ASSERT_EQ(v.glide_remain, 2400);
+    ASSERT_TRUE(v.inc_target > 0);
+    ASSERT_TRUE(v.inc_target != inc_before);
+    /* Ramp has not started running yet (no voice_step since trigger). */
+    ASSERT_EQ(v.u.sub.inc[0], inc_before);
+}
+
+TEST(voice_glide_lands_at_target_inc) {
+    /* Arm the glide, then step exactly GLIDE_SAMPLES (2400) times.
+       The ramp should land at inc_target with glide_remain == 0. */
+    Voice v;
+    voice_init(&v);
+    voice_trigger(&v, 36, VOICE_SUB, ROLE_BASS);
+    for (int i = 0; i < 1000; i++) voice_step(&v);
+    voice_trigger(&v, 48, VOICE_SUB, ROLE_BASS);
+    uint32_t target = v.inc_target;
+    for (int i = 0; i < 2400; i++) voice_step(&v);
+    ASSERT_EQ(v.glide_remain, 0);
+    ASSERT_EQ(v.u.sub.inc[0], target);
+    /* Detune relationship preserved at the destination. */
+    ASSERT_TRUE(v.u.sub.inc[1] > v.u.sub.inc[0]);
+    ASSERT_TRUE(v.u.sub.inc[2] < v.u.sub.inc[0]);
+}
+
+TEST(voice_glide_skipped_in_release_tail) {
+    /* Trigger A and run long enough that env_amp falls below threshold
+       in the release tail. Bass envelope: attack 2400 + decay 9600 ->
+       sustain 16384 at sample 12000, then linear release over 48000
+       samples. env_amp drops below 8192 at ~36000 samples in (halfway
+       through release). Re-trigger from there: should be a fresh trigger
+       (full ENV_A reset, glide_remain stays 0). */
+    Voice v;
+    voice_init(&v);
+    voice_trigger(&v, 36, VOICE_SUB, ROLE_BASS);
+    for (int i = 0; i < 40000; i++) voice_step(&v);
+    ASSERT_TRUE(v.env_amp < 8192);
+    voice_trigger(&v, 48, VOICE_SUB, ROLE_BASS);
+    ASSERT_EQ(v.glide_remain, 0);
+    ASSERT_EQ(v.env_phase, ENV_A);
+    ASSERT_EQ(v.note, 48);
+    /* Fresh trigger path: inc[0] is the new note's full inc, with the
+       expected detune relationship. */
+    ASSERT_TRUE(v.u.sub.inc[1] > v.u.sub.inc[0]);
+    ASSERT_TRUE(v.u.sub.inc[2] < v.u.sub.inc[0]);
+}
+
 int main(void) {
     return RUN_ALL();
 }

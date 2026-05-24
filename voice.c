@@ -44,6 +44,17 @@
 #define CUTOFF_FENV_GAIN  30
 #define CUTOFF_FENV_SHIFT 14
 
+/* Portamento (glide) ramp length in samples and the envelope-amplitude
+   threshold above which a re-trigger is considered legato. 2400 samples
+   = 50 ms at 48 kHz: classic mono-synth slide, audibly a glide rather
+   than a lazy attack, lands well before the next bass beat
+   (~620 ms away). Threshold = ENV_SUSTAIN_LEVEL / 2 = 8192 keeps the
+   ramp off when the previous note is already deep in its release tail
+   (otherwise glide would fire on every consecutive bass trigger just
+   because release length > inter-bass interval). */
+#define GLIDE_SAMPLES        2400u
+#define GLIDE_LEGATO_THRESH  8192u
+
 /* SVF (2-pole Chamberlin) parameters - runtime-tunable. Base values,
    with per-role offsets and per-voice LFO modulation added inside
    voice_step. f=200 -> ~6.1 kHz at 48 kHz, Q=100 -> ~2.56. */
@@ -135,6 +146,8 @@ void voice_init(Voice *v) {
     v->fenv_phase = ENV_OFF;
     v->svf_lp = 0;
     v->svf_bp = 0;
+    v->inc_target = 0;
+    v->glide_remain = 0;
 }
 
 /* Additive-synth profile table. 4 profiles x 8 partial amplitudes.
@@ -150,6 +163,22 @@ static const uint8_t ADD_PROFILES[N_ADD_PROFILES][8] = {
 };
 
 void voice_trigger(Voice *v, uint8_t note, uint8_t type, uint8_t role) {
+    /* Legato glide: if the slot is currently holding a SUB bass note
+       whose amplitude envelope has not fallen below GLIDE_LEGATO_THRESH,
+       slide the existing oscillator inc to the new note's inc over
+       GLIDE_SAMPLES instead of hard re-triggering. Phases, envelope,
+       peak normalizer, SVF state all carry across so the result is one
+       continuous voice with a swept pitch. */
+    if (type == VOICE_SUB && role == ROLE_BASS
+        && v->type == VOICE_SUB && v->role == ROLE_BASS
+        && v->env_phase != ENV_OFF
+        && v->env_amp > GLIDE_LEGATO_THRESH) {
+        v->inc_target   = note_phase_inc[note];
+        v->glide_remain = GLIDE_SAMPLES;
+        v->note         = note;
+        return;
+    }
+
     v->type = type;
     v->note = note;
     v->role = role;
@@ -214,6 +243,10 @@ void voice_trigger(Voice *v, uint8_t note, uint8_t type, uint8_t role) {
         v->u.sub.inc[0] = base;
         v->u.sub.inc[1] = base + (base >> 7);
         v->u.sub.inc[2] = base - (base >> 7);
+        /* Fresh trigger (not legato): zero glide state so a prior ramp
+           can't leak through. */
+        v->inc_target   = 0;
+        v->glide_remain = 0;
     } else {
         v->u.fm.phase_c   = 0;
         v->u.fm.phase_m   = 0;
@@ -463,6 +496,19 @@ static void fenv_step(Voice *v) {
 
 int16_t voice_step(Voice *v) {
     if (v->env_phase == ENV_OFF) return 0;
+    /* Glide ramp. Linear walk by remaining-sample division so the
+       result lands exactly at inc_target when glide_remain hits 0.
+       Detune is rebuilt from the new base each step so the super-saw
+       character holds across the slide. */
+    if (v->glide_remain > 0 && v->type == VOICE_SUB) {
+        uint32_t cur   = v->u.sub.inc[0];
+        int32_t  delta = (int32_t)(v->inc_target - cur) / (int32_t)v->glide_remain;
+        uint32_t new_base = (uint32_t)((int32_t)cur + delta);
+        v->u.sub.inc[0] = new_base;
+        v->u.sub.inc[1] = new_base + (new_base >> 7);
+        v->u.sub.inc[2] = new_base - (new_base >> 7);
+        v->glide_remain--;
+    }
     int16_t raw;
     if (v->type == VOICE_KS)        raw = ks_step(v);
     else if (v->type == VOICE_FM)   raw = fm_step(v);
