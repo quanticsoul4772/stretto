@@ -60,6 +60,14 @@ typedef struct {
        amplitude; int16 would wrap and produce broadband clicks. */
     int32_t  svf_lp;
     int32_t  svf_bp;
+    /* Portamento/glide: target phase increment and ramp-sample count.
+       When glide_remain > 0, voice_step linearly walks the per-voice
+       oscillator inc toward inc_target each sample, landing exactly
+       at inc_target when glide_remain hits zero. Currently only armed
+       for VOICE_SUB + ROLE_BASS legato re-triggers. */
+    uint32_t inc_target;
+    uint16_t glide_remain;
+    uint16_t _glide_pad;
     union {
         struct {
             int16_t  buf[KS_MAX_LEN];
