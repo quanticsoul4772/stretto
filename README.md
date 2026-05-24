@@ -79,7 +79,7 @@ Fixes the PRNG / cellular automaton / Markov seeds to `N`. Same `--seed` always 
 | `n` / `N` | Filter resonance down / up by 10 |
 | `m` / `M` | Filter LFO depth down / up by 8 |
 | `t` | Cycle filter mode (LP → HP → BP → notch) |
-| `l` / `L` | Compressor threshold down / up by 1000 (lower = more compression) |
+| `l` / `L` | Compressor threshold down / up by 1000 (lowercase L / shift-L; not the digit `1` or capital `I`). Lower threshold = more compression. |
 | `?` | Toggle help overlay |
 | `q` | Quit (restores terminal state) |
 | `Ctrl-C` | Same as `q` via atexit handler |

@@ -30,8 +30,15 @@ static int16_t *alloc_zero(uint32_t n_samples) {
 }
 
 static void delay_init(void) {
-    delay_l = alloc_zero(DELAY_SAMPLES);
-    delay_r = alloc_zero(DELAY_SAMPLES);
+    /* Idempotent: arena-allocate buffers on first call; subsequent
+       calls just reset the index and clear the existing buffers. */
+    if (!delay_l) {
+        delay_l = alloc_zero(DELAY_SAMPLES);
+        delay_r = alloc_zero(DELAY_SAMPLES);
+    } else {
+        memset(delay_l, 0, DELAY_SAMPLES * sizeof(int16_t));
+        memset(delay_r, 0, DELAY_SAMPLES * sizeof(int16_t));
+    }
     delay_idx = 0;
 }
 
@@ -108,12 +115,23 @@ static uint16_t reverb_wet      = 60;   /* 0..256, mix amount */
 static int8_t   reverb_wet_bias = 0;    /* section-driven additive bias */
 
 static void reverb_init(void) {
-    rev_c1l = alloc_zero(REV_C1L);  rev_c1r = alloc_zero(REV_C1R);
-    rev_c2l = alloc_zero(REV_C2L);  rev_c2r = alloc_zero(REV_C2R);
-    rev_c3l = alloc_zero(REV_C3L);  rev_c3r = alloc_zero(REV_C3R);
-    rev_c4l = alloc_zero(REV_C4L);  rev_c4r = alloc_zero(REV_C4R);
-    rev_ap1l = alloc_zero(REV_AP1L); rev_ap1r = alloc_zero(REV_AP1R);
-    rev_ap2l = alloc_zero(REV_AP2L); rev_ap2r = alloc_zero(REV_AP2R);
+    /* Idempotent: arena-allocate comb/all-pass buffers on first call;
+       subsequent calls clear the existing buffers and reset cursors. */
+    if (!rev_c1l) {
+        rev_c1l = alloc_zero(REV_C1L);  rev_c1r = alloc_zero(REV_C1R);
+        rev_c2l = alloc_zero(REV_C2L);  rev_c2r = alloc_zero(REV_C2R);
+        rev_c3l = alloc_zero(REV_C3L);  rev_c3r = alloc_zero(REV_C3R);
+        rev_c4l = alloc_zero(REV_C4L);  rev_c4r = alloc_zero(REV_C4R);
+        rev_ap1l = alloc_zero(REV_AP1L); rev_ap1r = alloc_zero(REV_AP1R);
+        rev_ap2l = alloc_zero(REV_AP2L); rev_ap2r = alloc_zero(REV_AP2R);
+    } else {
+        memset(rev_c1l, 0, REV_C1L * 2); memset(rev_c1r, 0, REV_C1R * 2);
+        memset(rev_c2l, 0, REV_C2L * 2); memset(rev_c2r, 0, REV_C2R * 2);
+        memset(rev_c3l, 0, REV_C3L * 2); memset(rev_c3r, 0, REV_C3R * 2);
+        memset(rev_c4l, 0, REV_C4L * 2); memset(rev_c4r, 0, REV_C4R * 2);
+        memset(rev_ap1l, 0, REV_AP1L * 2); memset(rev_ap1r, 0, REV_AP1R * 2);
+        memset(rev_ap2l, 0, REV_AP2L * 2); memset(rev_ap2r, 0, REV_AP2R * 2);
+    }
     i_c1l = i_c2l = i_c3l = i_c4l = 0;
     i_c1r = i_c2r = i_c3r = i_c4r = 0;
     i_ap1l = i_ap2l = i_ap1r = i_ap2r = 0;

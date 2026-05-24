@@ -461,7 +461,10 @@ int16_t voice_step(Voice *v) {
 static Voice *pool;
 
 void voice_pool_init(void) {
-    pool = arena_alloc(N_VOICES * sizeof(Voice));
+    /* Idempotent: only arena-allocate on the first call so test
+       binaries can call this from each TEST without draining the
+       arena. Re-init zeros the voice fields either way. */
+    if (!pool) pool = arena_alloc(N_VOICES * sizeof(Voice));
     for (int i = 0; i < N_VOICES; i++) voice_init(&pool[i]);
 }
 
