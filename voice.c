@@ -137,6 +137,18 @@ void voice_init(Voice *v) {
     v->svf_bp = 0;
 }
 
+/* Additive-synth profile table. 4 profiles x 8 partial amplitudes.
+   See add_step below for the per-partial math. Defined here (rather
+   than next to add_step) so voice_trigger's VOICE_ADD branch can
+   point u.add.amps at row 0 on trigger. */
+#define N_ADD_PROFILES 4
+static const uint8_t ADD_PROFILES[N_ADD_PROFILES][8] = {
+    /* Hammond */ {  64,  64,  32,  32,  32,  16,   8,   8 },  /* sum 256 */
+    /* Square  */ { 128,   0,  64,   0,  32,   0,  16,   0 },  /* sum 240 */
+    /* Strings */ { 128,  64,  32,  16,   8,   4,   2,   2 },  /* sum 256 */
+    /* Brass   */ {  64,  64,  64,  48,  32,  16,   8,   4 },  /* sum 300 */
+};
+
 void voice_trigger(Voice *v, uint8_t note, uint8_t type, uint8_t role) {
     v->type = type;
     v->note = note;
@@ -182,6 +194,13 @@ void voice_trigger(Voice *v, uint8_t note, uint8_t type, uint8_t role) {
         v->u.wt.phase    = 0;
         v->u.wt.inc      = note_phase_inc[note];
         v->u.wt.position = 0;
+    } else if (type == VOICE_ADD) {
+        /* Additive: 8 phase accumulators, each at k*fundamental.
+           First-cut profile is fixed (Hammond); a future PR can rotate
+           profile per trigger / per section / via mutation. */
+        for (int k = 0; k < 8; k++) v->u.add.phase[k] = 0;
+        v->u.add.inc_base = note_phase_inc[note];
+        v->u.add.amps     = ADD_PROFILES[0];
     } else {
         v->u.fm.phase_c   = 0;
         v->u.fm.phase_m   = 0;
@@ -202,6 +221,22 @@ static int16_t ks_step(Voice *v) {
     v->u.ks.buf[idx] = avg;
     v->u.ks.idx = next;
     return a;
+}
+
+/* Additive synthesis step. 8 partials at integer multiples of the
+   fundamental, each weighted by ADD_PROFILES[idx][k]. Output range
+   is bounded because the profile amplitudes sum to ~256 and the
+   sin_table peak is ~24576, so the >>8 puts the result in int16
+   range; sat16 catches the rare overshoot at the brass profile
+   (sum 300). Profile selection is one indirection (u.add.amps). */
+static int16_t add_step(Voice *v) {
+    int32_t out = 0;
+    for (int k = 0; k < 8; k++) {
+        int16_t s = sin_table[v->u.add.phase[k] >> 22];
+        out += (int32_t)s * v->u.add.amps[k];
+        v->u.add.phase[k] += v->u.add.inc_base * (uint32_t)(k + 1);
+    }
+    return sat16(out >> 8);
 }
 
 /* Wavetable oscillator. Reads from WAVETABLE[N_WT_WAVES][WT_WAVE_LEN]
@@ -411,6 +446,7 @@ int16_t voice_step(Voice *v) {
         v->u.wt.position = (uint16_t)(((uint32_t)v->lfo_phase >> 16) * (N_WT_WAVES * 256u) >> 16);
         raw = wt_step(v);
     }
+    else if (v->type == VOICE_ADD)  raw = add_step(v);
     else                            raw = 0;
     uint16_t env = env_step(v);
     fenv_step(v);

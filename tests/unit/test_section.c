@@ -80,9 +80,9 @@ TEST(section_name_strings_are_set) {
 TEST(section_chord_voice_type_per_section) {
     section_init();
     section_step(0);    ASSERT_EQ(section_chord_voice_type(), VOICE_WT);
-    section_step(24);   ASSERT_EQ(section_chord_voice_type(), VOICE_WT);
+    section_step(24);   ASSERT_EQ(section_chord_voice_type(), VOICE_ADD);
     section_step(48);   ASSERT_EQ(section_chord_voice_type(), VOICE_FM);
-    section_step(72);   ASSERT_EQ(section_chord_voice_type(), VOICE_FM);
+    section_step(72);   ASSERT_EQ(section_chord_voice_type(), VOICE_WT);
 }
 
 int main(void) {

@@ -10,8 +10,11 @@
    noise/sine percussion generator whose flavor depends on a sub-type
    passed through note: 0 = kick, 1 = snare, 2 = hihat. WT (wavetable)
    reads from a build-time table of 8 morphed waveforms with the
-   position swept by the per-voice pan LFO for animated pad timbres. */
-enum { VOICE_OFF = 0, VOICE_KS, VOICE_FM, VOICE_DRUM, VOICE_WT };
+   position swept by the per-voice pan LFO for animated pad timbres.
+   ADD (additive) sums 8 sinusoidal partials at integer harmonics with
+   per-partial amplitudes from one of several drawbar-style profiles
+   for organ / strings / brass character. */
+enum { VOICE_OFF = 0, VOICE_KS, VOICE_FM, VOICE_DRUM, VOICE_WT, VOICE_ADD };
 enum { ENV_OFF = 0, ENV_A, ENV_D, ENV_R };
 enum { ROLE_BASS = 0, ROLE_CHORD, ROLE_MELODY, ROLE_DRUM };
 enum { DRUM_KICK = 0, DRUM_SNARE, DRUM_HIHAT };
@@ -78,6 +81,11 @@ typedef struct {
             uint16_t position;    /* 0..(N_WT_WAVES-1)*256; lerps between */
                                   /* adjacent waves at position>>8 + frac */
         } wt;
+        struct {
+            uint32_t phase[8];    /* one phase per partial */
+            uint32_t inc_base;    /* fundamental phase increment */
+            const uint8_t *amps;  /* points into ADD_PROFILES[][8] */
+        } add;
     } u;
 } Voice;
 
