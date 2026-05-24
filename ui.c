@@ -266,6 +266,8 @@ static void build_status_row(char *buf, int *p) {
         static const char *modes[4] = { "LP", "HP", "BP", "NO" };
         append_str(buf, p, modes[voice_get_filter_mode() & 3u]);
     }
+    append_str(buf, p, " " COL_GREEN "Lm:" COL_WHITE);
+    append_num(buf, p, compressor_get_threshold());
 
     append_str(buf, p, COL_RESET);
     buf[(*p)++] = '\r'; buf[(*p)++] = '\n';
