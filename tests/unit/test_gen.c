@@ -251,6 +251,30 @@ TEST(gen_step_many_bars_keeps_state_valid) {
     }
 }
 
+TEST(gen_long_render_exercises_motif_replay_and_accessors) {
+    /* The motif replay branch in schedule_melody, the snap_to_active_mask
+       helper, and several gen_get_* accessors only run during long-
+       form playback. This test renders ~150 bars (~14.4M samples) so
+       motif replay statistically must fire (replay-trigger gate fires
+       after MOTIF_REPLAY_MIN_GAP=30 bars with 25% per-bar probability;
+       missing all 120 trigger opportunities has probability ~3e-15). */
+    ensure_pool();
+    gen_seed(7);
+    gen_init();
+    int saw_replay = 0;
+    for (int i = 0; i < 14400000; i++) {
+        gen_step();
+        if (gen_motif_replaying()) saw_replay = 1;
+    }
+    ASSERT_TRUE(saw_replay);
+    /* Accessors return valid values - covers the accessor lines. */
+    ASSERT_TRUE(gen_get_chord_root() < 7);
+    ASSERT_TRUE(gen_get_tension() <= 255);
+    const char *name = gen_get_section_name();
+    ASSERT_TRUE(name != NULL);
+    ASSERT_TRUE(gen_get_step() < 16);
+}
+
 int main(void) {
     return RUN_ALL();
 }

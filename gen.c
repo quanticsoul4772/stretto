@@ -180,27 +180,6 @@ static uint32_t ca_step(uint32_t row, uint8_t rule) {
     return next;
 }
 
-/* 2nd-order Markov walk: pick next degree weighted by the
-   (prev_prev, prev) context row, restricted to the active mask.
-   Falls back to prev if the active row sums to zero (defensive;
-   active mask is guaranteed non-empty upstream). */
-static uint8_t markov2_next(uint8_t prev_prev, uint8_t prev, uint8_t active_mask) {
-    const uint8_t *row = markov2[prev_prev % 7u][prev % 7u];
-    uint16_t sum = 0;
-    for (int i = 0; i < 7; i++) {
-        if (active_mask & (1u << i)) sum += row[i];
-    }
-    if (sum == 0) return prev;
-    uint16_t pick = (uint16_t)(prng() % sum);
-    for (int i = 0; i < 7; i++) {
-        if (active_mask & (1u << i)) {
-            if (pick < row[i]) return (uint8_t)i;
-            pick = (uint16_t)(pick - row[i]);
-        }
-    }
-    return prev;
-}
-
 /* Snap an arbitrary degree (0..6) to the nearest in-mask degree.
    Used by motif replay since the captured phrase's degrees may not
    match the current bar's active mask (CA has moved on since
@@ -228,7 +207,7 @@ static void markov2_init(void) {
 }
 
 /* 2nd-order Markov walk with interval-bias against the main melody's
-   most recent degree. Same algorithm as markov2_next, but each
+   most recent degree. Same algorithm as markov2_next_voiced, but each
    per-degree row weight is multiplied by a consonance factor before
    sampling. Degree-distance (not semitone-distance) because the
    counter-melody is pitched +12 from the main: same-degree means
@@ -239,8 +218,8 @@ static void markov2_init(void) {
      interval 3 (4th/5th):  x 128   - neutral
    If the active-mask row sums to zero after bias (e.g. only the
    unison degree was allowed), falls back to prev unchanged - same
-   safety net as markov2_next, no extra prng() calls. */
-static uint8_t markov2_next_voiced(uint8_t prev_prev, uint8_t prev,
+   safety net as markov2_next_voiced, no extra prng() calls. */
+static uint8_t markov2_next_voiced_voiced(uint8_t prev_prev, uint8_t prev,
                                    uint8_t active_mask, uint8_t main_deg) {
     static const uint8_t bias_by_interval[4] = { 0u, 64u, 192u, 128u };
     const uint8_t *row = markov2[prev_prev % 7u][prev % 7u];
@@ -625,7 +604,7 @@ static inline void schedule_melody(uint32_t substep_in_bar, uint8_t active_mask)
            since counter is +12), prefers 3rd/6th intervals. The
            counter-melody now sounds responsive to the main line
            instead of an independent parallel stream. */
-        uint8_t next = markov2_next_voiced(cur_degree_counter_prev,
+        uint8_t next = markov2_next_voiced_voiced(cur_degree_counter_prev,
                                            cur_degree_counter,
                                            active_mask, cur_degree);
         cur_degree_counter_prev = cur_degree_counter;
