@@ -517,7 +517,7 @@ static inline void schedule_bass(uint32_t substep_in_bar) {
         }
 
         uint8_t bass_note = (uint8_t)(SCALES[cur_scale][deg] - 12);
-        voice_pool_trigger_role(bass_note, VOICE_FM, ROLE_BASS);
+        voice_pool_trigger_role(bass_note, VOICE_SUB, ROLE_BASS);
         return;
     }
 }

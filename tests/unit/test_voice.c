@@ -362,6 +362,44 @@ TEST(voice_step_add_does_not_overflow_int16) {
     ASSERT_TRUE(1);
 }
 
+/* ---- subtractive super-saw voice (VOICE_SUB) ---- */
+
+TEST(voice_trigger_sub_sets_state) {
+    Voice v;
+    voice_init(&v);
+    voice_trigger(&v, 36, VOICE_SUB, ROLE_BASS);
+    ASSERT_EQ(v.type, VOICE_SUB);
+    ASSERT_EQ(v.role, ROLE_BASS);
+    ASSERT_EQ(v.env_phase, ENV_A);
+    ASSERT_EQ(v.u.sub.phase[0], 0);
+    ASSERT_EQ(v.u.sub.phase[1], 0);
+    ASSERT_EQ(v.u.sub.phase[2], 0);
+    ASSERT_TRUE(v.u.sub.inc[0] > 0);
+    /* Detuned copies bracket the center: inc[1] > inc[0] > inc[2]. */
+    ASSERT_TRUE(v.u.sub.inc[1] > v.u.sub.inc[0]);
+    ASSERT_TRUE(v.u.sub.inc[2] < v.u.sub.inc[0]);
+}
+
+TEST(voice_step_sub_produces_audio) {
+    Voice v;
+    voice_init(&v);
+    voice_trigger(&v, 40, VOICE_SUB, ROLE_BASS);
+    int32_t peak = peak_over_n(&v, 4800);
+    ASSERT_TRUE(peak > 1000);
+}
+
+TEST(voice_step_sub_phases_diverge) {
+    /* Detuned increments must walk the 3 phases out of lockstep so the
+       super-saw thickening is real rather than a single-oscillator. */
+    Voice v;
+    voice_init(&v);
+    voice_trigger(&v, 40, VOICE_SUB, ROLE_BASS);
+    for (int i = 0; i < 9600; i++) voice_step(&v);
+    ASSERT_TRUE(v.u.sub.phase[0] != v.u.sub.phase[1]);
+    ASSERT_TRUE(v.u.sub.phase[0] != v.u.sub.phase[2]);
+    ASSERT_TRUE(v.u.sub.phase[1] != v.u.sub.phase[2]);
+}
+
 int main(void) {
     return RUN_ALL();
 }

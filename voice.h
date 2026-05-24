@@ -13,8 +13,11 @@
    position swept by the per-voice pan LFO for animated pad timbres.
    ADD (additive) sums 8 sinusoidal partials at integer harmonics with
    per-partial amplitudes from one of several drawbar-style profiles
-   for organ / strings / brass character. */
-enum { VOICE_OFF = 0, VOICE_KS, VOICE_FM, VOICE_DRUM, VOICE_WT, VOICE_ADD };
+   for organ / strings / brass character. SUB (subtractive) sums 3
+   slightly-detuned band-limited saws (super-saw style) for a thick
+   bass texture; sent through the existing per-voice SVF for filter
+   shaping. */
+enum { VOICE_OFF = 0, VOICE_KS, VOICE_FM, VOICE_DRUM, VOICE_WT, VOICE_ADD, VOICE_SUB };
 enum { ENV_OFF = 0, ENV_A, ENV_D, ENV_R };
 enum { ROLE_BASS = 0, ROLE_CHORD, ROLE_MELODY, ROLE_DRUM };
 enum { DRUM_KICK = 0, DRUM_SNARE, DRUM_HIHAT };
@@ -86,6 +89,10 @@ typedef struct {
             uint32_t inc_base;    /* fundamental phase increment */
             const uint8_t *amps;  /* points into ADD_PROFILES[][8] */
         } add;
+        struct {
+            uint32_t phase[3];    /* one phase per detuned oscillator */
+            uint32_t inc[3];      /* base, base + ~0.78%, base - ~0.78% */
+        } sub;
     } u;
 } Voice;
 

@@ -201,6 +201,19 @@ void voice_trigger(Voice *v, uint8_t note, uint8_t type, uint8_t role) {
         for (int k = 0; k < 8; k++) v->u.add.phase[k] = 0;
         v->u.add.inc_base = note_phase_inc[note];
         v->u.add.amps     = ADD_PROFILES[0];
+    } else if (type == VOICE_SUB) {
+        /* Subtractive super-saw: 3 detuned band-limited saws.
+           Detune ratio ~0.78% (inc >> 7) keeps beating slow enough to
+           feel like phase movement rather than vibrato. Source wave is
+           WAVETABLE[4] (band-limited 8-harmonic saw) so we add no new
+           .rodata; the SVF further shapes the spectrum. */
+        uint32_t base = note_phase_inc[note];
+        v->u.sub.phase[0] = 0;
+        v->u.sub.phase[1] = 0;
+        v->u.sub.phase[2] = 0;
+        v->u.sub.inc[0] = base;
+        v->u.sub.inc[1] = base + (base >> 7);
+        v->u.sub.inc[2] = base - (base >> 7);
     } else {
         v->u.fm.phase_c   = 0;
         v->u.fm.phase_m   = 0;
@@ -256,6 +269,21 @@ static int16_t wt_step(Voice *v) {
     int16_t s = (int16_t)(a + (((int32_t)(b - a) * (int32_t)wave_frac) >> 8));
     v->u.wt.phase += v->u.wt.inc;
     return s;
+}
+
+/* Super-saw subtractive step. Sums 3 detuned band-limited saw
+   oscillators (WAVETABLE[4]) and averages. Output then feeds the
+   per-voice SVF for spectral shaping. Detune is static (no LFO
+   modulation) - bass slots have lfo_inc = 0 anyway, and steady
+   detuning is what gives the genre-defining "wide" character. */
+static int16_t sub_step(Voice *v) {
+    int32_t out = 0;
+    for (int k = 0; k < 3; k++) {
+        uint32_t ph = (v->u.sub.phase[k] >> 22) & 0xFFu;
+        out += WAVETABLE[4][ph];
+        v->u.sub.phase[k] += v->u.sub.inc[k];
+    }
+    return (int16_t)(out / 3);
 }
 
 static int16_t fm_step(Voice *v) {
@@ -447,6 +475,7 @@ int16_t voice_step(Voice *v) {
         raw = wt_step(v);
     }
     else if (v->type == VOICE_ADD)  raw = add_step(v);
+    else if (v->type == VOICE_SUB)  raw = sub_step(v);
     else                            raw = 0;
     uint16_t env = env_step(v);
     fenv_step(v);
