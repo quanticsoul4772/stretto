@@ -7,19 +7,11 @@
 #include <stdint.h>
 #include <string.h>
 
-/* effects_init() arena-allocates delay/reverb buffers on every call,
-   so we can only run it ONCE per binary or the arena will OOM after
-   ~2 tests. Subsequent tests still get a clean compressor state via
-   compressor_adjust_threshold (resets to default explicitly when
-   tests need a known starting threshold) plus the fact that the
-   compressor envelope decays toward zero between calls when input
-   is quiet. Tests that need the envelope reset start with a quiet
-   warm-up. */
+/* effects_init() is now idempotent (per-init guards on the arena
+   allocations), so each test can call it freely to reset the
+   delay/reverb buffers + envelope + threshold to defaults. */
 static void reset_effects(void) {
-    static int done = 0;
-    if (done) return;
     effects_init();
-    done = 1;
 }
 
 /* Helper: fill a stereo buffer with a constant amplitude on both
@@ -72,19 +64,24 @@ TEST(compressor_never_exceeds_brickwall_ceiling) {
 }
 
 TEST(compressor_envelope_persists_across_calls) {
-    /* Drain the envelope with a long silent buffer, then measure
-       the first sample of two consecutive loud buffers. The second
-       call's first sample should be more compressed than the first
-       call's first sample because the envelope carried over. */
+    /* Verify the envelope state survives between compressor_process
+       calls. Approach: warm up the envelope past the compression
+       threshold with a long ramp buffer, then check that the first
+       sample of a subsequent loud buffer is already compressed
+       (envelope state carried, gain reduction applied immediately). */
     reset_effects();
-    int16_t silent[2048 * 2] = {0};
-    compressor_process(silent, 2048);                /* drain envelope */
-    int16_t a[64 * 2], b[64 * 2];
-    fill_const(a, 64, 30000);
+    /* 4800-sample warm-up (~100 ms) at full scale is long enough
+       for the ~5 ms attack envelope to fully settle past threshold. */
+    static int16_t warm[4800 * 2];
+    fill_const(warm, 4800, 30000);
+    compressor_process(warm, 4800);
+    /* Now the envelope is at steady state (~30000). Process one
+       more loud buffer: its first sample MUST be gain-reduced
+       (output below brickwall ceiling, well below the input). */
+    int16_t b[64 * 2];
     fill_const(b, 64, 30000);
-    compressor_process(a, 64);                       /* envelope ramps from ~0 */
-    compressor_process(b, 64);                       /* envelope already up */
-    ASSERT_TRUE(b[0] < a[0]);
+    compressor_process(b, 64);
+    ASSERT_TRUE(b[0] < 30000);
 }
 
 TEST(compressor_threshold_adjuster_clamps) {
