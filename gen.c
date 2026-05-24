@@ -542,7 +542,7 @@ static inline void schedule_chord(uint32_t substep_in_bar, uint8_t active_mask) 
         while (note < (int)prev_chord_center - 8) note += 12;
         if (note < 24)  note += 12;
         if (note > 96)  note -= 12;
-        voice_pool_trigger_role((uint8_t)note, VOICE_FM, ROLE_CHORD);
+        voice_pool_trigger_role((uint8_t)note, section_chord_voice_type(), ROLE_CHORD);
         sum += (uint16_t)note;
         count++;
     }

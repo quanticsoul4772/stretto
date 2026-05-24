@@ -1,6 +1,7 @@
 /* Unit tests for section.c. */
 #include "test.h"
 #include "../../section.h"
+#include "../../voice.h"     /* VOICE_FM / VOICE_WT enum values */
 #include <string.h>
 
 TEST(section_starts_at_intro) {
@@ -74,6 +75,14 @@ TEST(section_name_strings_are_set) {
     section_step(24);   ASSERT_TRUE(strcmp(section_name(), "body")  == 0);
     section_step(48);   ASSERT_TRUE(strcmp(section_name(), "tens")  == 0);
     section_step(72);   ASSERT_TRUE(strcmp(section_name(), "res")   == 0);
+}
+
+TEST(section_chord_voice_type_per_section) {
+    section_init();
+    section_step(0);    ASSERT_EQ(section_chord_voice_type(), VOICE_WT);
+    section_step(24);   ASSERT_EQ(section_chord_voice_type(), VOICE_WT);
+    section_step(48);   ASSERT_EQ(section_chord_voice_type(), VOICE_FM);
+    section_step(72);   ASSERT_EQ(section_chord_voice_type(), VOICE_FM);
 }
 
 int main(void) {

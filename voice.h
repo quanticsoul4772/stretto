@@ -8,8 +8,10 @@
 
 /* Voice synthesis types. KS and FM produce pitched notes; DRUM is a
    noise/sine percussion generator whose flavor depends on a sub-type
-   passed through note: 0 = kick, 1 = snare, 2 = hihat. */
-enum { VOICE_OFF = 0, VOICE_KS, VOICE_FM, VOICE_DRUM };
+   passed through note: 0 = kick, 1 = snare, 2 = hihat. WT (wavetable)
+   reads from a build-time table of 8 morphed waveforms with the
+   position swept by the per-voice pan LFO for animated pad timbres. */
+enum { VOICE_OFF = 0, VOICE_KS, VOICE_FM, VOICE_DRUM, VOICE_WT };
 enum { ENV_OFF = 0, ENV_A, ENV_D, ENV_R };
 enum { ROLE_BASS = 0, ROLE_CHORD, ROLE_MELODY, ROLE_DRUM };
 enum { DRUM_KICK = 0, DRUM_SNARE, DRUM_HIHAT };
@@ -70,6 +72,12 @@ typedef struct {
             uint32_t inc;         /* sine increment - decays for pitch sweep */
             uint8_t  drum_type;   /* 0 kick, 1 snare, 2 hihat */
         } drum;
+        struct {
+            uint32_t phase;       /* same accumulator semantics as VoiceFm */
+            uint32_t inc;
+            uint16_t position;    /* 0..(N_WT_WAVES-1)*256; lerps between */
+                                  /* adjacent waves at position>>8 + frac */
+        } wt;
     } u;
 } Voice;
 

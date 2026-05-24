@@ -4,6 +4,7 @@
 #include "sin_table.h"
 #include "env_table.h"
 #include "note_table.h"
+#include "wavetable.h"
 #include <stdint.h>
 
 /* Sample counts calibrated for SAMPLE_RATE = 48000 (formerly 44100):
@@ -174,6 +175,13 @@ void voice_trigger(Voice *v, uint8_t note, uint8_t type, uint8_t role) {
            envelope. inc = 150 * 2^32 / 48000 = 13,421,773.
            Snare/hihat use noise, so inc = 0. */
         v->u.drum.inc = (note == DRUM_KICK) ? 13421773u : 0u;
+    } else if (type == VOICE_WT) {
+        /* Wavetable: single phase accumulator at the note's carrier
+           rate; position starts at 0 and is overwritten per sample in
+           voice_step from the per-voice LFO. */
+        v->u.wt.phase    = 0;
+        v->u.wt.inc      = note_phase_inc[note];
+        v->u.wt.position = 0;
     } else {
         v->u.fm.phase_c   = 0;
         v->u.fm.phase_m   = 0;
@@ -194,6 +202,25 @@ static int16_t ks_step(Voice *v) {
     v->u.ks.buf[idx] = avg;
     v->u.ks.idx = next;
     return a;
+}
+
+/* Wavetable oscillator. Reads from WAVETABLE[N_WT_WAVES][WT_WAVE_LEN]
+   built at compile time by gen_wavetable.c. Position (0..N_WT_WAVES*256)
+   selects between adjacent waves with linear interpolation; the
+   selected mix is then sampled at phase>>22 as an 8-bit index into the
+   256-sample wave. Position is derived from the per-voice pan LFO in
+   voice_step so no extra modulator state is needed. */
+static int16_t wt_step(Voice *v) {
+    uint32_t pos       = v->u.wt.position;
+    uint32_t wave_idx  = (pos >> 8) % N_WT_WAVES;
+    uint32_t wave_frac = pos & 0xFFu;
+    uint32_t next_idx  = (wave_idx + 1u) % N_WT_WAVES;
+    uint32_t ph        = (v->u.wt.phase >> 22) & 0xFFu;
+    int16_t a = WAVETABLE[wave_idx][ph];
+    int16_t b = WAVETABLE[next_idx][ph];
+    int16_t s = (int16_t)(a + (((int32_t)(b - a) * (int32_t)wave_frac) >> 8));
+    v->u.wt.phase += v->u.wt.inc;
+    return s;
 }
 
 static int16_t fm_step(Voice *v) {
@@ -377,6 +404,13 @@ int16_t voice_step(Voice *v) {
     if (v->type == VOICE_KS)        raw = ks_step(v);
     else if (v->type == VOICE_FM)   raw = fm_step(v);
     else if (v->type == VOICE_DRUM) raw = drum_step(v);
+    else if (v->type == VOICE_WT) {
+        /* Map the existing pan LFO (~0.07-0.18 Hz) onto the wavetable
+           position so the timbre sweeps through all 8 waveforms over
+           ~10 s. Zero extra modulator state. */
+        v->u.wt.position = (uint16_t)(((uint32_t)v->lfo_phase >> 16) * (N_WT_WAVES * 256u) >> 16);
+        raw = wt_step(v);
+    }
     else                            raw = 0;
     uint16_t env = env_step(v);
     fenv_step(v);
