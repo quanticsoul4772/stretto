@@ -62,6 +62,13 @@ density.c / .h          Adaptive density: tension = popcount(active)
                         * 18 + gate >> 2. Counter-cyclical biases
                         (gate +/-16, reverb wet +/-32) sum on top of
                         section biases at the gen.c call sites
+motif.c   / .h          Long-term motif memory: ring buffer of the
+                        last 8 four-bar main-melody phrases. Every
+                        ~30 bars with ~25% per-bar probability,
+                        replay one (verbatim or +/-2 diatonic
+                        transpose) in place of L-system output for
+                        the next 4 bars. Pure function of caller-
+                        supplied bar count + PRNG values
 arena.c / .h            static pool[131072], 8-byte-aligned bump allocator
 gen_sin_table.c         build-time: 1024-entry int16 sine LUT (peak 24576)
 gen_env_table.c         build-time: 256-entry uint8 exponential env curve
@@ -260,7 +267,15 @@ Default `wet = 100/256`, `feedback = 140/256` (cap 200/256 to avoid runaway).
 
 ### Soft saturation
 
-Cubic transfer curve `y = x - x^3 / 2^31`. Linear for small `x`; gracefully compresses peaks. Per-channel, last in the chain so any peaks reverb / delay introduce are smoothed before the device.
+Cubic transfer curve `y = x - x^3 / 2^31`. Linear for small `x`; gracefully compresses peaks. Per-channel, second-to-last in the chain (before the compressor) so any peaks reverb / delay introduce are smoothed before dynamics processing.
+
+### Compressor + brickwall limiter
+
+Feed-forward, stereo-linked, runs last in the chain (after `saturate_process`, before `sat16`). Envelope follower tracks `max(|L|, |R|)` so both channels get identical gain reduction (preserves stereo imaging). One-pole IIR with asymmetric coefficients: **~5 ms attack**, **~200 ms release** at 48 kHz. **4:1 ratio** above threshold, **+1 dB makeup gain**, **brickwall ceiling at 32 000** (below int16 max so `sat16` still has margin).
+
+Threshold runtime-tunable in `[8000, 30000]` via `l` / `L` keys; default 20 000. Status row shows current threshold as `Lm:<n>`.
+
+Effect: tames transient stabs (kick on TENSION sections in particular), brings up quiet content slightly via makeup gain, and guarantees no output sample reaches int16 boundary — clip count goes from "≤100 per render" to zero on every seed.
 
 ## Generative path
 
@@ -366,9 +381,32 @@ Pairing Rule 110 (long-period repeats alone) with Rule 30 (pure randomness alone
 
 ### Markov chain (counter-melody)
 
-`markov[7][7]` of unnormalized `uint8_t` weights. `markov_next(cur, mask)` sums weights for columns in the active mask, draws `prng() % sum`, walks. Initial weights hand-tuned: stepwise motion weighted moderate, strong cadences (dominant/leading → tonic) weighted high, diagonal zero (no stuck self-transitions). `mutate()` modifies cells over time.
+`markov2[7][7][7]` — **2nd-order** Markov: indexed by `[prev_prev][prev][next]`. 343-byte runtime table seeded by replicating the 1st-order `MARKOV_SEED[7][7]` across the prev_prev axis at `gen_init` time so day 1 produces the same musical character as the original 1st-order chain. `mutate()` drifts individual cells, so distinct `(prev_prev, prev)` contexts evolve different transition tendencies over the piece.
 
-Used **only for the counter-melody** since the L-system phrase generator replaced Markov on the main melody. Two voices sharing the same active mask but driven by different generators give the listener a phrased line (L-system, main) over a walked line (Markov, counter) — automatic stylistic contrast.
+Used **only for the counter-melody** since the L-system phrase generator replaced Markov on the main melody. The walker (`markov2_next_voiced`) is biased against the main melody's most recent degree (`cur_degree`) using a per-interval consonance factor:
+
+| interval (degrees) | bias × | musical meaning |
+|---|---|---|
+| 0 | 0 | unison — avoided (counter is +12, same pitch class) |
+| 1 (2nd / 7th) | 64 | mild dissonance, low weight |
+| 2 (3rd / 6th) | 192 | preferred consonance |
+| 3 (4th / 5th) | 128 | neutral |
+
+Effect: counter-melody sounds responsive to the main line instead of an independent parallel stream. The fallback when the per-bias row sums to zero is to return `prev` unchanged (same safety net as the un-biased `markov2_next`).
+
+### Long-term motifs
+
+`motif.c` holds an 8-slot ring buffer of 64-degree arrays (`MOTIF_NO_NOTE = 0xFF` for empty positions corresponding to gate-suppressed Euclidean hits). Each phrase is 4 bars × 16 Euclidean slots.
+
+State machine ticked per bar by `motif_bar_step(bar, rng)`:
+
+- **Capture mode** (default): L-system drives the main melody; each fired degree is recorded via `motif_record(step_in_bar, degree)`. When the current phrase fills (4 bars), advance to the next ring slot and clear it.
+- **Replay-trigger gate**: after `MOTIF_REPLAY_MIN_GAP = 30` bars since last replay AND `(rng & 0xFF) < 64` (≈ 25% per bar), enter replay mode. Pick a random ring slot (avoiding the currently-capturing one). Pick a transpose from `{0, 0, +2, −2}` (50% verbatim, 25% +2, 25% −2).
+- **Replay mode**: `motif_replay_at(step_in_bar)` returns the recorded degree (transposed mod 7) or `MOTIF_NO_NOTE`. Caller in `schedule_melody` snaps to the current active mask before triggering. After `MOTIF_PHRASE_BARS = 4` ticks the state returns to capture, overwriting the next ring slot.
+
+Counter-melody continues its 2nd-order Markov walk during replay (inter-voice listening still biases away from unison). Status row shows `Mo:c` / `Mo:r`.
+
+Memory cost: 512 B ring buffer + ~13 B state.
 
 ### Euclidean rhythm
 
@@ -491,17 +529,20 @@ Approximate line coverage:
 | File | Coverage | CI gate |
 |---|---|---|
 | `arena.c` | 100% (OOM exit covered via fork) | ≥95% |
-| `effects.c` | 100% (test_keys exercises every setter) | ≥95% |
+| `effects.c` | 100% (test_effects + test_keys) | ≥95% |
 | `voice.c` | 98% | ≥95% |
-| `gen.c` | 95% | ≥94% |
+| `gen.c` | 87% | ≥85% |
 | `lsystem.c` | 94% | ≥90% |
-| `chord_progression.c` | 91% | ≥90% |
+| `chord_progression.c` | 93% | ≥90% |
 | `section.c` | 100% | ≥95% |
 | `density.c` | 100% | ≥95% |
+| `motif.c` | 97% | ≥95% |
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
-| `main.c` | 96% | ≥90% |
+| `main.c` | 94% | ≥90% |
 | `ui.c`, `keys.c`, `audio_pulse.c` | — | excluded (interactive; require TTY + audio device) |
+
+Total: 109 unit tests across 12 modules.
 
 The coverage build (`make coverage`) writes every artifact (instrumented `.o`, `.gcno`, `.gcda`, `synth_cov`, `.cov` test binaries) into `build_cov/` so it does not clobber the normal build. `make coverage` and `make test-unit` can be alternated freely without `make clean`. CI's "Coverage gates" step parses the per-file numbers and fails if any drop below the gate.
 
