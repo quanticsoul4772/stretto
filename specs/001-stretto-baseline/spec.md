@@ -4,13 +4,15 @@
 
 **Created**: 2026-05-23
 
-**Status**: Draft
+**Last Updated**: 2026-05-24
+
+**Status**: Active
 
 **Input**: User description: "Spec what's been developed so we can evolve it."
 
 ## Overview
 
-Stretto is a tiny native generative ambient music synthesizer. The listener launches it and hears continuous, deterministic-but-evolving music; optionally records a reproducible WAV file; optionally shapes the texture in real time via keyboard. This spec describes the baseline capability shipped through ~80 PRs and serves as the starting point for future evolution.
+Stretto is a tiny native generative ambient music synthesizer. The listener launches it and hears continuous, deterministic-but-evolving music; optionally records a reproducible WAV file; optionally shapes the texture in real time via keyboard. This spec describes the capability shipped through ~90 PRs and serves as the living baseline for future evolution. It has been updated past the original ~80-PR baseline to cover the voice-architecture expansion (wavetable, additive, super-saw subtractive, portamento) and the per-section voice-palette work (chord voice type, arpeggio, voice-family masking).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -79,19 +81,28 @@ While listening, the user adjusts tempo, gate density, filter cutoff/resonance, 
 ### Functional Requirements
 
 #### Audio engine
-- **FR-001**: System MUST mix exactly 11 voices: 2 bass (FM 1:1), 3 chord (FM 2:1), 3 melody (Karplus-Strong + FM alternating), 3 drum (kick / snare / hihat).
+- **FR-001**: System MUST maintain a pool of 11 voice slots: 2 bass, 3 chord, 3 melody, 3 drum (kick / snare / hihat). Synthesis method per role: bass = super-saw subtractive (VOICE_SUB); chord = section-selected wavetable / additive / FM (see FR-014); melody = Karplus-Strong + FM alternating; drum = synthesized kick / snare / hihat. The number of *audible* families per bar is gated by the active section's voice mask (see FR-017), so fewer than 11 slots may sound at once (notably in INTRO).
 - **FR-002**: System MUST stream interleaved 16-bit stereo PCM at 48 000 Hz to the selected output (PulseAudio on Linux, Win32 waveOut on Windows).
-- **FR-003**: System MUST apply, in order: per-voice ADSR + SVF filter → voice mix → Schroeder reverb → stereo delay → soft cubic saturation.
+- **FR-003**: System MUST apply, in order: per-voice ADSR + SVF filter → voice mix → Schroeder reverb → stereo delay → soft cubic saturation → feed-forward compressor → brickwall limiter (the compressor + limiter stage is specified in detail by `specs/002-master-limiter-compressor`).
 - **FR-004**: System MUST clamp every output sample to int16 range via the shared `sat16()` helper.
+
+#### Voice synthesis methods
+- **FR-005**: Karplus-Strong (VOICE_KS) MUST pluck a noise-seeded delay line with an averaging-filter feedback for melody timbres.
+- **FR-006**: 2-op FM (VOICE_FM) MUST synthesize a carrier modulated by one operator at a per-role carrier:modulator ratio, with the pan LFO detuning both operators together for slow chorus motion.
+- **FR-007**: Wavetable (VOICE_WT) MUST read from a build-time table of 8 morphed single-cycle waveforms (256 samples each), linearly interpolating between adjacent waveforms at a "position" swept by the per-voice pan LFO for an animated pad.
+- **FR-008**: Additive (VOICE_ADD) MUST sum 8 sinusoidal partials at integer multiples of the fundamental, each weighted by one of several drawbar-style amplitude profiles, for organ / strings / brass character.
+- **FR-009**: Subtractive super-saw (VOICE_SUB) MUST sum 3 detuned band-limited saw oscillators (≈±0.78 % detune, reusing the wavetable saw) and feed the result through the existing per-voice SVF.
+- **FR-009a**: Portamento (glide) — when a SUB bass note re-triggers while the previous note's amplitude envelope is still above half the sustain level, the oscillator increment MUST slide linearly to the new note over ~50 ms instead of jumping, preserving phases and envelope (legato). Determinism is preserved (no extra PRNG draws).
 
 #### Generative state
 - **FR-010**: System MUST advance one of six modal scales (Dorian / Lydian / Phrygian / Locrian / Harmonic Minor / Mixolydian) at the user's command and never auto-rotate scale.
 - **FR-011**: System MUST drive the main melody by an L-system grammar over 6 symbols (`u U d D r .`), with 3 hand-tuned characters selectable by mutation.
 - **FR-012**: System MUST drive the counter-melody by a 2nd-order Markov chain (table indexed by previous two degrees), biased away from unison with the most recent main-melody degree and toward 3rd/6th consonances.
 - **FR-013**: System MUST advance a chord-progression Markov chain over the 7 scale-degree functions every 2 bars; bass plays root and fifth of the current chord, with a one-step diatonic approach at every chord change.
-- **FR-014**: System MUST cycle through 4 song sections (intro / body / tension / resolve) on a fixed 96-bar period, crossfading gate / cutoff / reverb / mutation-interval biases over 8 bars at each boundary and pinning kick pattern + L-system character per section.
+- **FR-014**: System MUST cycle through 4 song sections (intro / body / tension / resolve) on a fixed 96-bar period, crossfading gate / cutoff / reverb / mutation-interval biases over 8 bars at each boundary and pinning per section: kick pattern, L-system character, chord voice type (INTRO = wavetable, BODY = additive, TENSION = FM, RESOLVE = wavetable), and chord playback mode (TENSION = arpeggio, others = block chords).
 - **FR-015**: System MUST capture the last 8 four-bar main-melody phrases into a ring buffer and, every 30+ bars with ~25% probability, replay one (verbatim or ±2 diatonic degrees transposed) instead of generating new material.
 - **FR-016**: System MUST drift a single Markov-table cell, one CA bit, Euclidean k values, gate, filter, and L-system character at a mutation interval that varies (1–16 bars) under a 128-bar LFO plus section bias.
+- **FR-017**: System MUST gate which voice families play per section via a voice-family mask. BODY and TENSION play the full ensemble; RESOLVE is drumless (no kick/snare/hihat); INTRO plays a randomized 1–3-voice subset chosen once per 96-bar cycle from a curated set of 8 combos. The INTRO combo selection MUST be seed-deterministic. Masking only silences trigger output — it MUST NOT alter the generative trajectory (PRNG / L-system / Markov / motif state advance identically whether or not a family is audible).
 
 #### Determinism
 - **FR-020**: Given `--seed N`, the system MUST produce byte-identical output across runs on the same platform.
@@ -112,18 +123,18 @@ While listening, the user adjusts tempo, gate density, filter cutoff/resonance, 
 
 #### Memory + budget
 - **FR-050**: System MUST allocate all dynamic-sized buffers from a single 128 KB static arena via `arena_alloc`. No use of `malloc` or `free`.
-- **FR-051**: System MUST package its Windows binary to ≤48 KB via UPX `--ultra-brute` (current 32 KB).
-- **FR-052**: System MUST strip its Linux binary to ≤24 KB.
+- **FR-051**: System MUST package its Windows binary to ≤48 KB via UPX `--ultra-brute` (CI-enforced budget; last measured packed ~37 KB).
+- **FR-052**: System SHOULD strip its Linux binary toward a 24 KB soft target (Makefile `size` warns past it; not CI-failing). The libpulse-linked binary is currently ~40 KB.
 
 #### Testing
 - **FR-060**: System MUST pass a bit-exact 16-second SHA-256 regression against `golden/regression_16s.sha256`.
-- **FR-061**: System MUST pass a 4-seed multi-render integration that checks each output is deterministic, all four hashes are distinct, and per-render peak / RMS / clip-count fall within documented bounds.
+- **FR-061**: System MUST pass a 4-seed multi-render integration that checks each output is deterministic, all four hashes are distinct, and per-render audio characteristics fall within bounds: peak in [500, 32767), clip count ≤ 100, at least half the samples non-silent, spectral centroid in [100, 5000] Hz, and zero-crossing rate in [0.01, 0.30]. (RMS is measured and reported but not hard-gated, since the randomized INTRO palette legitimately varies loudness.)
 - **FR-062**: System MUST pass a live-mode smoke test that spawns under a 2-second timeout and exits with code 0, 124, or 143 (no segfault).
-- **FR-063**: System MUST maintain ≥85 % line coverage on each measured pure-synth module (gates per Constitution Principle VI).
+- **FR-063**: System MUST maintain per-module line-coverage gates on each measured pure-synth module (per Constitution Principle VI): 95 % for arena / effects / voice / section / density / motif / mixer; 90 % for gen / lsystem / chord_progression / wav / main.
 
 ### Key Entities
 
-- **Voice**: One of 11 slot-allocated audio sources (bass / chord / melody / drum). Holds type tag (KS / FM / drum), envelope phase, SVF state, peak normalizer gain, pan, LFO phase, and a per-type union of synthesis state. Triggered by `voice_pool_trigger_role` or `voice_pool_trigger_drum`. Mixed by `voice_pool_mix`.
+- **Voice**: One of 11 slot-allocated audio sources (bass / chord / melody / drum). Holds type tag (KS / FM / DRUM / WT / ADD / SUB), envelope phase, SVF state, peak normalizer gain, pan, LFO phase, glide state (`inc_target` / `glide_remain` for SUB portamento), and a per-type union of synthesis state. Triggered by `voice_pool_trigger_role` or `voice_pool_trigger_drum`. Mixed by `voice_pool_mix`.
 
 - **Scale**: One of six 7-tone modal tables in `SCALES[6][7]`, mapping degree index (0..6) to MIDI note. Selected by `cur_scale`; cycled by user.
 
@@ -131,7 +142,7 @@ While listening, the user adjusts tempo, gate density, filter cutoff/resonance, 
 
 - **Active mask**: A 7-bit field combining `ca_row` and `ca_harm` per substep; allowed scale degrees for the current beat. Forced non-empty.
 
-- **Section**: One of four (INTRO / BODY / TENSION / RESOLVE), advanced per bar, biasing gate / cutoff / reverb / mutation-interval and pinning kick pattern + L-system character.
+- **Section**: One of four (INTRO / BODY / TENSION / RESOLVE), advanced per bar, biasing gate / cutoff / reverb / mutation-interval and pinning kick pattern, L-system character, chord voice type, chord playback mode (block / arpeggio), and a voice-family mask (which families are audible; INTRO's mask is a per-cycle randomized 1–3-voice combo).
 
 - **Motif phrase**: A 64-slot array of degrees (with `MOTIF_NO_NOTE` for empty positions), capturing one 4-bar main-melody phrase. Ring buffer of 8.
 
@@ -143,8 +154,8 @@ While listening, the user adjusts tempo, gate density, filter cutoff/resonance, 
 
 - **SC-001**: Listener launches `./synth` and hears continuous, evolving music within 1 second; the music does not silence, crash, or saturate within 30 minutes of unattended runtime.
 - **SC-002**: Two `--seed N` renders of equal length produce byte-identical sha256 hashes on the same platform.
-- **SC-003**: A 4-second render's peak amplitude is between 500 and 32 000 (inclusive of normalisation), RMS is between ~800 and ~1300, and clip count is below 100 samples.
-- **SC-004**: The packed Windows binary is ≤48 KB on every CI run (currently 32 KB; 50 % headroom for future features).
+- **SC-003**: A 4-second render's peak amplitude is between 500 and 32 767 (exclusive of full-scale), clip count is below 100 samples, spectral centroid is within [100, 5000] Hz, and zero-crossing rate is within [0.01, 0.30]. (RMS varies by INTRO palette — masked intros measure ~500–700, full sections ~1000–1300 — and is reported rather than gated.)
+- **SC-004**: The packed Windows binary is ≤48 KB on every CI run (last measured ~37 KB; headroom maintained for future features).
 - **SC-005**: 100 % of merged PRs pass CI's bit-exact regression, multi-seed integration, smoke test, per-file coverage gates, and Windows cross-compile + UPX pack.
 - **SC-006**: A new listener who plays `./synth` for at least 10 minutes can identify at least one section change (audibly) and at least one repeated melodic phrase (audibly) without instruction.
 - **SC-007**: Live-mode key responses are perceptible within one buffer (~21 ms) of the keypress.
