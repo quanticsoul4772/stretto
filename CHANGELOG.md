@@ -1,5 +1,31 @@
 # Changelog
 
+## Recent: per-section voice-family masking
+
+- Sections now differ by which voice families play, not just by parameter bias. `section.c` adds a 7-bit voice-family mask (`section_voice_mask`): BODY/TENSION full ensemble, RESOLVE drumless, INTRO a randomized 1–3-voice subset from `INTRO_COMBOS[8]` chosen once per 96-bar cycle (seed-deterministic via a `prng()` draw in `schedule_bar_boundary` + the opening one in `gen_init`).
+- `gen.c` schedulers consult the mask before triggering — but only the trigger calls are gated, never the PRNG / L-system / Markov / motif updates, so masking silences a voice without altering the rest of the piece.
+- INTRO now opens sparse and oriented instead of full-density. Measured INTRO-vs-BODY RMS ratio 0.41–0.87 across seeds.
+
+## Recent: portamento (glide) on super-saw bass
+
+- Legato SUB bass re-triggers (previous note still above half sustain) slide ~50 ms to the new pitch instead of jumping. New top-level Voice fields `inc_target` / `glide_remain`; `voice_step` walks the oscillator increment linearly, rebuilding the ±detune each step. No extra PRNG draws.
+
+## Recent: chord arpeggio (TENSION)
+
+- TENSION chords arpeggiate — 8 events/bar cycling up the 3 voicing notes — instead of block triads. `section_chord_arpeggio` gates it; other sections stay block. Coverage-render bumped 16 s → 110 s so the TENSION branch is exercised.
+
+## Recent: super-saw subtractive bass
+
+- Bass switches from 1:1 FM to VOICE_SUB: 3 detuned band-limited saws (≈±0.78 %, reusing `WAVETABLE[4]`) summed and run through the SVF. Thicker, wider bass. No new `.rodata`.
+
+## Recent: additive chord voice (BODY)
+
+- VOICE_ADD: 8 sinusoidal partials at integer harmonics weighted by one of 4 drawbar profiles (`ADD_PROFILES[4][8]`). Used by the BODY section for an organ-like pad.
+
+## Recent: wavetable chord voice (INTRO/RESOLVE)
+
+- VOICE_WT: reads `WAVETABLE[8][256]` (built by `gen_wavetable.c`), linearly interpolating between adjacent single-cycle waveforms at a position swept by the per-voice pan LFO — an animated morphing pad. Section state machine selects chord synthesis per section (INTRO/RESOLVE wavetable, BODY additive, TENSION FM).
+
 ## Recent: master compressor + brickwall limiter
 
 - New `compressor_process()` in `effects.c`. Feed-forward, stereo-linked envelope (drives both channels from `max(|L|, |R|)`). 4:1 ratio above threshold, ~5 ms attack / ~200 ms release at 48 kHz, +1 dB makeup gain, brickwall ceiling at 32 000.

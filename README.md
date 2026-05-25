@@ -4,8 +4,8 @@ A generative music synthesizer. Plays live on Linux (PulseAudio) or Windows (wav
 
 | Binary | Size |
 |---|---|
-| Linux `synth` (stripped) | ~29 KB |
-| Windows `stretto.exe` (stripped + UPX) | ~30 KB |
+| Linux `synth` (stripped, links libpulse) | ~39 KB |
+| Windows `stretto.exe` (stripped + UPX) | ~37 KB |
 
 ## Build
 
@@ -20,8 +20,8 @@ Produces `./synth`. Needs `gcc`, `make`, `libpulse-dev`.
 ### Windows (cross-compile from Linux / WSL)
 
 ```
-make win        # produces stretto.exe (~210 KB, stripped)
-make winpack    # additionally produces stretto.packed.exe (~30 KB, UPX-packed)
+make win        # produces stretto.exe (~215 KB, stripped)
+make winpack    # additionally produces stretto.packed.exe (~37 KB, UPX-packed)
 ```
 
 Needs `gcc-mingw-w64-x86-64` and `upx`. The packed `.exe` is a single-file native Windows binary — no WSL, no runtime dependencies beyond the bundled Windows kernel + multimedia DLLs.
@@ -117,17 +117,18 @@ The oscilloscope below paints with a heat-map palette: dim (silence) → blue �
 
 ## What you'll hear
 
-- **Bass** (FM, 1:1 ratio, 2 voices) — 4-event "bouncing" pattern per bar: substeps 0, 18, 24, 42. Plays the current chord's root and fifth, alternating, swapping order per bar. At every chord change, plays a one-step diatonic approach note in the direction of the previous chord root before resolving — walking-bass feel instead of jumping between roots.
-- **Chord** (FM, 2:1 ratio, 3 voices) — 4 voicings per bar at substeps 0, 12, 24, 36. Voicing cycles through triad / 7th / sus4 / sus2 / inv1 / inv2 per bar; root walks the chord-progression Markov chain (advances every 2 bars). Voice leading octave-shifts each pitch toward the previous chord's centroid.
+- **Bass** (super-saw subtractive, 2 voices) — 3 detuned saw oscillators (≈±0.78 %) summed and run through the SVF, for a thick, wide bass. 4-event "bouncing" pattern per bar: substeps 0, 18, 24, 42. Plays the current chord's root and fifth, alternating, swapping order per bar. At every chord change, plays a one-step diatonic approach note before resolving — walking-bass feel. Legato re-triggers **glide** (~50 ms portamento) into the new pitch.
+- **Chord** (section-selected synthesis, 3 voices) — 4 voicings per bar at substeps 0, 12, 24, 36 (block) or 8 arpeggiated notes per bar in TENSION. The synthesis method changes per section: **wavetable** (INTRO/RESOLVE, animated morphing pad), **additive** (BODY, drawbar-organ pad), **FM** (TENSION, glassy/cutting). Voicing cycles triad / 7th / sus4 / sus2 / inv1 / inv2 per bar; root walks the chord-progression Markov chain (every 2 bars); voice leading octave-shifts each pitch toward the previous chord's centroid.
 - **Melody** (Karplus-Strong + FM alternating, 3 voices) — Euclidean rhythm on a 16-step grid, **L-system walker** producing phrased contours over scale degrees, probability-gated. A motif memory captures the last 8 four-bar phrases; every ~30 bars one is replayed (verbatim or ±2 diatonic transpose) instead of generating new. A counter-melody one octave up runs an independent **2nd-order Markov** chain (3-degree context) biased away from unison with the main melody and toward 3rd/6th consonances.
 - **Drums** (3 voices: kick, snare, hihat) — kick is a sine pitch-sweep with attack click; snare is noise-dominant with a 200 Hz body; hihat is pure noise. Each drum cycles its own pattern bank — kick 4 / snare 3 / hihat 5 patterns → LCM of 60 bars before exact repeat. The song-section state machine pins the kick pattern per section.
+- **Section voice palette** — which families are audible changes per section. BODY and TENSION play the full ensemble; **RESOLVE is drumless** (ambient close); **INTRO opens sparse** — a randomized 1–3-voice subset chosen once per 96-bar cycle from 8 curated combos, so each intro is a different minimal palette before the full mix arrives.
 - **Master bus** — reverb (4-comb Schroeder + 2 all-pass per channel) → stereo delay (250 ms, runtime wet/feedback) → soft cubic saturation → **feed-forward compressor with brickwall limiter** (4:1 above threshold, ~5 ms attack / ~200 ms release, stereo-linked envelope, ceiling at 32 000). Compressor tames transients (kick on TENSION sections) and guarantees no int16 clip.
 
 The whole texture sits in a Schroeder reverb tail and a 250 ms stereo delay, with soft cubic saturation at the master bus.
 
 ## Architecture summary
 
-11 voices share a single sample clock at 48 kHz. The audio is mixed to stereo, run through reverb → delay → soft saturation, and either fed to `pa_stream_write` (Linux) / `waveOutWrite` (Windows) or written to a WAV file.
+11 voice slots share a single sample clock at 48 kHz. The audio is mixed to stereo, run through reverb → delay → soft saturation → compressor + brickwall limiter, and either fed to `pa_stream_write` (Linux) / `waveOutWrite` (Windows) or written to a WAV file. Each voice slot is one of six synthesis types (Karplus-Strong, 2-op FM, wavetable, additive, super-saw subtractive, or a drum generator); the per-section voice mask decides which families actually sound.
 
 A 48-substep bar (LCM of 3, 4, 16) supports 3-against-4 polyrhythm between bass and chord while keeping the melody on a 16-step Euclidean grid.
 
@@ -139,7 +140,7 @@ See `ARCHITECTURE.md` for the detailed walkthrough.
 
 ```
 make test            # bit-exact regression (renders 16 s at seed 0, sha256 check)
-make test-unit       # 95 unit tests across all pure-synth modules + keys
+make test-unit       # 130 unit tests across all pure-synth modules + keys
 make test-multiseed  # renders 4 seeds, checks determinism + audio bounds + golden
 make test-smoke      # spawns ./synth for 2 s, expects clean exit / SIGTERM
 make coverage        # rebuilds with -fprofile-arcs -ftest-coverage and prints
@@ -164,15 +165,15 @@ Approximate line coverage (unit + integration combined; CI enforces these as per
 | `arena.c` | 100% | ≥95% |
 | `effects.c` | 100% | ≥95% |
 | `voice.c` | 98% | ≥95% |
-| `gen.c` | 87% | ≥85% |
+| `gen.c` | 99% | ≥90% |
 | `lsystem.c` | 94% | ≥90% |
 | `chord_progression.c` | 93% | ≥90% |
 | `section.c` | 100% | ≥95% |
 | `density.c` | 100% | ≥95% |
-| `motif.c` | 97% | ≥95% |
+| `motif.c` | 100% | ≥95% |
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
-| `main.c` | 94% | ≥90% |
+| `main.c` | 97% | ≥90% |
 | `ui.c`, `keys.c`, `audio_pulse.c` | — | excluded (require TTY + audio device) |
 
 Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `make coverage` can be alternated without `make clean`. Windows binary size budget (48 KB packed) is also gated in CI.
@@ -184,12 +185,12 @@ Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `
 | `main.c` | argv parsing + dispatch to render-mode or live-audio |
 | `config.h` | Project-wide audio constants (`SAMPLE_RATE`, `BUFFER_FRAMES`) |
 | `mixer.c` / `.h` | `render_chunk()` — voice mix → reverb → delay → soft saturation |
-| `voice.c` / `.h` | Voice struct (KS / FM / drum), ADSR, SVF, role-based pool, peak normalization |
+| `voice.c` / `.h` | Voice struct (KS / FM / wavetable / additive / super-saw / drum), ADSR, SVF, super-saw glide, role-based pool, peak normalization |
 | `effects.c` / `.h` | Master-bus delay, Schroeder reverb, soft saturation, shared `sat16` |
 | `gen.c` / `.h` | Sample clock, scales, CAs, counter-melody Markov, Euclidean rhythm, drum patterns, mutation, scheduler dispatcher (`schedule_bar_boundary`, `schedule_drums`, `schedule_bass`, `schedule_chord`, `schedule_melody`) |
 | `lsystem.c` / `.h` | L-system melodic phrase generator (main melody) |
 | `chord_progression.c` / `.h` | Markov chain over chord functions (root advances every 2 bars) |
-| `section.c` / `.h` | Song-section state machine (intro / body / tension / resolve) biasing parameters over 96-bar cycle |
+| `section.c` / `.h` | Song-section state machine (intro / body / tension / resolve) over a 96-bar cycle: biases parameters and pins kick pattern, L-system character, chord voice type, chord arpeggio mode, and the per-section voice-family mask |
 | `density.c` / `.h` | Adaptive density: counter-cyclical gate + reverb biases derived from active-mask popcount + gate |
 | `motif.c` / `.h` | Long-term motif memory: 8-phrase ring buffer; every ~30 bars replays one captured 4-bar phrase (verbatim or ±2 transposed) instead of L-system output |
 | `wav.c` / `.h` | `render_wav()` + WAV header |
@@ -199,12 +200,12 @@ Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `
 | `audio_winmm.c` | Windows live-audio backend (Win32 `waveOut`, 4-buffer cycle) |
 | `audio.h` | One-function API (`audio_play()`); selects backend at link time |
 | `arena.c` / `.h` | Static 128 KB pool with bump allocator |
-| `gen_*_table.c` | Build-time generators for sine / envelope / MIDI note / Bjorklund tables |
+| `gen_*_table.c` | Build-time generators for sine / envelope / MIDI note / Bjorklund / wavetable tables |
 | `Makefile` | `make`, `make win`, `make winpack`, `make pack`, `make test`, `make test-unit`, `make test-multiseed`, `make test-smoke`, `make coverage`, `make debug`, `make golden`, `make golden-multiseed` |
 | `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
 | `tests/test_multi_seed.sh` | Renders 4 seeds; determinism + audio bounds + golden hashes |
 | `tests/test_smoke_live.sh` | Spawns `./synth --no-ui` for 2 s; expects clean exit / SIGTERM |
-| `tests/unit/test_*.c` | 109 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys |
+| `tests/unit/test_*.c` | 130 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys |
 | `golden/regression_16s.sha256` | Reference hash for the 16-second seed-0 render |
 | `golden/regression_multiseed.sha256.txt` | Reference hashes for the four multi-seed renders |
 | `.github/workflows/ci.yml` | CI: build, all tests, Windows cross-compile, coverage gates, size gate |
