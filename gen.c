@@ -384,6 +384,11 @@ void gen_init(void) {
 
     /* Reset song-section state to the start of INTRO. */
     section_init();
+    /* Pick the opening INTRO combo. The cycle-wrap draw in
+       schedule_bar_boundary only fires at bar 96/192/..., so the very
+       first INTRO needs its combo seeded here. PRNG is already seeded
+       (above or via an explicit gen_seed), so this is deterministic. */
+    section_set_intro_combo((uint8_t)(prng() & 7u));
     /* Apply initial biases so first bar of audio reflects the section. */
     voice_set_cutoff_bias(section_bias_cutoff());
     lsystem_set_character(section_lsystem_character());
@@ -416,6 +421,12 @@ static inline void schedule_bar_boundary(void) {
         chord_progression_step(prng(), cur_scale);
     }
     section_step(bar_count);
+    /* On each cycle boundary (entry into INTRO) pick a fresh sparse
+       voice combo so every intro is a different minimal palette.
+       Seed-deterministic: prng() is seeded by gen_seed(). */
+    if ((bar_count % SECTION_PERIOD_BARS) == 0u) {
+        section_set_intro_combo((uint8_t)(prng() & 7u));
+    }
     voice_set_cutoff_bias(section_bias_cutoff());
     lsystem_set_character(section_lsystem_character());
     /* ca_harm has not yet updated for this bar (the % 12 advance
@@ -472,12 +483,13 @@ static inline void schedule_drums(uint32_t substep_in_bar) {
         /* triplet feel */       S(0)|S(8)|S(16)|S(24)|S(32)|S(40),
     };
     #undef S
+    uint8_t  vm    = section_voice_mask();
     uint64_t kbits = kick_patterns [section_kick_pattern() % 4u];
     uint64_t sbits = snare_patterns[bar_count % 3u];
     uint64_t hbits = hihat_patterns[bar_count % 5u];
-    if ((kbits >> substep_in_bar) & 1u) voice_pool_trigger_drum(DRUM_KICK);
-    if ((sbits >> substep_in_bar) & 1u) voice_pool_trigger_drum(DRUM_SNARE);
-    if ((hbits >> substep_in_bar) & 1u) voice_pool_trigger_drum(DRUM_HIHAT);
+    if ((vm & VF_KICK)  && ((kbits >> substep_in_bar) & 1u)) voice_pool_trigger_drum(DRUM_KICK);
+    if ((vm & VF_SNARE) && ((sbits >> substep_in_bar) & 1u)) voice_pool_trigger_drum(DRUM_SNARE);
+    if ((vm & VF_HAT)   && ((hbits >> substep_in_bar) & 1u)) voice_pool_trigger_drum(DRUM_HIHAT);
 }
 
 /* Bass trigger: 4 events per bar at unequal spacing for a bouncing
@@ -489,6 +501,7 @@ static inline void schedule_drums(uint32_t substep_in_bar) {
    bars do not duplicate. Root and fifth are computed relative to the
    current chord function from chord_progression. */
 static inline void schedule_bass(uint32_t substep_in_bar) {
+    if (!(section_voice_mask() & VF_BASS)) return;
     static const uint8_t bass_substeps[4] = { 0u, 18u, 24u, 42u };
     static const uint8_t bass_deg_a[4]    = { 0u, 4u, 0u, 4u };
     static const uint8_t bass_deg_b[4]    = { 4u, 0u, 4u, 0u };
@@ -534,6 +547,7 @@ static inline void schedule_bass(uint32_t substep_in_bar) {
    chord function; each pitch is octave-shifted toward the previous
    chord's centroid for voice leading. */
 static inline void schedule_chord(uint32_t substep_in_bar, uint8_t active_mask) {
+    if (!(section_voice_mask() & VF_CHORD)) return;
     uint8_t arp = section_chord_arpeggio();
     if (arp) {
         if (substep_in_bar % 6u != 0u) return;
@@ -600,6 +614,12 @@ static inline void schedule_chord(uint32_t substep_in_bar, uint8_t active_mask) 
 static inline void schedule_melody(uint32_t substep_in_bar, uint8_t active_mask) {
     if (substep_in_bar % MELODY_SUBSTRIDE != 0u) return;
     uint32_t step_in_bar = substep_in_bar / MELODY_SUBSTRIDE;
+    /* Voice-family gate is applied only to the trigger calls below, not
+       to the PRNG draws / L-system / Markov / motif state updates. This
+       keeps the generative trajectory identical whether or not a section
+       happens to mute melody or counter - masking silences, it does not
+       rewrite the composition. */
+    uint8_t vm = section_voice_mask();
 
     int eff_gate_i = (int)gate_prob
                    + (int)section_bias_gate()
@@ -621,7 +641,7 @@ static inline void schedule_melody(uint32_t substep_in_bar, uint8_t active_mask)
                 cur_degree = d;
                 uint8_t note = SCALES[cur_scale][cur_degree];
                 uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
-                voice_pool_trigger_role(note, type, ROLE_MELODY);
+                if (vm & VF_MELODY) voice_pool_trigger_role(note, type, ROLE_MELODY);
             }
         } else {
             uint8_t deg = lsystem_next(active_mask);
@@ -629,7 +649,7 @@ static inline void schedule_melody(uint32_t substep_in_bar, uint8_t active_mask)
                 cur_degree = deg;
                 uint8_t note = SCALES[cur_scale][cur_degree];
                 uint8_t type = (step_in_bar & 1u) ? VOICE_FM : VOICE_KS;
-                voice_pool_trigger_role(note, type, ROLE_MELODY);
+                if (vm & VF_MELODY) voice_pool_trigger_role(note, type, ROLE_MELODY);
                 motif_record((uint8_t)step_in_bar, deg);
             }
         }
@@ -648,7 +668,7 @@ static inline void schedule_melody(uint32_t substep_in_bar, uint8_t active_mask)
         cur_degree_counter_prev = cur_degree_counter;
         cur_degree_counter      = next;
         uint8_t note = (uint8_t)(SCALES[cur_scale][cur_degree_counter] + 12);
-        voice_pool_trigger_role(note, VOICE_FM, ROLE_MELODY);
+        if (vm & VF_COUNTER) voice_pool_trigger_role(note, VOICE_FM, ROLE_MELODY);
     }
 }
 

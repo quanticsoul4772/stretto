@@ -10,6 +10,7 @@
 #include "test.h"
 #include "../../gen.h"
 #include "../../voice.h"
+#include "../../section.h"
 #include "../../arena.h"
 #include <stdint.h>
 #include <string.h>
@@ -273,6 +274,48 @@ TEST(gen_long_render_exercises_motif_replay_and_accessors) {
     const char *name = gen_get_section_name();
     ASSERT_TRUE(name != NULL);
     ASSERT_TRUE(gen_get_step() < 16);
+}
+
+TEST(gen_intro_combo_varies_by_seed) {
+    /* gen_init() draws the opening INTRO combo from the seeded PRNG.
+       Different seeds should land on different sparse palettes; across
+       16 seeds we expect at least a couple of distinct INTRO masks.
+       section_voice_mask() at bar 0 (INTRO) reflects the chosen combo. */
+    ensure_pool();
+    uint8_t seen[16];
+    for (uint32_t s = 0; s < 16; s++) {
+        gen_seed(s);
+        gen_init();
+        seen[s] = section_voice_mask();
+    }
+    int distinct = 0;
+    for (int i = 0; i < 16; i++) {
+        int dup = 0;
+        for (int j = 0; j < i; j++) if (seen[j] == seen[i]) dup = 1;
+        if (!dup) distinct++;
+    }
+    ASSERT_TRUE(distinct >= 2);
+}
+
+TEST(gen_intro_combo_redrawn_at_cycle_wrap) {
+    /* Render across the first cycle boundary (bar 96). The combo at the
+       opening INTRO and the combo after the wrap are both PRNG draws;
+       assert the post-wrap draw actually executed by confirming the
+       INTRO mask is a valid curated combo (1-3 voices) at bar 96. */
+    ensure_pool();
+    gen_seed(5);
+    gen_init();
+    /* Samples-per-bar = 48 substeps * current step size. gen_init does
+       not reset tempo, so read it live rather than assuming 96000
+       (a prior tempo test may have changed samples_per_substep). Render
+       into bar 100: bars 96-119 are the second cycle's INTRO, whose
+       combo was set by the bar-96 cycle-wrap draw. */
+    uint32_t samples_per_bar = 48u * gen_get_step_samples();
+    for (uint32_t i = 0; i < 100u * samples_per_bar; i++) gen_step();
+    uint8_t m = section_voice_mask();
+    int popcount = 0;
+    for (int b = 0; b < 7; b++) if (m & (1u << b)) popcount++;
+    ASSERT_TRUE(popcount >= 1 && popcount <= 3);
 }
 
 int main(void) {

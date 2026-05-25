@@ -93,6 +93,44 @@ TEST(section_chord_arpeggio_per_section) {
     section_step(72);   ASSERT_EQ(section_chord_arpeggio(), 0);  /* RESOLVE block */
 }
 
+TEST(section_voice_mask_per_section) {
+    section_init();
+    section_set_intro_combo(0);                 /* pin INTRO = solo pad */
+    section_step(0);    ASSERT_EQ(section_voice_mask(), VF_CHORD);
+    section_step(24);   ASSERT_EQ(section_voice_mask(), VF_ALL);    /* BODY */
+    section_step(48);   ASSERT_EQ(section_voice_mask(), VF_ALL);    /* TENSION */
+    section_step(72);   ASSERT_EQ(section_voice_mask(),
+                                  (uint8_t)(VF_ALL & ~(VF_KICK | VF_SNARE | VF_HAT)));
+}
+
+TEST(section_intro_combo_stored_and_read) {
+    section_init();
+    section_set_intro_combo(3);                 /* BASS | CHORD */
+    section_step(0);
+    ASSERT_EQ(section_voice_mask(), (uint8_t)(VF_BASS | VF_CHORD));
+}
+
+TEST(section_intro_combo_index_wraps_mod_8) {
+    section_init();
+    section_set_intro_combo(15);                /* 15 & 7 = 7 -> combo 7 */
+    section_step(0);
+    ASSERT_EQ(section_voice_mask(),
+              (uint8_t)(VF_BASS | VF_CHORD | VF_HAT));
+}
+
+TEST(section_intro_combos_are_one_to_three_voices) {
+    /* Every curated INTRO combo must be a sparse 1-3 voice palette. */
+    section_init();
+    for (uint8_t i = 0; i < 8; i++) {
+        section_set_intro_combo(i);
+        section_step(0);
+        uint8_t m = section_voice_mask();
+        int popcount = 0;
+        for (int b = 0; b < 7; b++) if (m & (1u << b)) popcount++;
+        ASSERT_TRUE(popcount >= 1 && popcount <= 3);
+    }
+}
+
 int main(void) {
     return RUN_ALL();
 }
