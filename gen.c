@@ -32,8 +32,9 @@
 
 /* 48 substeps * 2000 samples = 96000 samples = 2.00 s per bar at
    48 kHz (rescaled from the prior 1837 at 44.1 kHz). Tempo control
-   scales this. */
-static uint32_t samples_per_substep = 2000u;
+   scales this; gen_init resets it back to the default. */
+#define DEFAULT_SAMPLES_PER_SUBSTEP 2000u
+static uint32_t samples_per_substep = DEFAULT_SAMPLES_PER_SUBSTEP;
 
 static uint32_t gen_prng_state = 0xDEADBEEFu;
 static uint32_t prng(void) {
@@ -362,6 +363,7 @@ void gen_init(void) {
     substep_count      = 0;
     sample_clock       = 0;
     next_step          = 0;
+    samples_per_substep = DEFAULT_SAMPLES_PER_SUBSTEP;  /* reset tempo */
     gate_prob          = 200;
     mutate_lfo_phase   = 0;
     bars_until_mutate  = MUTATE_DEFAULT;

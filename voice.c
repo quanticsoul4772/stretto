@@ -494,61 +494,102 @@ static void fenv_step(Voice *v) {
     v->fenv_amp = (uint16_t)amp;
 }
 
-int16_t voice_step(Voice *v) {
-    if (v->env_phase == ENV_OFF) return 0;
-    /* Glide ramp. Linear walk by remaining-sample division so the
-       result lands exactly at inc_target when glide_remain hits 0.
-       Detune is rebuilt from the new base each step so the super-saw
-       character holds across the slide. */
-    if (v->glide_remain > 0 && v->type == VOICE_SUB) {
-        uint32_t cur   = v->u.sub.inc[0];
-        int32_t  delta = (int32_t)(v->inc_target - cur) / (int32_t)v->glide_remain;
-        uint32_t new_base = (uint32_t)((int32_t)cur + delta);
-        v->u.sub.inc[0] = new_base;
-        v->u.sub.inc[1] = new_base + (new_base >> 7);
-        v->u.sub.inc[2] = new_base - (new_base >> 7);
-        v->glide_remain--;
-    }
-    int16_t raw;
-    if (v->type == VOICE_KS)        raw = ks_step(v);
-    else if (v->type == VOICE_FM)   raw = fm_step(v);
-    else if (v->type == VOICE_DRUM) raw = drum_step(v);
-    else if (v->type == VOICE_WT) {
+/* Glide ramp. Linear walk by remaining-sample division so the result
+   lands exactly at inc_target when glide_remain hits 0. Detune is
+   rebuilt from the new base each step so the super-saw character holds
+   across the slide. SUB voices only. */
+static void glide_advance(Voice *v) {
+    if (v->glide_remain == 0 || v->type != VOICE_SUB) return;
+    uint32_t cur   = v->u.sub.inc[0];
+    int32_t  delta = (int32_t)(v->inc_target - cur) / (int32_t)v->glide_remain;
+    uint32_t new_base = (uint32_t)((int32_t)cur + delta);
+    v->u.sub.inc[0] = new_base;
+    v->u.sub.inc[1] = new_base + (new_base >> 7);
+    v->u.sub.inc[2] = new_base - (new_base >> 7);
+    v->glide_remain--;
+}
+
+/* Per-type oscillator dispatch -> one raw int16 sample. */
+static int16_t osc_dispatch(Voice *v) {
+    if (v->type == VOICE_KS)        return ks_step(v);
+    if (v->type == VOICE_FM)        return fm_step(v);
+    if (v->type == VOICE_DRUM)      return drum_step(v);
+    if (v->type == VOICE_WT) {
         /* Map the existing pan LFO (~0.07-0.18 Hz) onto the wavetable
            position so the timbre sweeps through all 8 waveforms over
            ~10 s. Zero extra modulator state. */
         v->u.wt.position = (uint16_t)(((uint32_t)v->lfo_phase >> 16) * (N_WT_WAVES * 256u) >> 16);
-        raw = wt_step(v);
+        return wt_step(v);
     }
-    else if (v->type == VOICE_ADD)  raw = add_step(v);
-    else if (v->type == VOICE_SUB)  raw = sub_step(v);
-    else                            raw = 0;
+    if (v->type == VOICE_ADD)       return add_step(v);
+    if (v->type == VOICE_SUB)       return sub_step(v);
+    return 0;
+}
+
+/* Effective SVF cutoff: base + per-role offset + section bias + pan-LFO
+   sweep + (chord only) filter-envelope opening, clamped to [20, 230].
+   The Chamberlin SVF is stable for f*pi/2 < 1 (f < ~81 in >>8 units),
+   but with int32 state and Q ~= 2.5 it stays sensible up to ~230; the
+   clamp leaves margin. The [20,230] range gives 50 units of headroom
+   above the user's base ceiling (180) for LFO + fenv motion. */
+static int32_t compute_cutoff(Voice *v) {
+    int32_t f_eff = (int32_t)svf_f_base + role_svf_f_off[v->role]
+                  + (int32_t)cutoff_bias;
+    /* LFO contributes up to +/-60 units (sin peak 24576 * 80 / 32768). */
+    int16_t lfo = sin_table[v->lfo_phase >> 22];
+    f_eff += ((int32_t)lfo * lfo_filter_depth) >> CUTOFF_LFO_SHIFT;
+    if (v->role == ROLE_CHORD) {
+        /* Filter env opens cutoff up to +60 units at peak
+           (fenv_amp 32767 * 30 / 16384 ~= 60). Subtle sweep. */
+        f_eff += ((int32_t)v->fenv_amp * CUTOFF_FENV_GAIN) >> CUTOFF_FENV_SHIFT;
+    }
+    if (f_eff < 20)  f_eff = 20;
+    if (f_eff > 230) f_eff = 230;
+    return f_eff;
+}
+
+/* Per-voice peak normalization. During the measurement window, observe
+   |lp| and recompute gain whenever a new peak is found. Gain can be
+   below 1.0x (loud voices like chord attenuated) or above 1.0x (quiet
+   voices like bass boosted, up to PEAK_GAIN_MAX). The peak grows
+   monotonically and gain decreases with it, so the ramp is click-free.
+   After the window, gain is fixed for the voice's life. */
+static int32_t peak_normalize(Voice *v, int32_t lp) {
+    int32_t abs_lp = lp < 0 ? -lp : lp;
+    if (v->peak_window > 0) {
+        if ((uint16_t)abs_lp > v->peak_seen) {
+            v->peak_seen = (uint16_t)(abs_lp > 0xFFFF ? 0xFFFF : abs_lp);
+            uint32_t g = ((uint32_t)PEAK_TARGET * PEAK_GAIN_UNITY) / v->peak_seen;
+            if (g > PEAK_GAIN_MAX) g = PEAK_GAIN_MAX;
+            v->gain = (uint16_t)g;
+        }
+        v->peak_window--;
+    }
+    return ((int32_t)lp * v->gain) >> 8;
+}
+
+/* Per-drum-type post-normalization boost: kick 3x, snare 2.5x,
+   hihat 1.5x. Low-frequency content (kick body) needs more amplitude to
+   be perceived loud on small speakers, and snare needs to cut through
+   the harmonic content. No-op for non-drum voices. */
+static int32_t drum_boost(Voice *v, int32_t scaled) {
+    if (v->role != ROLE_DRUM) return scaled;
+    int numer = 3;   /* default 1.5x = 3/2 for hihat */
+    if (v->u.drum.drum_type == DRUM_KICK)       numer = 6;  /* 3.0x */
+    else if (v->u.drum.drum_type == DRUM_SNARE) numer = 5;  /* 2.5x */
+    return (scaled * numer) / 2;
+}
+
+int16_t voice_step(Voice *v) {
+    if (v->env_phase == ENV_OFF) return 0;
+
+    glide_advance(v);
+    int16_t raw = osc_dispatch(v);
     uint16_t env = env_step(v);
     fenv_step(v);
     int16_t shaped = (int16_t)(((int32_t)raw * env) >> 15);
 
-    /* Compute effective cutoff. The Chamberlin SVF is stable for
-       f * pi / 2 < 1, i.e. f < 256/pi ~= 81 in our >>8 units... but
-       in practice with int32 state and Q ~= 2.5 it stays sensible up
-       to ~230. Clamp at 220 to leave margin. */
-    int32_t f_eff = (int32_t)svf_f_base + role_svf_f_off[v->role]
-                  + (int32_t)cutoff_bias;
-    {
-        /* LFO contributes up to +/-60 units (sin peak 24576 * 80 / 32768). */
-        int16_t lfo = sin_table[v->lfo_phase >> 22];
-        f_eff += ((int32_t)lfo * lfo_filter_depth) >> CUTOFF_LFO_SHIFT;
-    }
-    if (v->role == ROLE_CHORD) {
-        /* Filter env opens the cutoff by up to +60 units at peak
-           (fenv_amp 32767 * 30 / 16384 ~= 60). Subtle sweep. */
-        f_eff += ((int32_t)v->fenv_amp * CUTOFF_FENV_GAIN) >> CUTOFF_FENV_SHIFT;
-    }
-    /* Effective f_eff range [20, 230] gives 50 units of headroom above
-       the user's base ceiling (180) for LFO sweep and filter-envelope
-       motion to land without clipping. */
-    if (f_eff < 20)  f_eff = 20;
-    if (f_eff > 230) f_eff = 230;
-
+    int32_t f_eff = compute_cutoff(v);
     int32_t q_eff = (int32_t)svf_q_base + role_svf_q_off[v->role];
     if (q_eff < 0)   q_eff = 0;
     if (q_eff > 220) q_eff = 220;
@@ -567,39 +608,10 @@ int16_t voice_step(Voice *v) {
         case 3: out = hp + lp; break;
         default: out = lp; break;
     }
-    /* Reassign to the variable the rest of voice_step works with. */
     lp = sat16(out);
 
-    /* Peak-normalize. During the measurement window, observe |lp| and
-       recompute gain whenever a new peak is found. Gain can be below
-       1.0x (loud voices like chord get attenuated) or above 1.0x (quiet
-       voices like bass get boosted, up to PEAK_GAIN_MAX). The peak grows
-       monotonically and gain decreases with it, so the gain ramp is
-       smooth (no clicks). After the window, gain is fixed for the rest
-       of the voice's life. */
-    int32_t abs_lp = lp < 0 ? -lp : lp;
-    if (v->peak_window > 0) {
-        if ((uint16_t)abs_lp > v->peak_seen) {
-            v->peak_seen = (uint16_t)(abs_lp > 0xFFFF ? 0xFFFF : abs_lp);
-            uint32_t g = ((uint32_t)PEAK_TARGET * PEAK_GAIN_UNITY) / v->peak_seen;
-            if (g > PEAK_GAIN_MAX) g = PEAK_GAIN_MAX;
-            v->gain = (uint16_t)g;
-        }
-        v->peak_window--;
-    }
-    int32_t scaled = ((int32_t)lp * v->gain) >> 8;
-
-    /* Per-drum-type post-normalization boost: kick 3x, snare 2.5x,
-       hihat 1.5x. Low-frequency content (kick body) needs more
-       amplitude to be perceived loud on small speakers, and snare
-       needs to cut through the harmonic content. */
-    if (v->role == ROLE_DRUM) {
-        int numer = 3;   /* default 1.5x = 3/2 for hihat */
-        if (v->u.drum.drum_type == DRUM_KICK)       numer = 6;  /* 3.0x */
-        else if (v->u.drum.drum_type == DRUM_SNARE) numer = 5;  /* 2.5x */
-        scaled = (scaled * numer) / 2;
-    }
-
+    int32_t scaled = peak_normalize(v, lp);
+    scaled = drum_boost(v, scaled);
     return sat16(scaled);
 }
 
