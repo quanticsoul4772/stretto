@@ -107,3 +107,39 @@ uint8_t section_chord_voice_type(void) { return SECTION_CHORD_VOICE[section_curr
    voice-type selection above. */
 static const uint8_t SECTION_CHORD_ARP[SECTION_COUNT] = { 0, 0, 1, 0 };
 uint8_t section_chord_arpeggio(void) { return SECTION_CHORD_ARP[section_current()]; }
+
+/* Per-section voice-family mask.
+     INTRO    dynamic - one of INTRO_COMBOS[], chosen per cycle
+     BODY     full ensemble
+     TENSION  full ensemble
+     RESOLVE  drumless (ambient close)
+   INTRO's entry is a placeholder; section_voice_mask() substitutes the
+   live combo. */
+static const uint8_t SECTION_VOICE_MASK[SECTION_COUNT] = {
+    VF_ALL,                                   /* INTRO (overridden) */
+    VF_ALL,                                   /* BODY */
+    VF_ALL,                                   /* TENSION */
+    VF_ALL & (uint8_t)~(VF_KICK | VF_SNARE | VF_HAT),  /* RESOLVE: no drums */
+};
+
+/* Curated INTRO combos: 1-3 voice families each, all musically
+   coherent. gen.c picks one per 96-bar cycle via PRNG. */
+static const uint8_t INTRO_COMBOS[8] = {
+    VF_CHORD,                          /* solo pad */
+    VF_CHORD | VF_COUNTER,             /* pad + counter line */
+    VF_CHORD | VF_HAT,                 /* pad + tick */
+    VF_BASS  | VF_CHORD,               /* deep pad foundation */
+    VF_BASS  | VF_HAT,                 /* pulse + tick */
+    VF_BASS  | VF_COUNTER,             /* bass + sparse line */
+    VF_CHORD | VF_MELODY | VF_HAT,     /* melody-led trio */
+    VF_BASS  | VF_CHORD  | VF_HAT,     /* minimal full-stack trio */
+};
+static uint8_t intro_combo_idx = 0;
+
+void section_set_intro_combo(uint8_t idx) { intro_combo_idx = idx & 7u; }
+
+uint8_t section_voice_mask(void) {
+    uint8_t sec = section_current();
+    if (sec == SEC_INTRO) return INTRO_COMBOS[intro_combo_idx];
+    return SECTION_VOICE_MASK[sec];
+}

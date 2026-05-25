@@ -48,4 +48,25 @@ uint8_t section_chord_voice_type(void);
    arpeggiates for energy; other sections play blocks. */
 uint8_t section_chord_arpeggio(void);
 
+/* Voice-family bitmask. Schedulers check the current section's mask
+   before triggering a voice family. INTRO uses a randomized 1-3 voice
+   subset (curated combos), RESOLVE is drumless, BODY + TENSION use
+   the full ensemble. */
+#define VF_KICK    (1u << 0)
+#define VF_SNARE   (1u << 1)
+#define VF_HAT     (1u << 2)
+#define VF_BASS    (1u << 3)
+#define VF_CHORD   (1u << 4)
+#define VF_MELODY  (1u << 5)   /* L-system main melody */
+#define VF_COUNTER (1u << 6)   /* Markov counter-melody */
+#define VF_ALL     0x7Fu
+
+uint8_t section_voice_mask(void);
+
+/* Select an INTRO combo (0..7, higher bits ignored). gen.c calls this
+   on each cycle boundary with a PRNG draw so each INTRO is a different
+   sparse palette. The setter is separate from gen.c's draw so tests
+   can pin the combo deterministically. */
+void section_set_intro_combo(uint8_t idx);
+
 #endif
