@@ -6,10 +6,10 @@
 
 | Binary | Size |
 |---|---|
-| Linux `synth` (stripped) | ~29 KB |
-| Linux `synth.packed` (UPX) | ~14 KB |
-| Windows `stretto.exe` (stripped) | ~210 KB |
-| Windows `stretto.packed.exe` (UPX) | ~30 KB |
+| Linux `synth` (stripped, links libpulse) | ~39 KB |
+| Linux `synth.packed` (UPX) | ~16 KB |
+| Windows `stretto.exe` (stripped) | ~215 KB |
+| Windows `stretto.packed.exe` (UPX) | ~37 KB |
 
 ## Module layout
 
@@ -34,7 +34,8 @@ audio_pulse.c           Linux live-audio backend (PulseAudio:
                         pa_threaded_mainloop + pa_stream)
 audio_winmm.c           Windows live-audio backend (Win32 waveOut,
                         CALLBACK_EVENT + 4-buffer cycle)
-voice.c / .h            Voice struct (KS / FM / drum), ADSR, SVF,
+voice.c / .h            Voice struct (KS / FM / wavetable / additive /
+                        super-saw / drum), ADSR, SVF, super-saw glide,
                         per-voice peak normalization, role-scoped
                         voice pool of 11 slots
 effects.c / .h          master-bus delay (250 ms stereo), Schroeder
@@ -123,8 +124,8 @@ gen_step ──► voice_pool_trigger_role/_drum ──► Voice[0..10]
 
 | Slots | Role | Synth type | Envelope | Pan |
 |---|---|---|---|---|
-| 0–1 | Bass | FM, 1:1 ratio, mod_depth 200 | A 50 ms / R 1000 ms | Center |
-| 2–4 | Chord | FM, 2:1 ratio, mod_depth 1500 | A 20 ms / R 600 ms | L / C / R |
+| 0–1 | Bass | Super-saw subtractive (3 detuned saws) + glide | A 50 ms / R 1000 ms | Center |
+| 2–4 | Chord | Section-selected: wavetable / additive / FM | A 20 ms / R 600 ms | L / C / R |
 | 5–7 | Melody | KS or FM alternating | A 5 ms / R 600 ms | Outer L / R |
 | 8 | Kick | DRUM, sine sweep + click | A 1 ms / linear R 150 ms | Center |
 | 9 | Snare | DRUM, noise + 200 Hz body | A 0.5 ms / linear R 100 ms | Slight R |
@@ -132,26 +133,35 @@ gen_step ──► voice_pool_trigger_role/_drum ──► Voice[0..10]
 
 Voice stealing (`pick_slot_range`) only searches within a role's reserved range, so a chord trigger never displaces a bass voice. Drum slots are dedicated per drum type — no stealing inside the kit.
 
+The chord row's synthesis method is chosen per section by `section_chord_voice_type` (wavetable in INTRO/RESOLVE, additive in BODY, FM in TENSION). Which roles are *audible* is gated by the per-section voice-family mask (`section_voice_mask`) — see [Song-section state machine](#song-section-state-machine).
+
 ## Voice struct
 
 ```
 type            VOICE_OFF | VOICE_KS | VOICE_FM | VOICE_DRUM
+                | VOICE_WT | VOICE_ADD | VOICE_SUB
 note            MIDI 0..127 (or drum sub-type for VOICE_DRUM)
 env_phase       ENV_OFF | ENV_A | ENV_D | ENV_R
 role            ROLE_BASS | ROLE_CHORD | ROLE_MELODY | ROLE_DRUM
 pan             0 = full L, 128 = center, 255 = full R
 env_amp         0..32767, ADSR amplitude
 env_time        sample count since current phase started
-lfo_phase, lfo_inc       per-voice pan LFO (also drives FM pitch detune)
+lfo_phase, lfo_inc       per-voice pan LFO (also drives FM pitch detune
+                         and the wavetable position sweep)
 peak_seen, gain, peak_window   per-voice peak normalization state
 svf_lp, svf_bp           int32 SVF state
+fenv_*                   chord filter-envelope state
+inc_target, glide_remain super-saw bass portamento (glide) state
 union:
   ks    { int16 buf[512], idx, len }
   fm    { uint32 phase_c, phase_m, inc_c, inc_m; uint16 mod_depth }
   drum  { uint32 phase, inc; uint8 drum_type }
+  wt    { uint32 phase, inc; uint16 position }
+  add   { uint32 phase[8], inc_base; const uint8 *amps }
+  sub   { uint32 phase[3], inc[3] }
 ```
 
-`voice_step` advances one sample of one voice through five stages: raw oscillator (KS / FM / drum), envelope multiplication, SVF, per-voice peak-normalization gain, and finally a per-drum-type post-normalization boost (kick 3×, snare 2.5×, hihat 1.5×) so percussion sits on top of the harmonic content.
+`voice_step` advances one sample of one voice: an optional glide ramp (super-saw bass), then the raw oscillator (KS / FM / wavetable / additive / super-saw / drum), envelope multiplication, SVF, per-voice peak-normalization gain, and finally a per-drum-type post-normalization boost (kick 3×, snare 2.5×, hihat 1.5×) so percussion sits on top of the harmonic content.
 
 `voice_pool_mix` calls `voice_step` for all 11 voices, applies per-voice pan (with slow LFO modulation) to produce L and R contributions, sums into int32 per channel, and returns a `Stereo` pair.
 
@@ -161,11 +171,25 @@ union:
 
 On trigger, the voice's circular buffer of length `note_ks_len[note]` is filled with half-amplitude white noise. Each step outputs the head sample, then writes back the damped average of two adjacent samples (damp factor ≈ 0.99). The result is the classic plucked-string timbre.
 
-### 2-op FM (bass / chord / melody)
+### 2-op FM (chord / melody)
 
-Two uint32 NCOs share the sine LUT. Modulator output scales by `mod_depth` and offsets the carrier phase. `inc_m = inc_c * ratio` where ratio is 1:1 for bass (soft, sine-like) and 2:1 for chord/melody (bell-like).
+Two uint32 NCOs share the sine LUT. Modulator output scales by `mod_depth` and offsets the carrier phase. `inc_m = inc_c * ratio` where ratio is 2:1 for chord/melody (bell-like). (Bass formerly used a 1:1 FM; it is now super-saw — see below.)
 
 Per-voice LFO pitch detune (~5 cents peak) is layered on top of FM by reusing the pan LFO — same LFO sample, applied to both `inc_c` and `inc_m` proportionally so the FM ratio stays constant.
+
+### Wavetable (chord, INTRO/RESOLVE)
+
+Reads from `WAVETABLE[8][256]` — 8 single-cycle waveforms built at compile time by `gen_wavetable.c` (sine → harmonic-rich → saw/square/pulse → inharmonic bell). A "position" value selects between adjacent waveforms with linear interpolation; position is swept by the per-voice pan LFO, so the timbre morphs continuously through all 8 waves over ~10 s — an animated pad. No extra modulator state: position is derived from `lfo_phase` in `voice_step`.
+
+### Additive (chord, BODY)
+
+Sums 8 sinusoidal partials at integer multiples of the fundamental (8 phase accumulators stepping at k×`inc_base`), each weighted by one row of `ADD_PROFILES[4][8]` — drawbar-style amplitude profiles (Hammond / square / strings / brass). The weighted sum is `>>8` back into int16 range; `sat16` catches the loudest profile's overshoot. Steady, organ-like character.
+
+### Super-saw subtractive (bass)
+
+Sums 3 band-limited saw oscillators (reusing `WAVETABLE[4]`, the band-limited saw) at the fundamental and at ±≈0.78 % detune (`inc ± inc>>7`), averaged, then fed through the existing per-voice SVF. The slow beating between the three detuned copies gives the thick, wide super-saw bass that a single oscillator can't.
+
+**Glide (portamento).** When a bass note re-triggers while the previous note's amplitude envelope is still above half the sustain level (`env_amp > GLIDE_LEGATO_THRESH`), `voice_trigger` does not hard-restart: it sets `inc_target` to the new note and `glide_remain` to `GLIDE_SAMPLES` (~50 ms), keeping phases/envelope/SVF state. `voice_step`'s `glide_advance` then walks `inc[0]` linearly toward `inc_target` over the remaining samples (rebuilding the ±detune each step), landing exactly on pitch when the counter hits 0. Deeper into the release tail the threshold fails and a normal hard re-trigger happens. No extra PRNG draws — determinism holds.
 
 ### Drums
 
@@ -418,7 +442,7 @@ A triangle LFO sweeps the mutation interval between `MUTATE_MIN = 1` bar (busy s
 
 ### Song-section state machine
 
-`section.c` runs a 96-bar cycle of four sections — INTRO (24 bars) → BODY (24) → TENSION (24) → RESOLVE (24) — that biases gate density, filter cutoff, reverb wet, mutation interval, drum-kick pattern index, and L-system character. Section is a pure function of `bar_count`; no PRNG involvement (preserves `--seed N` reproducibility).
+`section.c` runs a 96-bar cycle of four sections — INTRO (24 bars) → BODY (24) → TENSION (24) → RESOLVE (24) — that biases gate density, filter cutoff, reverb wet, mutation interval, and pins drum-kick pattern, L-system character, chord voice type, chord playback mode, and the voice-family mask. The continuous biases and the discrete pins are a pure function of `bar_count`; the INTRO voice-mask combo is the one PRNG-driven choice (drawn once per cycle), which keeps `--seed N` reproducibility intact.
 
 | Bias | INTRO | BODY | TENSION | RESOLVE | Type |
 |---|---|---|---|---|---|
@@ -428,8 +452,13 @@ A triangle LFO sweeps the mutation interval between `MUTATE_MIN = 1` bar (busy s
 | `mutation interval` | +8 | 0 | −4 | +4 | crossfaded |
 | `kick pattern idx` | 0 | 0 | 2 | 0 | discrete |
 | `L-system character` | sparse | stepwise | leaping | stepwise | discrete |
+| `chord voice type` | wavetable | additive | FM | wavetable | discrete |
+| `chord playback` | block | block | arpeggio | block | discrete |
+| `voice mask` | 1–3 (random) | full | full | drumless | discrete |
 
-Continuous biases interpolate linearly across an 8-bar window centered on each boundary: the last 4 bars of a section blend toward the next, the first 4 bars finish the blend. At the boundary exactly the value is halfway between adjacent sections. Discrete biases (kick pattern, L-system character) switch instantly. 10-minute renders now have audible long-form shape — intro feels sparse, tension feels dense and bright, resolve settles back.
+Continuous biases interpolate linearly across an 8-bar window centered on each boundary: the last 4 bars of a section blend toward the next, the first 4 bars finish the blend. At the boundary exactly the value is halfway between adjacent sections. Discrete biases switch instantly. 10-minute renders have audible long-form shape — intro opens sparse (one of 8 curated 1–3-voice combos, chosen per cycle), body fills out, tension feels dense and bright (arpeggiated chords), resolve settles back and drops the drums.
+
+**Voice-family mask.** `section_voice_mask` returns a 7-bit field (kick/snare/hat/bass/chord/melody/counter). BODY and TENSION are `VF_ALL`; RESOLVE clears the three drum bits; INTRO returns one of `INTRO_COMBOS[8]`, selected by `section_set_intro_combo` from a `prng()` draw at each cycle boundary (and once in `gen_init` for the opening). The schedulers in `gen.c` consult the mask before triggering — but **only the trigger calls are gated**, never the PRNG / L-system / Markov / motif state updates, so masking a voice silences it without altering the generative trajectory of the rest of the piece.
 
 Status row shows the current section as `Sec:<name>` (intro / body / tens / res) so the listener can see boundaries align with the audible changes.
 
@@ -517,8 +546,8 @@ The oscilloscope draws each frame into a 24 KB static buffer (one `write()` sysc
 | Target | Scope |
 |---|---|
 | `make test` | Bit-exact regression: render 16 s at `--seed 0` twice, byte-compare, then sha256 against `golden/regression_16s.sha256`. |
-| `make test-unit` | ~50 unit tests across `tests/unit/test_arena.c`, `test_voice.c`, `test_gen.c` using the hand-rolled framework in `tests/unit/test.h`. |
-| `make test-multiseed` | Renders 4 s at seeds 0 / 1 / 42 / 12345, asserts each is deterministic across runs, asserts all four produce distinct sha256s, asserts each render's peak / RMS / clip count lands within sane bounds (catches runaway-state bugs), then matches each hash against `golden/regression_multiseed.sha256.txt`. |
+| `make test-unit` | 130 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
+| `make test-multiseed` | Renders 4 s at seeds 0 / 1 / 42 / 12345, asserts each is deterministic across runs, asserts all four produce distinct sha256s, asserts each render's peak / clip count / spectral centroid / zero-crossing rate land within sane bounds (RMS is reported but not gated, since the randomized INTRO palette varies loudness), then matches each hash against `golden/regression_multiseed.sha256.txt`. |
 | `make test-smoke` | Spawns `./synth --no-ui` under a 2 s timeout. Pass on exit 0 / 124 / 143; fail on segfault. Auto-skips if no PulseAudio. |
 | `make coverage` | Rebuilds instrumented (`-fprofile-arcs -ftest-coverage`), runs the regression + unit suites, prints per-file line coverage via `gcov`. |
 
@@ -531,22 +560,22 @@ Approximate line coverage:
 | `arena.c` | 100% (OOM exit covered via fork) | ≥95% |
 | `effects.c` | 100% (test_effects + test_keys) | ≥95% |
 | `voice.c` | 98% | ≥95% |
-| `gen.c` | 87% | ≥85% |
+| `gen.c` | 99% | ≥90% |
 | `lsystem.c` | 94% | ≥90% |
 | `chord_progression.c` | 93% | ≥90% |
 | `section.c` | 100% | ≥95% |
 | `density.c` | 100% | ≥95% |
-| `motif.c` | 97% | ≥95% |
+| `motif.c` | 100% | ≥95% |
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
-| `main.c` | 94% | ≥90% |
+| `main.c` | 97% | ≥90% |
 | `ui.c`, `keys.c`, `audio_pulse.c` | — | excluded (interactive; require TTY + audio device) |
 
-Total: 109 unit tests across 12 modules.
+Total: 130 unit tests across 12 modules.
 
 The coverage build (`make coverage`) writes every artifact (instrumented `.o`, `.gcno`, `.gcda`, `synth_cov`, `.cov` test binaries) into `build_cov/` so it does not clobber the normal build. `make coverage` and `make test-unit` can be alternated freely without `make clean`. CI's "Coverage gates" step parses the per-file numbers and fails if any drop below the gate.
 
-CI also enforces a Windows packed binary size budget of 48 KB (current is 32 KB; "<64 KB" was the original goal from PLAN.md). A PR that doubles the binary fails CI immediately.
+CI also enforces a Windows packed binary size budget of 48 KB (last measured ~37 KB; "<64 KB" was the original goal from PLAN.md). A PR that doubles the binary fails CI immediately.
 
 CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `main`, plus the Windows cross-compile (`make winpack`). Coverage gate at 80% per file on `arena.c`, `voice.c`, `gen.c`. The Windows binary and coverage log are uploaded as build artifacts.
 
@@ -554,4 +583,4 @@ CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `m
 
 Linux flags (`-Os -flto -ffunction-sections -fdata-sections -Wl,--gc-sections`) and `strip -s -R .comment` are standard. `make pack` runs UPX `--ultra-brute` on top for a final ~33% reduction.
 
-Windows cross-compile uses `x86_64-w64-mingw32-gcc` with the same size flags. `make winpack` adds UPX. The packed Windows binary is ~30 KB — well under the 64 KB target from the original PLAN.md and the demoscene "tiny generative synth" tradition.
+Windows cross-compile uses `x86_64-w64-mingw32-gcc` with the same size flags. `make winpack` adds UPX. The packed Windows binary is ~37 KB — well under the 64 KB target from the original PLAN.md and the demoscene "tiny generative synth" tradition.
