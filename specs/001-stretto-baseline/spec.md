@@ -105,7 +105,7 @@ While listening, the user adjusts tempo, gate density, filter cutoff/resonance, 
 - **FR-017**: System MUST gate which voice families play per section via a voice-family mask. BODY and TENSION play the full ensemble; RESOLVE is drumless (no kick/snare/hihat); INTRO plays a randomized 1–3-voice subset chosen once per 96-bar cycle from a curated set of 8 combos. The INTRO combo selection MUST be seed-deterministic. Masking only silences trigger output — it MUST NOT alter the generative trajectory (PRNG / L-system / Markov / motif state advance identically whether or not a family is audible).
 
 #### Determinism
-- **FR-020**: Given `--seed N`, the system MUST produce byte-identical output across runs on the same platform.
+- **FR-020**: Given `--seed N`, the system MUST produce byte-identical output across runs and across the supported build targets (Linux glibc + Windows winmm, both little-endian x86).
 - **FR-021**: Without `--seed`, the system MUST derive its seed from `time(NULL)` at startup so each launch is a different piece.
 - **FR-022**: No generative module MAY read the wall clock during audio generation.
 
@@ -153,7 +153,7 @@ While listening, the user adjusts tempo, gate density, filter cutoff/resonance, 
 ### Measurable Outcomes
 
 - **SC-001**: Listener launches `./synth` and hears continuous, evolving music within 1 second; the music does not silence, crash, or saturate within 30 minutes of unattended runtime.
-- **SC-002**: Two `--seed N` renders of equal length produce byte-identical sha256 hashes on the same platform.
+- **SC-002**: Two `--seed N` renders of equal length produce byte-identical sha256 hashes.
 - **SC-003**: A 4-second render's peak amplitude is between 500 and 32 767 (exclusive of full-scale), clip count is below 100 samples, spectral centroid is within [100, 5000] Hz, and zero-crossing rate is within [0.01, 0.30]. (RMS varies by INTRO palette — masked intros measure ~500–700, full sections ~1000–1300 — and is reported rather than gated.)
 - **SC-004**: The packed Windows binary is ≤48 KB on every CI run (last measured ~37 KB; headroom maintained for future features).
 - **SC-005**: 100 % of merged PRs pass CI's bit-exact regression, multi-seed integration, smoke test, per-file coverage gates, and Windows cross-compile + UPX pack.
