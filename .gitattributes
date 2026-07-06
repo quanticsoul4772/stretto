@@ -1,0 +1,16 @@
+# Source code (LF on every platform)
+*.c    text eol=lf
+*.h    text eol=lf
+
+# Scripts and CI config (LF so bash/test_smoke etc. run on Linux/WSL)
+*.sh   text eol=lf
+*.yml  text eol=lf
+
+# Docs and data (LF; reproducible across editors)
+*.md       text eol=lf
+*.json     text eol=lf
+*.txt      text eol=lf
+*.sha256   text eol=lf
+
+# Windows-specific tooling keeps its native line endings
+*.ps1  text eol=crlf
