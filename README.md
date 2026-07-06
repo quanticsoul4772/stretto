@@ -136,6 +136,18 @@ Mutation runs at a dynamic rate driven by a slow triangle LFO that sweeps the mu
 
 See `ARCHITECTURE.md` for the detailed walkthrough.
 
+## Specification
+
+The synth's user-facing spec, architecture plan, decision history, and task inventory live under `specs/001-stretto-baseline/`:
+
+- `spec.md` — what the synth does today (three prioritized user stories, functional requirements FR-001..FR-063, measurable success criteria SC-001..SC-007, edge cases)
+- `plan.md` — implementation plan + Constitution Check (all ten principles PASS) + complexity tracking + project structure
+- `research.md` — Phase 0 research synthesis: twelve architectural decisions with rationale and alternatives considered
+- `tasks.md` — seventy tasks organized by user story across six phases (Setup / Foundational / US1 / US2 / US3 / Polish)
+- `quickstart.md` — minimal CLI usage reference (build, render, live mode, key map, platform notes)
+
+Architectural principles are encoded in `.specify/memory/constitution.md` (NON-NEGOTIABLE: I Tiny Native Binary, III Deterministic, VI Test Discipline). Each spec-kit artifact declares compliance or documents an exception per the Governance clause. The most recent constitution amendment is Principle III → v1.0.1 (2026-07-06), documented in `CHANGELOG.md → Recent: spec-kit bootstrap + Constitution III amendment`, which closes the platform-scope wording gap exposed by `/speckit-analyze` finding D1.
+
 ## Tests
 
 ```

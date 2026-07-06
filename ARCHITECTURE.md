@@ -11,6 +11,18 @@
 | Windows `stretto.exe` (stripped) | ~215 KB |
 | Windows `stretto.packed.exe` (UPX) | ~37 KB |
 
+## Spec-kit pipeline
+
+Source-of-truth design + governance artifacts for the `001-stretto-baseline` capability surface live at `specs/001-stretto-baseline/`:
+
+- `spec.md` — capability surface, requirements, measurable success criteria, edge cases
+- `plan.md` — implementation plan + Constitution Check table (all ten principles PASS) + complexity tracking + project structure
+- `research.md` — Phase 0 research synthesis: twelve architectural decisions (synthesis methods, generative state machine, audio sample rate + format, memory model, determinism, effects chain ordering, cross-platform audio, section state machine, live-mode UI, voice-family mask + INTRO randomness, coverage gates, deliberately-omitted test categories) with rationale and alternatives rejected
+- `tasks.md` — seventy tasks organized by user story across Setup / Foundational / US1 / US2 / US3 / Polish phases; each task carries a `[P]` parallel marker and `[USn]` story label per the spec-kit task-generation format
+- `quickstart.md` — minimal CLI usage reference surfaced here as a convenience even though the user-facing copy of the same info lives in this README + the linked plans
+
+The ten architectural principles (I–X) are encoded in `.specify/memory/constitution.md` v1.0.1. Three are NON-NEGOTIABLE: I (Tiny Native Binary — ≤48 KB UPX-packed Windows, ≤24 KB stripped Linux target), III (Deterministic — see amendment note in [Determinism](#determinism) below), VI (Test Discipline — per-file coverage gates). Amendments to the constitution follow the Governance clause and bump the version line; the most recent amendment (Principle III → v1.0.1, Last Amended 2026-07-06) closed the wording gap exposed by `/speckit-analyze` finding D1 (Constitution vs spec SC-002 platform-scope wording).
+
 ## Module layout
 
 ```
@@ -516,6 +528,8 @@ voice.c PRNG (KS noise) = 0xCAFEBABE (fixed)
 Without `--seed`, `gen_init` derives the seed from `time(NULL)` at startup, so each launch produces a different generative output but every audio sample of any specific run is fully determined by that initial time stamp.
 
 `make test` renders 16 seconds with `--seed 0` twice, sha256-compares to verify byte-exact determinism, and checks the hash against `golden/regression_16s.sha256` to verify the algorithm hasn't drifted unexpectedly. See the **Testing** section below for the rest of the test surface.
+
+**Cross-platform bit-exactness scope (Constitution Principle III v1.0.1).** With `--seed N`, the same render on any of the supported build targets (Linux glibc + Windows winmm, both little-endian x86) produces byte-identical output by code construction: the runtime engine is integer-only across voice / gen / mixer / effects (no `double` / `float` in any hot path), the PRNG is `xorshift32` over `uint32`, the build-time `gen_*_table.c` programs round doubles to committed-header bytes via the deterministic IEEE-754 `(int)(x + 0.5)` contract, and `wav.c` emits native-endian RIFF (`fwrite(&uint16/uint32, ...)`) which is little-endian on both supported targets. The `'--render'` path bypasses `audio_pulse.c` / `audio_winmm.c` entirely — those files affect live playback only, not the bit-exact regression. The bit-exact regression is gated on the Linux CI runner only; a Windows-side regression runner is not currently in CI (the invariant holds by code construction, not by automated cross-platform test). See `.specify/memory/constitution.md` Principle III v1.0.1 and the spec-kit pipeline section above for the precise invariant claim.
 
 ## Live audio backends
 

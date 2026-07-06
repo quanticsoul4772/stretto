@@ -1,5 +1,25 @@
 # Changelog
 
+## Recent: spec-kit bootstrap + Constitution III amendment to v1.0.1
+
+The `001-stretto-baseline` capability surface now has the full spec-kit artifact set under `specs/001-stretto-baseline/`. Five new / refreshed documents:
+- `plan.md` — C99 synth wired up, ≤48 KB UPX + 128 KB arena fits, all 10 principles PASS, project structure (single fixed-binary layout per plan-template Option 1), complexity tracking table empty (no principle violations).
+- `research.md` — Phase 0 synthesis: twelve architectural decisions with rationale + alternatives considered. Documents why the synth picks Karplus-Strong + FM + wavetable + additive + super-saw + drum, the 6-layer generative state, 48 kHz × 2-ch × int16, the 128 KB arena, etc.
+- `tasks.md` — seventy tasks organized by user story across Setup / Foundational / US1 / US2 / US3 / Polish (5 + 10 + 25 + 5 + 10 + 15). Each task uses the spec-kit checklist format (`- [ ] TID [P?] [Story?] Description with file path`).
+- `quickstart.md` — CLI surface, key map, build commands, platform notes, out-of-scope list. Mirrors the operational info already present in this README + ARCHITECTURE.md.
+- `CLAUDE.md` updated so the speckit agent-context marker now points at `specs/001-stretto-baseline/plan.md` (was a free-floating "read the current plan" stub).
+
+Resolved analyze HIGH finding **D1**: Constitution Principle III vs spec SC-002 platform-scope wording mismatch (Principle III said "across runs and platforms"; SC-002 said "on the same platform"). Evidence-based decision (Path A): preserve the cross-platform invariant, document its actual scope. Amendment:
+- `.specify/memory/constitution.md` — Principle III rewritten with the precise supported-build-target scope (Linux glibc + Windows winmm, both little-endian x86) and an explicit caveat that the cross-platform invariant holds by code construction (a Windows-side bit-exact regression runner is not currently in CI).
+- Constitution bumped **1.0.0 → 1.0.1**, Last Amended 2026-07-06.
+- `specs/001-stretto-baseline/spec.md` — SC-002 dropped `… on the same platform` qualifier; FR-020 amended to match (Principle III is non-negotiable so the requirement must align with the principle, not the other way around).
+- `specs/001-stretto-baseline/quickstart.md` — same wording fix.
+- `specs/001-stretto-baseline/plan.md` — Constitution Check row for Principle III reflects v1.0.1.
+
+Net: no `… on the same platform` qualifier remains anywhere in the spec-kit artifact set.
+
+Docs-only change (no `.c` / `.h` / `Makefile` touched). The bit-exact 16-s SHA-256 regression, unit suite, 4-seed multi-seed integration, live-mode smoke test, per-file coverage gates, and Windows cross-compile + UPX pack cannot regress from this change. The push-time "verify locally before pushing" gate from Constitution Principle VI is the contributor's responsibility before opening the PR. Per Principle VIII this entry documents the WHY (spec-kit pipeline bootstrap + cross-platform invariant scope honest-on-paper), not the WHAT of each file (the WHAT lives in the files themselves).
+
 ## Recent: per-section voice-family masking
 
 - Sections now differ by which voice families play, not just by parameter bias. `section.c` adds a 7-bit voice-family mask (`section_voice_mask`): BODY/TENSION full ensemble, RESOLVE drumless, INTRO a randomized 1–3-voice subset from `INTRO_COMBOS[8]` chosen once per 96-bar cycle (seed-deterministic via a `prng()` draw in `schedule_bar_boundary` + the opening one in `gen_init`).
