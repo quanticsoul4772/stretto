@@ -11,7 +11,7 @@ Hard size budget: ≤48 KB UPX-packed Windows `.exe` (current 32 KB), ≤24 KB s
 No C++, no external runtime dependencies beyond libc + libpulse (Linux) / winmm (Windows). Build-time tools (`gen_*_table.c`) are also C99. No code generators outside what already exists. No build system beyond GNU Make.
 
 ### III. Deterministic (NON-NEGOTIABLE)
-Given `--seed N`, audio output is bit-exact reproducible across runs and platforms. No clock reads inside the synth, no untracked PRNG sources, no thread-induced ordering. A bit-exact 16-second SHA-256 regression test gates every PR; a multi-seed integration test catches drift across other seeds. Intentional output changes require regenerating goldens in the same PR.
+Given `--seed N`, audio output is byte-identical across runs and across the supported build targets (Linux glibc + Windows winmm, both little-endian x86). The runtime engine is integer-only (int16 / int32 / int64) — no `double` or `float` in any synth / voice / mixer / effects module. The build-time table generators (`gen_*_table.c`) use `pow()` / `sin()` / `double`, but their outputs are rounded with `(int)(x + 0.5)` per the deterministic IEEE-754 round-half-to-even contract and committed to headers, so the source-of-truth bytes for every constant are identical regardless of which platform produced the committed `.h`. The WAV writer emits native-endian RIFF (`fwrite(&uint16/uint32, ...)`); little-endian on both supported targets. No clock reads inside the synth, no untracked PRNG sources, no thread-induced ordering. A bit-exact 16-second SHA-256 regression test gates every PR on Linux; a multi-seed integration test catches drift across seeds. Intentional output changes require regenerating goldens in the same PR. (A Windows-side WAV byte-identity runner is not currently in CI — the cross-platform invariant holds by code construction, not by automated cross-platform test.)
 
 ### IV. Ambient + Algorithmic Aesthetic
 Targeted at long-form listening (10+ minutes). Per-bar variation is fine; per-second jarring change is not. Voices should sound composed, not random. Features earn their place by adding perceptible structure on top of stochastic note selection — the song-section state machine, chord progressions, L-system phrasing, adaptive density, inter-voice listening, and long-term motifs all exist to push the output away from "random noise" toward "intentional music."
@@ -85,4 +85,4 @@ GNU Make with auto-generated header dependencies (`-MMD -MP`). One pattern rule 
 - Removing a NON-NEGOTIABLE principle requires explicit user approval in the amendment PR.
 - All `/speckit-specify` and `/speckit-plan` outputs must declare compliance with each principle or document the exception.
 
-**Version**: 1.0.0 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-05-23
+**Version**: 1.0.1 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-07-06
