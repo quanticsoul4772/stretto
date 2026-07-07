@@ -67,7 +67,18 @@ typedef struct {
        for VOICE_SUB + ROLE_BASS legato re-triggers. */
     uint32_t inc_target;
     uint16_t glide_remain;
-    uint16_t _glide_pad;
+    /* MIDI discriminator (003-midi-input). Reuses the 2 bytes that
+       were _glide_pad so the Voice struct grows by ZERO bytes
+       (preflight D4 refinement, commit d41d76a).
+
+       trigger_key=0 + trigger_channel=0 signals "this voice is owned
+       by the generative scheduler" (default after voice_init()).
+
+       trigger_key in [0..127] + trigger_channel in [1..16] tag the
+       voice as MIDI-triggered so voice_pool_release_midi can match
+       (key, channel) tuples for Note Off routing (per FR-012). */
+    uint8_t  trigger_key;
+    uint8_t  trigger_channel;
     union {
         struct {
             int16_t  buf[KS_MAX_LEN];
@@ -112,6 +123,16 @@ void    voice_pool_init(void);
 void    voice_pool_trigger_role(uint8_t note, uint8_t type, uint8_t role);
 void    voice_pool_trigger_drum(uint8_t drum_type);
 Stereo  voice_pool_mix(void);
+
+/* MIDI-triggered voice (003-midi-input). Non-role-scoped, polyphonic
+   11 voices with voice stealing per Clarifications 2026-07-06 Q1
+   (oldest in-release; oldest regardless fallback). Walks the full
+   N_VOICES pool independently of the role-slot ranges used by the
+   generative scheduler's voice_pool_trigger_role. The trigger_key +
+   trigger_channel fields on Voice enable Note Off matching by
+   (key, channel) tuple (FR-012). */
+void voice_pool_trigger_midi(uint8_t note, uint8_t velocity, uint8_t channel);
+void voice_pool_release_midi(uint8_t key, uint8_t channel);
 
 void     voice_set_mod_depth(uint16_t d);
 uint16_t voice_get_mod_depth(void);
