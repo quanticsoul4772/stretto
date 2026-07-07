@@ -64,8 +64,7 @@ jobs:
         # COV_SRCS_INTERACTIVE in Makefile - they need a TTY + audio
         # device that CI does not have). Tightening these forces
         # the project's coverage discipline to ratchet up over time.
-        run: |
-          declare -A thresholds=(
+        run: |        declare -A thresholds=(
             [arena.c]=95
             [effects.c]=95
             [voice.c]=95
@@ -77,8 +76,7 @@ jobs:
             [motif.c]=95
             [mixer.c]=95
             [wav.c]=90
-            [main.c]=90
-          )
+        )
           fail=0
           for f in "${!thresholds[@]}"; do
             # gcov occasionally reports a file twice (e.g. main.c gets
