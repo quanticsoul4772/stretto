@@ -15,7 +15,7 @@ Add USB-MIDI keyboard input as a first-class control surface for the live synth,
 **Language/Version**: C99 (per Constitution II; gcc default dialect gnu11, used compatibly with `__atomic_*` built-ins for SPSC ring buffer)
 
 **Primary Dependencies**:
-- Linux: libasound (libasound2-dev, ALSA sequencer API: `snd_seq_*` — `snd_seq_create_thread()`, `snd_seq_open()`, `snd_seq_event_input()`, `snd_seq_connect_from()`)
+- Linux: libasound (libasound2-dev, ALSA sequencer API: `snd_seq_*` — `snd_seq_open()`, `snd_seq_event_input()`, `snd_seq_connect_from()`; one `pthread` worker created via `pthread_create()` — no `snd_seq_create_thread()`, which is not a stock libasound API; preflight correction 2026-07-06 documented in `research.md` D1)
 - Windows: winmm (already linked for `waveOut`; new use: `midiInOpen()`, `midiInStart()`, `midiInProc` callback, `midiInGetDevCaps()` for enumeration)
 - libc only otherwise
 
@@ -96,7 +96,7 @@ specs/003-midi-input/
 # New files for 003-midi-input:
 audio_midi.h                  # Cross-platform interface: midi_event_t, midi_init/shutdown/drain/list_devices
 audio_midi.c                  # Ring buffer + dispatch (Note/CC → voice_pool / live params)
-audio_midi_linux.c            # ALSA sequencer backend: snd_seq_open + snd_seq_create_thread + callback
+audio_midi_linux.c            # ALSA sequencer backend: snd_seq_open + pthread_create worker looping on snd_seq_event_input + per-event parse → audio_midi_enqueue (preflight correction 2026-07-06)
 audio_midi_winmm.c            # Win32 backend: midiInOpen + midiInProc callback + midiInGetDevCaps enumeration
 tests/unit/test_midi.c        # Unit tests: scale-degree map, velocity scale, CC map, ring buffer, channel filter, --no-midi byte-identity
 

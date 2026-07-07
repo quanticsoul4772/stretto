@@ -217,7 +217,7 @@ void voice_pool_release_midi(uint8_t key, uint8_t channel);
 4. Call `voice_trigger()` on the chosen voice with `note` mapped to the active scale:
    - `scaled_note = SCALES[cur_scale][note % 7] + (note / 7 - 5) * 12` (per FR-010; octave offset clamped to [-2*12, +4*12] to keep the playable range reasonable; will be tuned empirically)
 5. Set `voice->type = VOICE_FM` (per FR-010 — MIDI fixed at FM since external triggers are not on the 16-step Euclidean grid).
-6. Scale `env_amp` peak by `velocity / 127` clamped to `[64, 32767]` (per FR-010).
+6. **Velocity scale via peak_normalize bypass** (refinement 2026-07-06 — the original spec text said "scale `env_amp` peak by `velocity / 127`" but `env_step` unconditionally overwrites `v->env_amp` from `ENV_PEAK = 32767` on every sample, so multiplying on `env_amp` directly is undone before it reaches the mix point). The correct mechanism: set `v->peak_window = 0` (disables the auto-normalizer for this voice's lifetime) and set `v->gain = clamp(velocity * 256 / 127, [64, PEAK_GAIN_MAX=1024])`. 8.8 fixed point: 256 = 1.0x, 1024 = 4.0x. At V=127 → `gain = 256` (1.0x of normalized peak); at V=64 → `gain ≈ 128` (0.5x); at V=1 → `gain = 64` (clamped; minimum audible). The 1.0x-normalized peak then sits at `ENV_PEAK * gain / 256 = 32767` (V=127) before the `>>3` mix divide in `voice_pool_mix()`. This produces per-voice peak amplitude proportional to MIDI velocity, satisfying FR-010's intent (V/127 amplitude scale clamped to a dynamic range) and the engine's pre-existing peak-normalize + `>>3` mix pipeline.
 7. Set `voice->trigger_key = note` and `voice->trigger_channel = channel`.
 
 `voice_pool_release_midi`:
@@ -242,7 +242,7 @@ void voice_pool_release_midi(uint8_t key, uint8_t channel);
 ```
 synth --midi [N]
   └─> audio_midi_open(N)
-        └─> [platform] audio_midi_linux.c: snd_seq_open + snd_seq_create_thread(callback)
+        └─> [platform] audio_midi_linux.c: snd_seq_open + pthread_create worker looping on snd_seq_event_input + per-event parse → audio_midi_enqueue (preflight correction 2026-07-06)
         └─> [platform] audio_midi_winmm.c: midiInOpen + midiInStart
               └─> callback: enqueue midi_event_t to midi_queue_t
                                           │
