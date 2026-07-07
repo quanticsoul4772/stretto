@@ -1,9 +1,11 @@
 CFLAGS = -Os -flto -fuse-linker-plugin -ffast-math \
          -ffunction-sections -fdata-sections -fno-plt \
          -fno-asynchronous-unwind-tables -fno-stack-protector \
-         -fno-pic -Qn
+         -fno-pic -Qn \
+         -pthread -latomic
 LDFLAGS = -Wl,--gc-sections -Wl,-z,norelro \
-          -Wl,--hash-style=sysv -no-pie
+          -Wl,--hash-style=sysv -no-pie \
+          -pthread -latomic
 
 # UPX_BIN avoids the literal name "UPX" because the upx binary reads
 # its own UPX environment variable for default options.
@@ -152,7 +154,7 @@ UNIT_TEST_SRCS = $(wildcard tests/unit/test_*.c)
 UNIT_TEST_BINS = $(UNIT_TEST_SRCS:.c=)
 
 tests/unit/test_%: tests/unit/test_%.c tests/unit/test.h $(OBJS_NO_MAIN)
-	gcc -O2 -Wall -no-pie -Itests/unit $< $(OBJS_NO_MAIN) -o $@ -lm
+	gcc -O2 -Wall -no-pie -Itests/unit $< $(OBJS_NO_MAIN) -o $@ -lm -pthread -latomic
 
 test-unit: $(UNIT_TEST_BINS)
 	@echo "=== unit tests ==="
@@ -273,14 +275,14 @@ play: synth
 # For stepping through SVF / envelope / scheduler behaviour in gdb.
 # Output: synth_debug. The normal build's .o files are untouched
 # (separate output names) so `make` and `make debug` can be alternated.
-DEBUG_FLAGS  = -O0 -g -DDEBUG -Wall -Wextra
+DEBUG_FLAGS  = -O0 -g -DDEBUG -Wall -Wextra -pthread -latomic
 DEBUG_OBJS   = $(OBJS:.o=.dbg.o)
 
 %.dbg.o: %.c
 	gcc $(DEBUG_FLAGS) -MMD -MP -MF $*.dbg.d -c $< -o $@
 
 synth_debug: $(DEBUG_OBJS)
-	gcc $(DEBUG_FLAGS) $(DEBUG_OBJS) -lpulse -o synth_debug
+	gcc $(DEBUG_FLAGS) $(DEBUG_OBJS) -lpulse -pthread -latomic -o synth_debug
 
 debug: synth_debug
 	@echo "Built: synth_debug (unoptimized, asserts enabled, gdb-friendly)"
