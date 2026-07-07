@@ -23,10 +23,14 @@ int main(int argc, char **argv) {
     voice_pool_init();
 
     /* Pre-scan argv for --seed N + the five --midi* flags. --seed
-       fixes the PRNG (regression determinism); the --midi* flags
-       initialize the audio_midi module BEFORE gen_init/effects_init
-       so the ring-buffer arena allocation happens once at startup
-       (if --midi is set) rather than lazily on the first event. */
+       fixes the PRNG (regression determinism); the --midi* flags are
+       captured into locals here so the dispatch block below can read
+       them after gen_init/effects_init run. Order does not matter:
+       arena_alloc is monotonic (no deallocation), and audio_midi_init
+       is safe to call from any point in main(). (code-review Q5 fix
+       2026-07-06: earlier comment claimed MIDI init happened BEFORE
+       engine init, but the actual code runs gen_init + effects_init
+       first and the MIDI dispatch block second.) */
     int positional_argc = 1;
     char *positional[8] = { argv[0] };
     int midi_explicit_no    = 0;  /* --no-midi */
@@ -51,12 +55,21 @@ int main(int argc, char **argv) {
             midi_list_devices = 1; midi_seen = 1;
         } else if (strcmp(argv[i], "--midi-default") == 0) {
             midi_default = 1; midi_seen = 1;
-        } else if (strcmp(argv[i], "--midi-channel") == 0 && i + 1 < argc) {
+        } else if (strcmp(argv[i], "--midi-channel") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "--midi-channel: missing argument\n");
+                exit(1);
+            }
             char *end;
             unsigned long ch = strtoul(argv[++i], &end, 10);
-            if (*end == '\0' && ch >= 1 && ch <= 16) {
-                midi_channel_filter = (int)ch; midi_seen = 1;
+            if (*end != '\0' || ch < 1 || ch > 16) {
+                fprintf(stderr,
+                    "--midi-channel: expected integer 1..16, got \"%s\"\n",
+                    argv[i]);
+                exit(1);
             }
+            midi_channel_filter = (int)ch;
+            midi_seen = 1;
         } else if (strcmp(argv[i], "--midi") == 0) {
             /* Optional numeric index. --midi alone = default device;
                --midi <N> = explicit index. Non-numeric following arg

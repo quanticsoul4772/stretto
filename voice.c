@@ -203,6 +203,20 @@ void voice_trigger(Voice *v, uint8_t note, uint8_t type, uint8_t role) {
     v->fenv_amp = 0;
     v->fenv_time = 0;
     v->fenv_phase = ENV_A;
+    /* MIDI discriminator reset (003-midi-input, code-review Q5 fix
+     * 2026-07-06): a slot that was previously held by a MIDI note
+     * and is later re-triggered by the generative scheduler must NOT
+     * preserve the (trigger_key, trigger_channel) tags. Otherwise a
+     * stale Note Off arriving later releases the unrelated generative
+     * voice. The MIDI path (voice_pool_trigger_midi) re-tags
+     * immediately after this function returns, so the slot is
+     * always clean after voice_trigger. The legato-branch above
+     * intentionally preserves these fields - on a glissando the user
+     * expects Note Off for the original key to still terminate the
+     * voice; releasing the legato preserves that live-play
+     * semantics. */
+    v->trigger_key     = 0;
+    v->trigger_channel = 0;
 
     if (type == VOICE_KS) {
         v->u.ks.len = note_ks_len[note];
@@ -823,12 +837,20 @@ void voice_pool_trigger_midi(uint8_t note, uint8_t velocity, uint8_t channel) {
     for (i = 0; i < N_VOICES; i++) {
         if (pool[i].env_phase == ENV_OFF) { chosen = i; break; }
     }
-    /* Second-pass: steal the quietest voice currently in release. */
+    /* Second-pass: steal the quietest voice currently in release.
+     * env_time in ENV_R counts UP from 0 toward role_release[role]
+     * (see env_step above), so the LARGEST env_time is the voice
+     * closest to silence and the least audible choice to steal.
+     * (code-review Q3 fix 2026-07-06: previously picked the SMALLEST
+     * env_time, which is just-entered-release = loudest, causing a
+     * click on every MIDI Note On that arrived during another voice's
+     * release tail. Pick the release tail with the most elapsed
+     * samples instead.) */
     if (chosen == -1) {
-        min_time = 0xFFFFu;
+        uint16_t max_t = 0u;
         for (i = 0; i < N_VOICES; i++) {
-            if (pool[i].env_phase == ENV_R && pool[i].env_time < min_time) {
-                min_time = pool[i].env_time;
+            if (pool[i].env_phase == ENV_R && pool[i].env_time > max_t) {
+                max_t = pool[i].env_time;
                 chosen = i;
             }
         }
@@ -877,13 +899,26 @@ void voice_pool_trigger_midi(uint8_t note, uint8_t velocity, uint8_t channel) {
  *   across the release transition so the existing release tail
  *   plays through with the established peak normalization. */
 void voice_pool_release_midi(uint8_t key, uint8_t channel) {
+    /* FR-012 + FR-013: walk the pool looking for the FIRST voice
+     * tagged (key, channel) that is in an ACTIVE phase (ENV_A /
+     * ENV_D - "ENV_R" matches are by definition already-releasing
+     * so the spec's "no-op for an unmatched key" rule covers them).
+     * Voices already in ENV_R for the same (key, channel) are
+     * skipped via `continue` so the loop can find a still-sounding
+     * match in a later slot - important when repeated Note Ons
+     * produce multiple voices tagged with the same (key, channel)
+     * (one older release + one newer active). Fall-through out of
+     * the loop is the FR-013 no-op case (no matching active voice).
+     * (code-review Q4 fix 2026-07-06: previously returned on the
+     * first ENV_R match and missed later ACTIVE matches - hangs
+     * the active voice indefinitely.) */
     int i;
     for (i = 0; i < N_VOICES; i++) {
         Voice *v = &pool[i];
         if (v->env_phase == ENV_OFF) continue;
         if (v->trigger_channel != channel) continue;
         if (v->trigger_key     != key)     continue;
-        if (v->env_phase == ENV_R) return; /* FR-013 no-op */
+        if (v->env_phase == ENV_R) continue;
         v->env_phase = ENV_R;
         v->env_time  = 0;
         return;

@@ -14,12 +14,12 @@
  */
 #include "audio_midi.h"
 
-/* Drag in libasound's symbol references so the synth link step finds
- * libasound2 at link time (matches existing -lasound pattern in
- * Makefile). The functions below are stubs returning -1 so nothing
- * actually fires until US1 lands a real implementation.
- */
-#include <alsa/seq.h>  /* snd_seq_open / snd_seq_event_input / etc. - real impl uses these */
+/* Stub phase (T001-T013). T022 (Phase 3 / US1) lands the real
+ * pthread_create + snd_seq_event_input() worker; that is when
+ * this file adds #include <alsa/seq.h>. The current stub
+ * references zero alsa symbols, so a missing libasound2-dev does
+ * NOT block compilation - this build avoids the build-breaking
+ * header dependency surfaced by code-review Q0 2026-07-06. */
 
 int audio_midi_linux_init(int device_index) {
     (void)device_index;

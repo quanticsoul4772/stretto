@@ -9,8 +9,12 @@
  * picks the right runtime path via audio_midi_open() below.
  *
  * Architecture (per spec.md + data-model.md + research.md D1-D7):
- *   - SPSC ring buffer of midi_event_t (256 entries, arena-allocated;
- *     no malloc, per FR-040 + Constitution Memory model).
+ *   - SPSC ring buffer of midi_event_t (256 entries, BSS-allocated
+ *     zero-init; no malloc, per FR-040 + Constitution Memory model.
+ *     BSS zero-init preserves the --no-midi byte-identical path
+ *     since audio_midi_drain early-returns on (g_enabled == 0).
+ *     (Updated 2026-07-06: previously documented as arena-allocated
+ *     but the arena mirror call was dropped by code-review Q1.)
  *   - Single producer: platform-specific worker thread (Linux:
  *     pthread_create + blocking snd_seq_event_input, real impl in
  *     audio_midi_linux.c; Windows: midiInProc via winmm, real impl
