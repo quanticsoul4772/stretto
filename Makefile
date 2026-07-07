@@ -102,7 +102,17 @@ wavetable.h: gen_wavetable
 	./gen_wavetable > wavetable.h
 
 synth: $(OBJS)
-	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -lpulse -lasound -o synth
+# -lasound is dragged in only when the system has libasound2-dev
+# installed. Until T022 lands the real ALSA worker in
+# audio_midi_linux.c, no symbols in any .o reference libasound, so
+# the linker is free to skip the -l flag. This keeps CI green when
+# the build image lacks libasound (typical for a stock Ubuntu
+# runner) while preserving a forward-compatible link command for
+# dev machines that do have it. Detection uses pkg-config rather
+# than ldconfig so we honor the alsa.pc-installed contract that
+# libasound2-dev provides.
+	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -lpulse \
+	    $(shell pkg-config --exists alsa && echo -lasound) -o synth
 	strip -s -R .comment synth
 
 synth.packed: synth
