@@ -757,6 +757,18 @@ void gen_cycle_scale(void) {
     cur_scale = (uint8_t)((cur_scale + 1u) % N_SCALES);
 }
 
+/* FR-010 scale-degree accessor for callers outside gen.c (audio_midi.c's
+   drain reads SCALES[cur_scale][K%7] + octave offset). Bounds-checked:
+   out-of-range scale_idx wraps to 0 (matches the spec's default D
+   Dorian tone); degree is taken modulo 7 so the 7-letter modal layout
+   is preserved no matter what the caller passes. Single point of truth:
+   the live path and the test_midi.c static helper both reduce to this
+   table lookup + the octave-addition / clamp in the caller. */
+uint8_t gen_get_scale_note(uint8_t scale_idx, uint8_t degree) {
+    if (scale_idx >= N_SCALES) scale_idx = 0;
+    return SCALES[scale_idx][degree % 7u];
+}
+
 void gen_adjust_gate(int delta) {
     int p = (int)gate_prob + delta;
     if (p < 32)  p = 32;
