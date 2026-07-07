@@ -18,8 +18,8 @@ COMMON_OBJS = arena.o effects.o voice.o gen.o lsystem.o \
               chord_progression.o section.o density.o motif.o \
               mixer.o wav.o ui.o keys.o main.o
 
-OBJS     = $(COMMON_OBJS) audio_pulse.o
-WIN_OBJS = $(COMMON_OBJS:.o=.win.o) audio_winmm.win.o
+OBJS     = $(COMMON_OBJS) audio_pulse.o audio_midi.o audio_midi_linux.o
+WIN_OBJS = $(COMMON_OBJS:.o=.win.o) audio_winmm.win.o audio_midi.win.o audio_midi_winmm.win.o
 
 # Everything except main.o and audio backends - this is what unit
 # tests link against. Includes ui.o and keys.o so test_keys can
@@ -29,7 +29,8 @@ WIN_OBJS = $(COMMON_OBJS:.o=.win.o) audio_winmm.win.o
 # and the WAV writer directly.
 OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
                chord_progression.o section.o density.o motif.o \
-               mixer.o wav.o ui.o keys.o
+               mixer.o wav.o ui.o keys.o \
+               audio_midi.o audio_midi_linux.o
 
 # Size targets (bytes).
 STRIP_TARGET = 24576
@@ -101,7 +102,7 @@ wavetable.h: gen_wavetable
 	./gen_wavetable > wavetable.h
 
 synth: $(OBJS)
-	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -lpulse -o synth
+	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -lpulse -lasound -o synth
 	strip -s -R .comment synth
 
 synth.packed: synth
@@ -190,8 +191,8 @@ COV_FLAGS = -O0 -g -fprofile-arcs -ftest-coverage
 #                    audio loop, terminal raw mode, key handler).
 COV_SRCS_MEASURED    = arena.c effects.c voice.c gen.c lsystem.c \
                        chord_progression.c section.c density.c motif.c \
-                       mixer.c wav.c main.c
-COV_SRCS_INTERACTIVE = ui.c keys.c audio_pulse.c
+                       mixer.c wav.c main.c audio_midi.c
+COV_SRCS_INTERACTIVE = ui.c keys.c audio_pulse.c audio_midi_linux.c
 COV_SRCS             = $(COV_SRCS_MEASURED) $(COV_SRCS_INTERACTIVE)
 COV_OBJS             = $(addprefix $(BUILD_COV)/,$(COV_SRCS:.c=.o))
 # Pure-synth subset of instrumented .o files - what unit tests link.
