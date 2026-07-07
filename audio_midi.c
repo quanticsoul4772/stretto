@@ -25,6 +25,7 @@
  */
 #include "audio_midi.h"
 #include "voice.h"
+#include "gen.h"
 
 /* --- Module-static state --- *
  * Defaults to zero (BSS) at process start; --no-midi path leaves them
@@ -42,6 +43,29 @@ typedef struct {
 } midi_queue_t;
 
 static midi_queue_t q;  /* BSS-allocated; arena-allocated mirror below. */
+
+/* FR-010 scale-degree + octave-clamp mapper. Computes the absolute
+   MIDI note corresponding to raw input key K:
+     1) letter-degree = K % 7  picks one of 7 modal pitches in the
+        current scale via gen_get_scale_note(scale_idx, degree)
+        (= SCALES[cur_scale][K%7] absolute MIDI note);
+     2) octave_offset = K/7 - 5  clamped to [-2, +4] per spec;
+     3) mapped note = base_degree_pitch + (octave * 12)  clamped to
+        uint8 [0, 127] so it safely indexes note_phase_inc[128] in
+        voice.c.
+   Identical to the static `midi_scale_map()` helper in
+   tests/unit/test_midi.c (T015 asserts the same formula). Drain
+   exercises it on the live path; static-helper tests cover the
+   math, channel-filter+pop loop exercises the call-shape. */
+static uint8_t map_midi_note(uint8_t key) {
+    int oct_raw     = (int)(key / 7u) - 5;
+    int oct_clamped = oct_raw < -2 ? -2 : (oct_raw > 4 ? 4 : oct_raw);
+    int mapped      = (int)gen_get_scale_note(gen_get_scale(), key % 7u)
+                    + (oct_clamped * 12);
+    if (mapped <   0) mapped =   0;
+    if (mapped > 127) mapped = 127;
+    return (uint8_t)mapped;
+}
 
 void audio_midi_init(int channel_filter) {
     /* Reset to zero so the opt-out path leaves BSS unchanged. */
@@ -127,17 +151,28 @@ void audio_midi_drain(void) {
         /* Per FR-004 + M1 fix: channel filter BEFORE dispatch. */
         if (g_channel_filter != 0 && ev.channel != g_channel_filter) continue;
 
+        /* Per FR-010: scale-degree + octave-offset mapping. Compute
+         * once per event (1 modulo + 1 divide + table lookup + 2
+         * saturating adds) so Note On / Note Off / Velocity-0 routes
+         * all hit voice_pool_trigger_midi() / voice_pool_release_midi()
+         * with the same absolute MIDI note - voice_pool_release_midi
+         * matches via trigger_key = the note passed to trigger_midi,
+         * so a single mapping keeps trigger and release consistent
+         * without an inverse-map table. Channel filter above keeps
+         * mapping-cost off the rejected-channel path. */
+        uint8_t mapped_key = map_midi_note(ev.key);
+
         switch (ev.type) {
             case MIDI_EVENT_NOTE_ON:
                 if (ev.value == 0) {
                     /* Per FR-011: Note On with velocity 0 = Note Off. */
-                    voice_pool_release_midi(ev.key, ev.channel);
+                    voice_pool_release_midi(mapped_key, ev.channel);
                 } else {
-                    voice_pool_trigger_midi(ev.key, ev.value, ev.channel);
+                    voice_pool_trigger_midi(mapped_key, ev.value, ev.channel);
                 }
                 break;
             case MIDI_EVENT_NOTE_OFF:
-                voice_pool_release_midi(ev.key, ev.channel);
+                voice_pool_release_midi(mapped_key, ev.channel);
                 break;
             case MIDI_EVENT_CC:
                 /* US2 phase: dispatch via CC_MAP[ev.key] -> adjust_*(delta).
