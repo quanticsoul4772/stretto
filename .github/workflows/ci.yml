@@ -52,6 +52,22 @@ jobs:
         # the gate ever fires.
         run: bash tests/test_spec_budget_check.sh
 
+      - name: Amend helper regression test (Constitution<->Makefile)
+        # Standalone invocation of tests/test_spec_budget_amend.sh
+        # (the 6-scenario / 21-sub-check regression suite for
+        # tools/spec-budget-amend.sh introduced by PR #127 /
+        # 032-spec-budget-amend). Mirrors the `make test` wiring
+        # but surfaces the amend check as a distinct CI step for
+        # clearer pass/fail attribution. Catches regressions in
+        # the amend script's CLI parsing / KB validation / sed-based
+        # Constitution + Makefile updates / rollback trap / refuse-to-
+        # commit semantics -- the kind of regressions that could
+        # silently break the v1.3.0+ amendment workflow. Cheap
+        # (~5-10 s of in-memory file tamper + restore cycles);
+        # no build artefacts required since the amend helper is
+        # pure Constitution<->Makefile static mutation.
+        run: bash tests/test_spec_budget_amend.sh
+
       - name: Unit tests
         run: make test-unit
 
