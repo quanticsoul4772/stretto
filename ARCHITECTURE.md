@@ -21,6 +21,15 @@ Source-of-truth design + governance artifacts for the `001-stretto-baseline` cap
 - `tasks.md` — seventy tasks organized by user story across Setup / Foundational / US1 / US2 / US3 / Polish phases; each task carries a `[P]` parallel marker and `[USn]` story label per the spec-kit task-generation format
 - `quickstart.md` — minimal CLI usage reference surfaced here as a convenience even though the user-facing copy of the same info lives in this README + the linked plans
 
+The MIDI input capability ([`specs/003-midi-input/spec.md`](./specs/003-midi-input/spec.md) — US1 Note On/Off, US2 CC modulation, US3 device listing) ships alongside the baseline:
+
+- `spec.md` — FR-001..FR-054 + SC-001..SC-007; 4 clarifications (2026-07-06) lock polyphony = 11 voices w/ voice stealing, callback-only producer + audio-thread-consumer SPSC, no auto-reconnect on disconnect, CC initial state = 0
+- `plan.md` — implementation plan + Constitution Check + the 4 file-system additions (`audio_midi.c`, `audio_midi_linux.c`, `audio_midi_winmm.c` + tests)
+- `research.md` — 7 decisions: D1 libasound pthread pattern (snd_seq_create_thread is NOT a stock API), D2 winmm CALLBACK_FUNCTION, D3 C11 acquire/release for the SPSC ring, D4 Voice struct extension reusing 2 bytes of `_glide_pad` (zero-byte struct growth), D5 channel filter in audio thread (NOT producer callback), D6 dedicated `voice_pool_*_midi` entry points, D7 ring-buffer size 256 in arena
+- `tasks.md` — 49 tasks across Setup / Foundational / US1 / US2 / US3 / Polish phases with `[P]` parallelism + `[USn]` story labels
+- `quickstart.md` — listener usage + CLI flags + CC map + Linux/Windows platform notes + `--no-midi` byte-identity invariant
+- `data-model.md` — 5 entities: `midi_event_t`, `midi_input_device_t`, `midi_queue_t`, `cc_map_entry_t` + `CC_MAP[128]`, `voice_pool_*_midi` + Voice `trigger_key`/`trigger_channel` discriminator
+
 The ten architectural principles (I–X) are encoded in `.specify/memory/constitution.md` v1.0.1. Three are NON-NEGOTIABLE: I (Tiny Native Binary — ≤48 KB UPX-packed Windows, ≤24 KB stripped Linux target), III (Deterministic — see amendment note in [Determinism](#determinism) below), VI (Test Discipline — per-file coverage gates). Amendments to the constitution follow the Governance clause and bump the version line; the most recent amendment (Principle III → v1.0.1, Last Amended 2026-07-06) closed the wording gap exposed by `/speckit-analyze` finding D1 (Constitution vs spec SC-002 platform-scope wording).
 
 ## Module layout
@@ -46,6 +55,29 @@ audio_pulse.c           Linux live-audio backend (PulseAudio:
                         pa_threaded_mainloop + pa_stream)
 audio_winmm.c           Windows live-audio backend (Win32 waveOut,
                         CALLBACK_EVENT + 4-buffer cycle)
+audio_midi.c   / .h    cross-platform MIDI input surface (the 003-m-i
+                        capability): SPSC ring buffer (audio thread is
+                        sole consumer per FR-033), CC dispatch table
+                        CC_MAP[128], Note On/Off routing via
+                        voice_pool_trigger_midi / release_midi,
+                        --no-midi opt-out path (preserves baseline
+                        golden hash per FR-050 / FR-053)
+audio_midi_linux.c     libasound ALSA sequencer backend (Linux):
+                        snd_seq_open + one application port "Stretto
+                        Input"; one pthread worker drains
+                        snd_seq_event_input via poll(100 ms) cycle
+                        and writes through audio_midi_enqueue;
+                        PORT_EXIT / CLIENT_EXIT flip g_run atomic for
+                        FR-034 graceful shutdown (no auto-reconnect);
+                        snd_seq_query_next_client + _get_port_info
+                        for enumerate_via_snd_seq_client_info
+audio_midi_winmm.c     Win32 midiInProc backend (Windows): system
+                        thread (midiInStart) installs CALLBACK_FUNCTION
+                        callback; 4-buffer sysex pool (4096 B each)
+                        prepared + added at init; MIM_DATA parses short
+                        messages into the same midi_event_t shape; MIM_CLOSE
+                        drives the FR-034 disconnect path; midiInGetNumDevs +
+                        midiInGetDevCaps for enumerate_via_midiInGetDevCaps
 voice.c / .h            Voice struct (KS / FM / wavetable / additive /
                         super-saw / drum), ADSR, SVF, super-saw glide,
                         per-voice peak normalization, role-scoped
@@ -93,10 +125,13 @@ gen_euclid_table.c      build-time: 17 16-bit Bjorklund masks E(0..16, 16)
 Dependency direction is strictly one-way:
 
 ```
-main.c -> {wav, audio, ui, gen, effects, voice, arena}
-audio_*.c -> {mixer, ui, keys, arena}
+main.c -> {wav, audio, ui, gen, effects, voice, audio_midi, arena}
+audio_pulse.c / audio_winmm.c -> {mixer, ui, keys, arena}
+audio_midi.c -> {effects, voice, arena}            # CC dispatch + voice_pool_trigger_midi + opt-out
+audio_midi_linux.c -> {audio_midi}                 # producer (pthread) -> audio_midi_enqueue
+audio_midi_winmm.c -> {audio_midi}                 # producer (midiInProc) -> audio_midi_enqueue
 wav.c -> {mixer, arena}
-mixer.c -> {gen, voice, effects}
+mixer.c -> {gen, voice, effects, audio_midi}       # audio_midi_drain at top of render_chunk
 keys.c -> {ui, gen, voice, effects}
 ui.c -> {voice, gen, effects}
 gen.c -> {voice, lsystem, chord_progression, section, effects}
@@ -110,6 +145,11 @@ The `gen_*` programs run during `make` and emit C headers (`sin_table.h`, `env_t
 ## Audio path
 
 ```
+                                 audio_midi_drain (top of render_chunk, audio thread)
+                                             │
+                                             │ NOTE_ON / NOTE_OFF / CC →
+                                             │ voice_pool_trigger_midi / _release_midi / adjust_*
+                                             ▼
 gen_step ──► voice_pool_trigger_role/_drum ──► Voice[0..10]
                                                     │
                                                     ▼
@@ -144,6 +184,8 @@ gen_step ──► voice_pool_trigger_role/_drum ──► Voice[0..10]
 | 10 | Hihat | DRUM, white noise | A 0.5 ms / linear R 30 ms | Slight L |
 
 Voice stealing (`pick_slot_range`) only searches within a role's reserved range, so a chord trigger never displaces a bass voice. Drum slots are dedicated per drum type — no stealing inside the kit.
+
+MIDI Note On bypasses the role-slot ranges entirely: `voice_pool_trigger_midi` walks the full `N_VOICES` pool directly (per Clarifications 2026-07-06 Q1, polyphonic with voice-stealing — first `ENV_OFF`, then oldest in release, then oldest regardless) so a MIDI-held chord never displaces a generative bass voice and vice versa. The two schedulers share the slot array but not the slot-selection rules. Identification for Note Off matching is via the `trigger_key` / `trigger_channel` discriminator on each `Voice` (zero-byte struct growth; preflight D4 reuses two bytes of `_glide_pad`).
 
 The chord row's synthesis method is chosen per section by `section_chord_voice_type` (wavetable in INTRO/RESOLVE, additive in BODY, FM in TENSION). Which roles are *audible* is gated by the per-section voice-family mask (`section_voice_mask`) — see [Song-section state machine](#song-section-state-machine).
 
@@ -533,6 +575,42 @@ Without `--seed`, `gen_init` derives the seed from `time(NULL)` at startup, so e
 
 ## Live audio backends
 
+### MIDI input (`--midi` cross-platform surface)
+
+[`audio_midi.c`](./audio_midi.c) is the cross-platform SPSC ring + dispatch layer; the platform backends below produce into it, and the audio thread (sole consumer per FR-033) drains it at the top of every `mixer.c:render_chunk` call. With `--no-midi` (the default), `audio_midi_init(-1)` sets a file-scope `enabled = 0` flag so the entire MIDI stack is bypassed; `render_chunk` is byte-identical to baseline (the `golden/regression_16s.sha256` regression still matches; FR-050 / FR-053). The capability spec is [`specs/003-midi-input/spec.md`](./specs/003-midi-input/spec.md); the bench-validation runbook is [`scripts/midi-smoke.md`](./scripts/midi-smoke.md).
+
+**Producer (ALSA, Linux)** — `audio_midi_linux.c` opens a `SND_SEQ_OPEN_INPUT` handle with the client name `Stretto` and one generic application port `Stretto Input` (end-users subscribe their controller with `aconnect <controller> 129:0`). A single `pthread_create` worker blocks on `snd_seq_event_input` via a 100 ms `poll` / `snd_seq_poll_descriptors` cycle and writes through `audio_midi_enqueue`. Per event: `NOTEON` / `NOTEOFF` / `CONTROLLER` parse into a `midi_event_t` (ALSA channel 0..15 → MIDI 1..16, key / value from structured `ev->data.{note, control}` fields); `SND_SEQ_EVENT_PORT_EXIT` / `SND_SEQ_EVENT_CLIENT_EXIT` flip a cooperative-shutdown atomic (`g_run`) so the worker returns within one poll window (`pthread_join` then completes the close — FR-034 graceful disconnect, **no auto-reconnect**). Sysex / clock / pitch-bend / program-change / active-sensing fall through silently (queue slots are precious; 256 entries per FR-040). Enumeration (`audio_midi_linux_list_devices`) walks `snd_seq_query_next_client` + `snd_seq_query_get_port_info`, populating ports with `MIDI_GENERIC` or `MIDI_KEYBOARD` capability.
+
+**Producer (winmm, Windows)** — Win32 manages the service thread. `audio_midi_winmm.c` opens the device via `midiInOpen(... CALLBACK_FUNCTION)`, prepares + adds a 4-buffer pool of 4096 B sysex headers (`MIDIHDR` re-prepared + re-added on each `MIM_LONGDATA` so the pool keeps delivering), then arms the input flow with `midiInStart`. Each `MIM_DATA` callback parses the short message (`status & 0xF0` selects Note On / Off / CC; channel `+1` from 0..15 to MIDI 1..16; data1 = key / CC#; data2 = velocity / value) into the same `midi_event_t` shape and writes via the same `audio_midi_enqueue`. `MIM_CLOSE` triggers the symmetric FR-034 path. Sysex payload contents are discarded in v1 (SysEx is out of scope). `MIM_ERROR` / `MIM_LONGERROR` are surfaced as drops counted by `audio_midi_drop_count`. Enumeration (`audio_midi_winmm_list_devices`) walks `midiInGetNumDevs` + `midiInGetDevCaps`, populating `midi_input_device_t { .index, .name = truncated_szPname }`.
+
+**Consumer (audio thread, both platforms)** — `audio_midi_drain` runs at the top of `render_chunk`. Atomic-claim of `q.head` (`__ATOMIC_ACQUIRE`), drain loop runs `while (q.tail != local_head)`, then plain-write `q.tail = local_head` (single-consumer invariant per FR-033 — the audio thread is never blocked on platform I/O; researchers P1 documented that `__atomic_*` is the C11 acquire/release model not `volatile`). Per event: if `q.channel_filter != 0 && ev.channel != q.channel_filter` → silent drop (FR-004 + preflight M1 fix — the filter lives in the audio thread, NOT in the producer callback, so a multi-thread callback race cannot leak disallowed events past the filter). Then dispatch by `type`:
+
+- **Note On** (incl. velocity 0 ⇒ Note Off per FR-011) → `voice_pool_trigger_midi(scaled_note, velocity, channel)` where `scaled_note = SCALES[cur_scale][K%7] + clamp(K/7 - 5, -2, +4) * 12` (octave clamp + preflight H2 fix). Synth voice = `VOICE_FM` (mirroring the live-mode melody handler's per-step FM/KS alternation; fixed at FM for MIDI since external triggers are not on the 16-step Euclidean grid). Velocity scales peak amplitude `env_amp = velocity * 256`, clamped `[64, 32767]` so dynamics stay musical.
+- **Note Off** → `voice_pool_release_midi(key, channel)` matching by the `trigger_key` + `trigger_channel` discriminator on each `Voice`. Sets `env_phase = ENV_R; env_time = 0;`; no-op if already `ENV_R` (FR-013) or no match (FR-012 unmatched-key no-op).
+- **CC** → lookup `CC_MAP[ev.key]`. If `target == CC_TARGET_NONE` → silent drop (CC#0, #10, #16, #17, #19, #64, #123 all unassigned per Principle VII). Else `delta = ((int)ev.value - 64) * entry.scale` and call the corresponding `adjust_*`. Multiple CCs targeting the same parameter sum additively per FR-022 (`adjust_*` composes over the prior call).
+
+### CC mapping table (FR-020)
+
+The 128-entry `CC_MAP` lives in `.rodata` of `audio_midi.c` (512 B total). Per Clarifications 2026-07-06 Q4, all CC values start at 0 at synth launch — the first CC message from the controller sets the actual value; a knob moved before launch is not reflected until the user wiggles it (avoids the controller-inquiry round-trip not all hardware supports).
+
+| CC#        | Target                              | Scale | Max swing (V = 0..127)             |
+|------------|-------------------------------------|-------|------------------------------------|
+| 1          | per-voice filter cutoff             | +1    | ±63 against [30, 180] base         |
+| 7          | master compressor threshold         | +60   | ±3780 against [8000, 30000] base   |
+| 71         | per-voice filter resonance          | +1    | ±63 against [0, 180] base          |
+| 74         | per-voice filter cutoff             | +1    | sums with CC#1 per FR-022          |
+| 91         | master reverb wet                   | +1    | ±63 against [0, 256] base          |
+| 93         | master delay wet                    | +1    | sums with `l` / `L` key live-edit  |
+
+`CC_TARGET_NONE` slots (silently dropped, no `fprintf`, no callback overhead; all 7 zero-initialized via the C99 designated-initializer `[N]={}` form so the table footprint is exactly 512 B in `.rodata` regardless of populated slot count):
+
+- **CC#0** / **CC#10** (Bank Select MSB / Pan) — common wheel/encoder assignments on hardware controllers; explicitly out of scope for v1.
+- **CC#16 / CC#17 / CC#18 / CC#19** (General Purpose Controllers 1–4) — controller-specific use; deliberately unassigned so explicit CC routing stays in the 6-way table above.
+- **CC#64** (Sustain Pedal) — **unassigned in v1 per Principle VII; sustained key-release will release immediately (no pedal-aware hold state implemented — gap, not a design choice)**. Hardware pedals are ignored; the voice pool releases on the matching Note Off per FR-012 regardless of pedal position. A future spec can wire sustain semantics without breaking CC table compatibility.
+- **CC#123** (All Notes Off) — v1 relies on the MIDI 1.0 standard's NOTE_ON V=0 mechanism (FR-011) for release propagation; CC#123 as a parallel "panic" command is not routed.
+
+Voice synthesis methods consumed by MIDI and the generative scheduler are documented in [Synthesis details](#synthesis-details): `VOICE_KS` (Karplus-Strong plucked-string for melody slot 5–7 alternation), `VOICE_FM` (2-op FM with shared sine LUT — the direct voice for MIDI Note On), `VOICE_SUB` (super-saw bass + glide portamento for legato re-triggers, role BASS slots 0–1), plus `VOICE_WT` / `VOICE_ADD` (wavetable / additive chord voices, section-selected) and `VOICE_DRUM` (kick / snare / hihat kit). The MIDI dispatch uses the same `Voice` struct as the generative engine — only the slot-selection paths differ (see [Voice pool](#voice-pool-11-slots-4-roles)).
+
 ### Linux: `pa_stream` + threaded mainloop
 
 Uses the full PulseAudio API (`pa_threaded_mainloop` + `pa_context` + `pa_stream`) with `PA_STREAM_INTERPOLATE_TIMING | PA_STREAM_AUTO_TIMING_UPDATE` — the same architecture `paplay` uses. The main loop blocks on `pa_stream_writable_size` and wakes when the write callback fires. 300 ms target buffer (passed via `pa_buffer_attr.tlength`).
@@ -583,9 +661,11 @@ Approximate line coverage:
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
 | `main.c` | 97% | ≥90% |
-| `ui.c`, `keys.c`, `audio_pulse.c` | — | excluded (interactive; require TTY + audio device) |
+| `audio_midi.c` | ~93% (CC dispatch + channel filter + ring buffer + opt-out; reserved CC_TARGET slots not yet routable) | ≥90% |
+| `ui.c`, `keys.c`, `audio_pulse.c`, `audio_midi_linux.c` | — | excluded (interactive; require TTY + audio device or snd-seq-dummy loopback to enumerate — listed in `Makefile` `COV_SRCS_INTERACTIVE`) |
+| `audio_midi_winmm.c` | — | platform-gated (Windows cross-compile only via `x86_64-w64-mingw32-gcc`; the Linux CI runner does not produce `audio_midi_winmm.o`, so it is implicitly excluded from `COV_SRCS_MEASURED` without needing an interactive-source listing) |
 
-Total: 130 unit tests across 12 modules.
+Total: ~147 unit tests across 13 modules (the 17 new MIDI tests in `tests/unit/test_midi.c` cover T014..T034 per FR-051 / SC-005).
 
 The coverage build (`make coverage`) writes every artifact (instrumented `.o`, `.gcno`, `.gcda`, `synth_cov`, `.cov` test binaries) into `build_cov/` so it does not clobber the normal build. `make coverage` and `make test-unit` can be alternated freely without `make clean`. CI's "Coverage gates" step parses the per-file numbers and fails if any drop below the gate.
 
