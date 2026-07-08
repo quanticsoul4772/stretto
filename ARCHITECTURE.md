@@ -6,10 +6,10 @@
 
 | Binary | Size |
 |---|---|
-| Linux `synth` (stripped, links libpulse) | ~39 KB |
-| Linux `synth.packed` (UPX) | ~16 KB |
-| Windows `stretto.exe` (stripped) | ~215 KB |
-| Windows `stretto.packed.exe` (UPX) | ~37 KB |
+| Linux `synth` (stripped, links libpulse) | 43 KB (43 880 B per `make synth` + `strip -s -R .comment`, measured against current `main` post-#113) |
+| Linux `synth.packed` (UPX) | ~16 KB (last measured 2026-06 pre-PR #109; UPX re-measure deferred to followup — see `Build details`) |
+| Windows `stretto.exe` (stripped) | ~238 KB (243 712 B un-stripped from `make win` build artifact on current `main`; final `strip -s -R .comment` does not run on the Windows cross-compile artifact in the current Makefile) |
+| Windows `stretto.packed.exe` (UPX) | ~37 KB (last measured 2026-06 pre-PR #109; UPX re-measure deferred to followup) |
 
 ## Spec-kit pipeline
 
@@ -35,7 +35,7 @@ The ten architectural principles (I–X) are encoded in `.specify/memory/constit
 ## Module layout
 
 ```
-main.c                  argv + dispatch only (~80 LOC)
+main.c                  argv + dispatch only (189 LOC; grew from ~80 at 001-stretto-baseline due to the 003 chain's `--midi` / `--midi N` / `--midi-default` / `--midi-channel` / `--midi-list-devices` / `--no-midi` argv restructure in PR #109)
 config.h                Project-wide constants (SAMPLE_RATE,
                         BUFFER_FRAMES). Single source of truth so
                         the runtime synth and the build-time
@@ -643,7 +643,7 @@ The oscilloscope draws each frame into a 24 KB static buffer (one `write()` sysc
 | `make test-smoke` | Spawns `./synth --no-ui` under a 2 s timeout. Pass on exit 0 / 124 / 143; fail on segfault. Auto-skips if no PulseAudio. |
 | `make coverage` | Rebuilds instrumented (`-fprofile-arcs -ftest-coverage`), runs the regression + unit suites, prints per-file line coverage via `gcov`. |
 
-The framework header `tests/unit/test.h` (~130 LOC) provides `TEST(name) {...}` registration via constructor attributes plus assertion macros (`ASSERT_TRUE` / `ASSERT_EQ` / `ASSERT_NE` / `ASSERT_NEAR` / `ASSERT_BETWEEN`). Each `tests/unit/test_*.c` links against `arena.o + voice.o + gen.o` (no `main.o`) and runs as a standalone binary.
+The framework header `tests/unit/test.h` (149 LOC) provides `TEST(name) {...}` registration via constructor attributes plus assertion macros (`ASSERT_TRUE` / `ASSERT_EQ` / `ASSERT_NE` / `ASSERT_NEAR` / `ASSERT_BETWEEN`). Each `tests/unit/test_*.c` links against `arena.o + voice.o + gen.o` (no `main.o`) and runs as a standalone binary.
 
 Approximate line coverage:
 
@@ -669,7 +669,7 @@ Total: 153 unit tests across 13 modules (the 23 new MIDI tests in `tests/unit/te
 
 The coverage build (`make coverage`) writes every artifact (instrumented `.o`, `.gcno`, `.gcda`, `synth_cov`, `.cov` test binaries) into `build_cov/` so it does not clobber the normal build. `make coverage` and `make test-unit` can be alternated freely without `make clean`. CI's "Coverage gates" step parses the per-file numbers and fails if any drop below the gate.
 
-CI also enforces a Windows packed binary size budget of 48 KB (last measured ~37 KB; "<64 KB" was the original goal from PLAN.md). A PR that doubles the binary fails CI immediately.
+CI also enforces a Windows packed binary size budget of 48 KB (last re-measured at ~37 KB pre-PR #109; UPX re-measure deferred to followup — Constitution Principle I target is the ≤48 KB UPX-packed Windows invariant). A PR that doubles the binary fails CI immediately.
 
 CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `main`, plus the Windows cross-compile (`make winpack`). Coverage gate at 80% per file on `arena.c`, `voice.c`, `gen.c`. The Windows binary and coverage log are uploaded as build artifacts.
 
