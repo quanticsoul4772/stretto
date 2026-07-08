@@ -1,5 +1,40 @@
 # Changelog
 
+## Recent: spec↔build cascade closure (PRs #121–#131) + tagged v1.2.0-final
+
+The 11-PR arc that closed the post-#117 spec↔build drift cascade and added the Constitution↔Makefile bridge, the amend helper, the scoped dirty-tree guard, and the documentation arc. Tagged as `v1.2.0-final` to mark the closure.
+
+**The 4 cascade artifacts** (Constitution Principle I size budgets must stay in lockstep between `.specify/memory/constitution.md` and the `Makefile`):
+
+| Artifact | Role |
+|---|---|
+| `tools/spec-budget-check.sh` | Read-only bridge: asserts `Makefile byte value = Constitution KB value × 1024` for all 3 budgets (Windows UPX, Linux UPX, Linux stripped). Runs as ci.yml step `Bridge regression test` + `make test` target. |
+| `tools/spec-budget-amend.sh` | Write helper: bumps 1-3 budgets in BOTH files in lockstep via targeted `sed -E` regex, prints a `git diff` for review, **refuses to commit** (developer commits manually with a v1.X.0 rationale). Supports `--win` / `--lin-upx` / `--lin-str` flags + `--dry-run`. Rejects shrink attempts (budgets can only grow per post-#117 policy). |
+| `tests/test_spec_budget_check.sh` | 5-scenario regression: happy-path, tamper Constitution, tamper Makefile, malformed constant, recovery via `git checkout`. 9 sub-checks. |
+| `tests/test_spec_budget_amend.sh` | 6-scenario regression: happy-path amend 1, atomic amend all 3, input validation (4 sub-cases), dry-run, refuse-to-commit, recovery via `git checkout`. 21 sub-checks. Has a **scoped dirty-tree guard** (only checks Constitution + Makefile, not whole tree) to avoid the `chmod +x` mode-change trap from `make test`. |
+
+**The 11 PRs in the arc:**
+
+| PR | Title | Key change |
+|---|---|---|
+| #121 | Constitution v1.1.0 catchup | Propagated 24 KB → 50 KB Linux stripped amendment to Makefile `STRIP_TARGET` |
+| #122 | `tools/spec-budget-check.sh` bridge | Added the read-only Constitution↔Makefile bridge + pre-flight ci.yml step |
+| #123 | 5-case regression test | `tests/test_spec_budget_check.sh` — 5 scenarios / 9 sub-checks |
+| #124 | Bridge test wiring | Wired bridge test into `make test` + dedicated ci.yml step |
+| #125 | Cascade close | Removed the now-redundant `Assert Spec↔Build size budgets` ci.yml step (the bridge step + gate are the only 2 spec↔build enforcement points now) |
+| #126 | Step-numbering doc | Added header comment to `ci.yml` noting the 1-indexed-from-`Set up job` numbering convention |
+| #127 | `tools/spec-budget-amend.sh` helper | Added the write helper for future v1.3.0+ amendments — 1-invocation Constitution↔Makefile updates that can't drift |
+| #128 | Amend test wiring | Wired amend test into `make test` + dedicated ci.yml step (`Amend helper regression test`, step #7 in 1-indexed UI) |
+| #129 | Whole-tree dirty-tree guard | First version of the dirty-tree guard (whole tree). Caused the post-merge CI failure in run `28977516712` (chmod +x mode change triggered spurious bail). |
+| #130 | Scoped dirty-tree guard | Scoped the guard to only Constitution + Makefile — the files the test actually tampers with. Fixes the chmod +x trap. |
+| #131 | Documentation arc | Added `Size budget amendment workflow` + `CI step layout` sections to README.md and ARCHITECTURE.md so the next contributor can find the amend helper + step numbering convention without reading commit history. |
+
+**CI step layout (post-#128, 18 explicit steps):** Build → Bit-exact regression → Bridge regression test (step #6, pre-flight for the gate) → Amend helper regression test (step #7) → Unit tests → Multi-seed integration → Live-mode smoke → Cross-compile Windows → UPX-pack Windows → Binary sizes report → **Binary size budget gate (step #14, 3-key gate against the binary-sizes.txt artifact)** → Coverage report → Coverage gates → Upload Windows binary → Upload coverage log. UI step numbers are 1-indexed from the auto-prepended `Set up job` (header comment in `ci.yml` documents this).
+
+**Verification:** the post-#131 main CI run shows all 18 explicit steps passing, with the 2 spec↔build enforcement points (Bridge regression test at step #6 as pre-flight, Binary size budget gate at step #14 as measurement) both green. The amend helper (`tools/spec-budget-amend.sh`) was end-to-end exercised in the 035 amend drill: dry-run preview, actual amend, then test rollback verified end-to-end (the test's `git checkout --` recovery path correctly restored the working tree from HEAD).
+
+**Tag:** `v1.2.0-final` annotated tag points at the post-#131 main commit (`150f331`). Marks the closure of the 11-PR arc; future archeology can find the stable reference point without reading commit history.
+
 ## Recent: 003 MIDI input surface (ALSA + WinMM)
 
 Live MIDI keyboard input ships. Connect a controller to the synth's live mode — the synth plays your notes mixed over the generative output rather than replacing it.
