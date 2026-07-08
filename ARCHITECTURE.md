@@ -8,8 +8,8 @@
 |---|---|
 | Linux `synth` (stripped, links libpulse) | 43 KB (43 880 B per `make synth` + `strip -s -R .comment`, measured against current `main` post-#113) |
 | Linux `synth.packed` (UPX) | 25 KB (25 460 B per PR #117 `binary-sizes` CI artifact on current `main` post-#113; UPX ratio 57.94 %; was ~16 KB pre-#109 hedge; PACK_TARGET = 30 720 B per post-#118 Makefile enforces Constitution v1.2.0 cap) |
-| Windows `stretto.exe` (stripped) | ~238 KB (243 712 B un-stripped from `make win` build artifact on current `main`; final `strip -s -R .comment` does not run on the Windows cross-compile artifact in the current Makefile) |
-| Windows `stretto.packed.exe` (UPX) | ~37 KB (last measured 2026-06 pre-PR #109; UPX re-measure deferred to followup) |
+| Windows `stretto.exe` (stripped) | ~238 KB (243 712 B from `make win` on current `main`; stripped — `-s` in `WIN_LDFLAGS` strips at link and the `stretto.exe` rule additionally runs `$(WIN_STRIP) -s -R .comment`) |
+| Windows `stretto.packed.exe` (UPX) | ~38 KB (post-#117 per the `binary-sizes` CI artifact) |
 
 ## Spec-kit pipeline
 
@@ -30,7 +30,7 @@ The MIDI input capability ([`specs/003-midi-input/spec.md`](./specs/003-midi-inp
 - `quickstart.md` — listener usage + CLI flags + CC map + Linux/Windows platform notes + `--no-midi` byte-identity invariant
 - `data-model.md` — 5 entities: `midi_event_t`, `midi_input_device_t`, `midi_queue_t`, `cc_map_entry_t` + `CC_MAP[128]`, `voice_pool_*_midi` + Voice `trigger_key`/`trigger_channel` discriminator
 
-The ten architectural principles (I–X) are encoded in `.specify/memory/constitution.md` v1.1.0. Three are NON-NEGOTIABLE: I (Tiny Native Binary — ≤48 KB UPX-packed Windows, ≤50 KB stripped Linux target; was ≤24 KB pre-2026-07-08 amendment), III (Deterministic — see amendment note in [Determinism](#determinism) below), VI (Test Discipline — per-file coverage gates). Amendments to the constitution follow the Governance clause and bump the version line; the most recent substantive amendment was Principle I (24 KB → 50 KB; v1.0.1 → v1.1.0; Last Amended 2026-07-08) acknowledging the 003 MIDI-input chain's principled ~19 KB cost on cross-platform MIDI support. The previous wording-only amendment was Principle III → v1.0.1 (Last Amended 2026-07-06) which closed the wording gap exposed by `/speckit-analyze` finding D1 (Constitution vs spec SC-002 platform-scope wording).
+The ten architectural principles (I–X) are encoded in `.specify/memory/constitution.md` v1.2.1. Three are NON-NEGOTIABLE: I (Tiny Native Binary — ≤48 KB UPX-packed Windows, ≤30 KB UPX-packed Linux, ≤50 KB stripped Linux; the Linux caps were realigned to measured reality on 2026-07-08 by v1.1.0/v1.2.0 — the prior 24 KB / 12 KB figures were aspirational PLAN.md-era targets the shipped synth never met, and the 003 MIDI-input chain itself cost ~5 KB stripped / ~9.5 KB packed on top of the ~39 KB / ~16 KB pre-#109 baseline, per the v1.2.1 attribution correction), III (Deterministic — see amendment note in [Determinism](#determinism) below), VI (Test Discipline — per-file coverage gates). Amendments to the constitution follow the Governance clause and bump the version line. Prior wording-only amendment: Principle III → v1.0.1 (2026-07-06), which closed the wording gap exposed by `/speckit-analyze` finding D1 (Constitution vs spec SC-002 platform-scope wording).
 
 ## Module layout
 
@@ -669,13 +669,13 @@ Total: 153 unit tests across 13 modules (the 23 new MIDI tests in `tests/unit/te
 
 The coverage build (`make coverage`) writes every artifact (instrumented `.o`, `.gcno`, `.gcda`, `synth_cov`, `.cov` test binaries) into `build_cov/` so it does not clobber the normal build. `make coverage` and `make test-unit` can be alternated freely without `make clean`. CI's "Coverage gates" step parses the per-file numbers and fails if any drop below the gate.
 
-CI also enforces a Windows packed binary size budget of 48 KB (last re-measured at ~37 KB pre-PR #109; UPX re-measure deferred to followup — Constitution Principle I target is the ≤48 KB UPX-packed Windows invariant). A PR that doubles the binary fails CI immediately.
+CI also enforces a Windows packed binary size budget of 48 KB (current ~38 KB post-#117 per the `binary-sizes` CI artifact — Constitution Principle I target is the ≤48 KB UPX-packed Windows invariant). A PR that doubles the binary fails CI immediately.
 
 CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `main`, plus the Windows cross-compile (`make winpack`). Coverage gate at 80% per file on `arena.c`, `voice.c`, `gen.c`. The Windows binary and coverage log are uploaded as build artifacts.
 
 ### Size budget amendment workflow (Constitution ↔ Makefile bridge)
 
-The post-#117 cascade (PRs #121–#130) introduced a Constitution↔Makefile bridge: the 3 size budgets in Constitution Principle I (Windows UPX ≤48 KB, Linux UPX ≤30 KB, Linux stripped ≤50 KB) MUST stay in lockstep with the 3 Makefile variables (`WIN_PACK_BUDGET = 49152`, `PACK_TARGET = 30720`, `STRIP_TARGET = 51200`). Forgetting to bump one of them in a v1.X.0 amendment is what caused the original drift cascade. The bridge is enforced by 4 artifacts:
+The post-#117 cascade (PRs #121–#130) introduced a Constitution↔Makefile bridge: the 3 size budgets in Constitution Principle I (Windows UPX ≤48 KB, Linux UPX ≤30 KB, Linux stripped ≤50 KB) MUST stay in lockstep with the 3 Makefile variables (`WIN_PACK_BUDGET = 49152`, `PACK_TARGET = 30720`, `STRIP_TARGET = 51200`). Forgetting to bump one of them in a v1.X.0 amendment is what caused the original drift cascade. These two files are the ONLY copies: the ci.yml `Binary size budget gate` carries no inline budget constants — `make size` echoes the three Makefile variables into `binary-sizes.txt` as `budget_*` key=value rows, and the gate reads measurements and budgets from that one artifact. A v1.X.0 amendment therefore only ever touches the Constitution + Makefile pair. The bridge is enforced by these artifacts:
 
 | File | Role |
 |---|---|
@@ -701,7 +701,7 @@ The amend script leaves the Makefile rationale paragraph (comment block above th
 
 `.github/workflows/ci.yml` defines 18 explicit steps. **Note on step numbering:** GitHub Actions auto-prepends `Set up job` to every job, so UI step numbers are **1-indexed from the auto-added step**. The explicit `actions/checkout@v4` step (no `name:`) renders as `Run actions/checkout@v4` / step #2. The YAML order is 0-indexed from `actions/checkout@v4` and internal to the file. Use UI numbers in PR bodies / commit messages (the header comment at the top of `ci.yml` documents this convention so future PRs don't re-discover the off-by-one).
 
-The 18 steps (UI-numbered):
+The 18 explicit steps render as UI rows 2–19 (row 1 is the auto-prepended `Set up job`):
 
 | # | Step | Purpose |
 |---:|---|---|
@@ -710,24 +710,25 @@ The 18 steps (UI-numbered):
 | 3 | Install build deps | apt: gcc, make, libpulse-dev, libasound2-dev, upx-ucl, gcc-mingw-w64-x86-64, python3, python3-numpy |
 | 4 | Build Linux synth | `make` |
 | 5 | Bit-exact regression test | `make test` (bitexact + bridge + amend + unit) |
-| 6 | Bridge regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_check.sh` — 5 scenarios / 9 sub-checks. Pre-flight for the Binary size budget gate (step 14). |
+| 6 | Bridge regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_check.sh` — 5 scenarios / 9 sub-checks. Pre-flight for the Binary size budget gate (step 15). |
 | 7 | Amend helper regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_amend.sh` — 6 scenarios / 21 sub-checks |
 | 8 | Unit tests | `make test-unit` (153 tests across 13 modules) |
 | 9 | Multi-seed integration test | `make test-multiseed` |
 | 10 | Live-mode smoke test (skips if no PA) | `make test-smoke` |
 | 11 | Cross-compile Windows .exe | `make win` |
 | 12 | UPX-pack Windows .exe | `make winpack` |
-| 13 | Binary sizes report | `make size | tee binary-sizes.txt` |
-| 14 | **Binary size budget gate** | 3-key gate against `binary-sizes.txt` (STRIP / PACK / WIN_PACK). Replaces the pre-#125 single-key gate. |
-| 15 | Coverage report | `make coverage | tee coverage.log` |
-| 16 | Coverage gates | Per-file coverage thresholds (90-95%) |
-| 17 | Upload Windows binary artifact | `stretto-windows` artifact |
-| 18 | Upload coverage log | `coverage-log` artifact |
+| 13 | Binary sizes report | `make size | tee binary-sizes.txt` (measurements + `budget_*` rows) |
+| 14 | Upload binary sizes artifact | uploads `binary-sizes.txt` as the `binary-sizes` artifact |
+| 15 | **Binary size budget gate** | 3-key gate against `binary-sizes.txt`; budgets come from the artifact's `budget_*` rows (echoed by `make size` from the Makefile — no inline constants in ci.yml). Replaces the pre-#125 single-key gate. |
+| 16 | Coverage report | `make coverage | tee coverage.log` |
+| 17 | Coverage gates | Per-file coverage thresholds (90-95%) |
+| 18 | Upload Windows binary artifact | `stretto-windows` artifact |
+| 19 | Upload coverage log | `coverage-log` artifact |
 
-The pre-#125 cascade also had a redundant `Assert Spec↔Build size budgets` step that duplicated the bridge. PR #125 removed it; the Bridge regression test (step 6) + Binary size budget gate (step 14) are the only 2 spec↔build enforcement points now, with clear pre-flight / measurement roles.
+(The pre-041 versions of this table omitted the `Upload binary sizes artifact` row and numbered the gate #14; the corrected UI number is #15.) The pre-#125 cascade also had a redundant `Assert Spec↔Build size budgets` step that duplicated the bridge. PR #125 removed it; the Bridge regression test (step 6) + Binary size budget gate (step 15) are the only 2 spec↔build enforcement points now, with clear pre-flight / measurement roles.
 
 ## Build details
 
 Linux flags (`-Os -flto -ffunction-sections -fdata-sections -Wl,--gc-sections`) and `strip -s -R .comment` are standard. `make pack` runs UPX `--ultra-brute` on top for a final ~42% reduction (per PR #117 `binary-sizes` artifact: synth 43 944 B → synth.packed 25 460 B = 57.94 % retained = 42.06 % reduction; the prior ~33 % pre-#109 hedge reflected the smaller pre-003-chain baseline where 24 576 × 0.67 ≈ 16 384).
 
-Windows cross-compile uses `x86_64-w64-mingw32-gcc` with the same size flags. `make winpack` adds UPX. The packed Windows binary is ~37 KB — well under the 64 KB target from the original PLAN.md and the demoscene "tiny generative synth" tradition.
+Windows cross-compile uses `x86_64-w64-mingw32-gcc` with the same size flags. `make winpack` adds UPX. The packed Windows binary is ~38 KB — well under the 64 KB target from the original PLAN.md and the demoscene "tiny generative synth" tradition.

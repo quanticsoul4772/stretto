@@ -4,8 +4,8 @@ A generative music synthesizer. Plays live on Linux (PulseAudio) or Windows (wav
 
 | Binary | Size |
 |---|---|
-| Linux `synth` (stripped, links libpulse) | ~39 KB |
-| Windows `stretto.exe` (stripped + UPX) | ~37 KB |
+| Linux `synth` (stripped, links libpulse) | ~43 KB (43 944 B post-#117) |
+| Windows `stretto.exe` (stripped + UPX) | ~38 KB (post-#117) |
 
 ## Build
 
@@ -20,8 +20,8 @@ Produces `./synth`. Needs `gcc`, `make`, `libpulse-dev`.
 ### Windows (cross-compile from Linux / WSL)
 
 ```
-make win        # produces stretto.exe (~215 KB, stripped)
-make winpack    # additionally produces stretto.packed.exe (~37 KB, UPX-packed)
+make win        # produces stretto.exe (~238 KB, stripped)
+make winpack    # additionally produces stretto.packed.exe (~38 KB, UPX-packed)
 ```
 
 Needs `gcc-mingw-w64-x86-64` and `upx`. The packed `.exe` is a single-file native Windows binary — no WSL, no runtime dependencies beyond the bundled Windows kernel + multimedia DLLs.
@@ -32,7 +32,7 @@ Needs `gcc-mingw-w64-x86-64` and `upx`. The packed `.exe` is a single-file nativ
 make pack
 ```
 
-Produces `synth.packed` (~14 KB).
+Produces `synth.packed` (~25 KB; 25 460 B post-#117, within the 30 KB Constitution v1.2.0 cap).
 
 ## Run
 
@@ -76,13 +76,15 @@ Live MIDI keyboard input — plug a controller in, the synth plays notes as you 
 
 | Flag | Default | Meaning |
 |---|---|---|
-| (no flag) | MIO off | BSS-default `g_enabled = 0` — audio path is bitexact with `golden/regression_16s.sha256`. |
+| (no flag) | MIDI off | BSS-default `g_enabled = 0` — audio path is bitexact with `golden/regression_16s.sha256`. |
 | `--no-midi` | — | Same as omitting the flag; passes `audio_midi_init(-1)` so the queue short-circuits and drain() is a no-op. Use this in CI when MIDI hw isn't available. |
 | `--midi` | wildcard | Auto-subscribe to every readable ALSA `MIDI_GENERIC` / `MIDI_KEYBOARD` port (`snd_seq_query_next_client` + `snd_seq_query_next_port` walk; per-port connect failures tolerated). On WinMM, falls back to `WAVE_MAPPER` so the OS picks the default input. |
 | `--midi <N>` | explicit | Bind to the N-th device from the most recent `--midi-list-devices` output. ALSA addresses decode `(client << 8) \| port` to `snd_seq_connect_from(client, port)`. WinMM passes the raw device id to `midiInOpen`. |
 | `--midi-default` | explicit 0 | Alias for `--midi 0` (FR-002). |
 | `--midi-list-devices` | — | Prints one line per enumerated input device as `<index> <name>`, capped at 32. Exit 0. Use to discover the N for an explicit `--midi N`. |
-| `--midi-channel <1..16>` | all | Drop events whose channel != N at drain time, BEFORE CC dispatch. Default 0 = accept all 16 channels. |
+| `--midi-channel <1..16>` | all | Drop events whose channel != N at drain time, BEFORE CC dispatch. Omit the flag to accept all 16 channels (passing 0 is a usage error). Requires `--midi` or `--midi-default`. |
+
+Startup failure is loud (FR-002): if `--midi` / `--midi <N>` / `--midi-default` cannot open a device, the synth prints `MIDI: ... unavailable (see --midi-list-devices)` and exits 1 — the continue-without-MIDI behavior applies only to a *mid-session* disconnect (FR-034). In `--render` mode MIDI is never opened, regardless of flags: the render loop is the queue consumer, so an open device could inject notes into a seeded render; a stderr notice is printed and the render stays byte-identical to a no-MIDI run (Constitution III).
 
 ### Mapping (FR-010)
 
@@ -227,7 +229,7 @@ CI (GitHub Actions) runs all of the above on every push and pull request to `mai
 
 ## Size budget amendment workflow
 
-The post-#117 spec↔build cascade (PRs #121–#130) introduced a Constitution↔Makefile bridge: the 3 size budgets (Windows UPX ≤48 KB, Linux UPX ≤30 KB, Linux stripped ≤50 KB) live in BOTH `.specify/memory/constitution.md` Principle I AND the `Makefile` (as `WIN_PACK_BUDGET`, `PACK_TARGET`, `STRIP_TARGET`). Forgetting to bump one of them in a v1.X.0 amendment is what caused the original drift cascade.
+The post-#117 spec↔build cascade (PRs #121–#130) introduced a Constitution↔Makefile bridge: the 3 size budgets (Windows UPX ≤48 KB, Linux UPX ≤30 KB, Linux stripped ≤50 KB) live in BOTH `.specify/memory/constitution.md` Principle I AND the `Makefile` (as `WIN_PACK_BUDGET`, `PACK_TARGET`, `STRIP_TARGET`). Forgetting to bump one of them in a v1.X.0 amendment is what caused the original drift cascade. These two files are the only copies: the ci.yml `Binary size budget gate` reads its budgets from the `budget_*` rows that `make size` echoes into `binary-sizes.txt`, so an amendment never needs to touch ci.yml.
 
 Two tools prevent future drift:
 
@@ -286,21 +288,22 @@ At least one of `--win` / `--lin-upx` / `--lin-str` is required. Multiple flags 
 | 3 | Install build deps | apt: gcc, make, libpulse-dev, libasound2-dev, upx-ucl, gcc-mingw-w64-x86-64, python3, python3-numpy |
 | 4 | Build Linux synth | `make` |
 | 5 | Bit-exact regression test | `make test` (bitexact + bridge + amend + unit) |
-| 6 | Bridge regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_check.sh` — 5 scenarios / 9 sub-checks. Pre-flight for the Binary size budget gate (step 14). |
+| 6 | Bridge regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_check.sh` — 5 scenarios / 9 sub-checks. Pre-flight for the Binary size budget gate (step 15). |
 | 7 | Amend helper regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_amend.sh` — 6 scenarios / 21 sub-checks |
 | 8 | Unit tests | `make test-unit` (153 tests across 13 modules) |
 | 9 | Multi-seed integration test | `make test-multiseed` |
 | 10 | Live-mode smoke test (skips if no PA) | `make test-smoke` |
 | 11 | Cross-compile Windows .exe | `make win` |
 | 12 | UPX-pack Windows .exe | `make winpack` |
-| 13 | Binary sizes report | `make size | tee binary-sizes.txt` |
-| 14 | **Binary size budget gate** | 3-key gate against `binary-sizes.txt` (STRIP / PACK / WIN_PACK). Replaces the pre-#125 single-key gate. |
-| 15 | Coverage report | `make coverage | tee coverage.log` |
-| 16 | Coverage gates | Per-file coverage thresholds (90-95%) |
-| 17 | Upload Windows binary artifact | `stretto-windows` artifact |
-| 18 | Upload coverage log | `coverage-log` artifact |
+| 13 | Binary sizes report | `make size | tee binary-sizes.txt` (measurements + `budget_*` rows) |
+| 14 | Upload binary sizes artifact | uploads `binary-sizes.txt` as the `binary-sizes` artifact |
+| 15 | **Binary size budget gate** | 3-key gate against `binary-sizes.txt`; budgets come from the artifact's `budget_*` rows (echoed by `make size` from the Makefile — no inline constants in ci.yml). Replaces the pre-#125 single-key gate. |
+| 16 | Coverage report | `make coverage | tee coverage.log` |
+| 17 | Coverage gates | Per-file coverage thresholds (90-95%) |
+| 18 | Upload Windows binary artifact | `stretto-windows` artifact |
+| 19 | Upload coverage log | `coverage-log` artifact |
 
-The pre-#125 cascade also had a redundant `Assert Spec↔Build size budgets` step that duplicated the bridge. PR #125 removed it; the Bridge regression test (step 6) + Binary size budget gate (step 14) are the only 2 spec↔build enforcement points now, with clear pre-flight / measurement roles.
+(The pre-041 versions of this table omitted the `Upload binary sizes artifact` row and numbered the gate #14; the corrected UI number is #15.) The pre-#125 cascade also had a redundant `Assert Spec↔Build size budgets` step that duplicated the bridge. PR #125 removed it; the Bridge regression test (step 6) + Binary size budget gate (step 15) are the only 2 spec↔build enforcement points now, with clear pre-flight / measurement roles.
 
 Approximate line coverage (unit + integration combined; CI enforces these as per-file gates):
 
