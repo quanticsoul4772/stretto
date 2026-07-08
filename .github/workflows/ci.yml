@@ -26,6 +26,22 @@ jobs:
       - name: Bit-exact regression test
         run: make test
 
+      - name: Bridge regression test (Constitution<->Makefile)
+        # Standalone invocation of tests/test_spec_budget_check.sh
+        # (the 5-case / 9-sub-check regression suite for
+        # tools/spec-budget-check.sh introduced by PR #122 /
+        # 025-spec-to-make-bridge). Mirrors the `make test`
+        # wiring but surfaces the bridge check as a distinct CI
+        # step for clearer pass/fail attribution. Catches
+        # regressions in the script's extraction regex /
+        # arithmetic / validation logic -- the kind that
+        # motivated the post-#117 spec<->build drift cleanup
+        # cascade (PRs #118-#124). Cheap (~5 s of in-memory
+        # file tamper + restore cycles); no build artefacts
+        # required since the bridge is pure Constitution<->Makefile
+        # static alignment.
+        run: bash tests/test_spec_budget_check.sh
+
       - name: Unit tests
         run: make test-unit
 

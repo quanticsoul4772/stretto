@@ -215,8 +215,19 @@ size:
 		echo "WARNING: synth $$SIZE > STRIP_TARGET $(STRIP_TARGET) -- exceeds Linux stripped budget"; \
 	fi
 
+# Bit-exact regression test + spec<>build size-budget bridge
+# regression test. The bridge regression (tests/test_spec_budget_check.sh)
+# exercises the 5-case suite for tools/spec-budget-check.sh introduced
+# by PR #122 / 025-spec-to-make-bridge; it was previously a standalone
+# script. Wiring it into `make test` ensures any future contributor
+# who breaks the Constitution<->Makefile triple-budget alignment
+# catches it at `make test` time on their dev box, not just at
+# CI. The ci.yml `Bridge regression test (Constitution<->Makefile)`
+# step mirrors this as a dedicated CI check.
 test: synth
+	chmod +x tests/test_spec_budget_check.sh
 	./tests/test_bitexact.sh
+	./tests/test_spec_budget_check.sh
 
 # Unit tests. Each tests/unit/test_*.c links against OBJS_NO_MAIN
 # (all modules except main.o) and runs as a standalone binary.
