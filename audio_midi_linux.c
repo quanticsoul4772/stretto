@@ -213,14 +213,27 @@ int audio_midi_linux_init(int device_index) {
         sub_count = 1;
     } else {
         /* Wildcard --midi (no N). Iterate the same enumerate filter
-         * (CAP_READ + MIDI_GENERIC|MIDI_KEYBOARD) and aconnect to
-         * each matching source. Per-port connect failures
-         * (already-subscribed / permission denied / source just
-         * unplugged) are tolerated and silently dropped because the
-         * wildcard contract is "best-effort subscribe to all
-         * readable MIDI controllers", not "every individual source
-         * succeeds". Cap at MIDI_LIST_DEVICES_CAP so the rarest
-         * studio-rig scenarios (>32 controllers) don't run away. */
+         * (CAP_READ + MIDI_GENERIC) and aconnect to each matching
+         * source. MIDI_GENERIC is the broadest alsa-lib category
+         * (= "anything that doesn't fit a more-specific
+         * SYNTHESIZER type"), which historically envelopes keyboards
+         * AND generic controllers - the spec's intent for "MIDIO
+         * Keyboard events" (research.md D1). The prior
+         * MIDI_KEYBOARD filter hit a non-existent upstream alsa-lib
+         * macro (SND_SEQ_PORT_TYPE_MIDI_KEYBOARD is NOT defined in
+         * /usr/include/alsa/seq.h on stock Ubuntu; the constant was
+         * either invented or copied from an old fork); the
+         * MIDI_GENERIC-only filter is the correct upstream libasound
+         * vocabulary and matches what --gc-sections + libasound2-dev
+         * builds expect.
+         *
+         * Per-port connect failures (already-subscribed / permission
+         * denied / source just unplugged) are tolerated and silently
+         * dropped because the wildcard contract is "best-effort
+         * subscribe to all readable MIDI controllers", not "every
+         * individual source succeeds". Cap at MIDI_LIST_DEVICES_CAP
+         * (defined in audio_midi.h) so the rarest studio-rig
+         * scenarios (>32 controllers) don't run away. */
         snd_seq_client_info_t *cinfo;
         snd_seq_client_info_alloca(&cinfo);
         snd_seq_client_info_set_client(cinfo, -1);   /* rewind iterator */
@@ -236,8 +249,17 @@ int audio_midi_linux_init(int device_index) {
                 unsigned int caps = snd_seq_port_info_get_capability(pinfo);
                 unsigned int type = snd_seq_port_info_get_type(pinfo);
                 if (!(caps & SND_SEQ_PORT_CAP_READ)) continue;
-                if (!(type & (SND_SEQ_PORT_TYPE_MIDI_GENERIC |
-                              SND_SEQ_PORT_TYPE_MIDI_KEYBOARD))) continue;
+                /* MIDI_GENERIC only - see the surrounding comment
+                 * block for the lift from the invented
+                 * MIDI_KEYBOARD alias (which is NOT in upstream
+                 * alsa-lib). MIDI_GENERIC is what libasound's
+                 * snd_seq_port_info_get_type() returns for USB-MIDI
+                 * keyboards + class-compliant controllers AND any
+                 * port that does not declare a more specific
+                 * SYNTHESIZER type. The dual-filter (CAP_READ +
+                 * MIDI_GENERIC) matches what `aconnect` would
+                 * connect to by default. */
+                if (!(type & SND_SEQ_PORT_TYPE_MIDI_GENERIC)) continue;
                 int src_port = snd_seq_port_info_get_port(pinfo);
                 /* Per-port connect errors are tolerated in wildcard mode. */
                 snd_seq_connect_from(seq, synth_port, client, src_port);

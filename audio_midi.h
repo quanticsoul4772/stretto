@@ -32,8 +32,20 @@
 #include <stdint.h>
 
 /* --- SPSC ring buffer sizes (FR-040 + data-model.md Entity 3) --- */
-#define MIDI_QUEUE_CAPACITY 256   /* power-of-two for & MASK */
-#define MIDI_QUEUE_MASK     (MIDI_QUEUE_CAPACITY - 1)
+#define MIDI_QUEUE_CAPACITY      256   /* power-of-two for & MASK */
+#define MIDI_QUEUE_MASK          (MIDI_QUEUE_CAPACITY - 1)
+
+/* --- Enumerate-list cap (PR #108 / T034 + T035 contract) ---
+ * Both audio_midi_linux_list_devices (snd_seq_query_next_port walk)
+ * and the T035 winmm enumerator (midiInGetNumDevs + midiInGetDevCaps
+ * walk) cap subscription-count at this constant so a studio rig with
+ * >32 controllers can't run away. 32 matches the documented
+ * `--midi-list-devices` printf width + the typ. USB-MIDI class-count
+ * ceiling on Linux (USB subsystem limit) + midiInputPortCount on
+ * Windows. The constant WAS NOT in PR #108's reviewed diff (likely a
+ * rebase regression when #109 was squashed in); reintroduced here so
+ * the backends compile cleanly under `make` + `make coverage`. */
+#define MIDI_LIST_DEVICES_CAP    32
 
 /* --- Event type discriminator (data-model.md Entity 1) --- */
 typedef enum {
