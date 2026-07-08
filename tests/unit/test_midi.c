@@ -46,6 +46,7 @@
 #include "test.h"
 #include "../../audio_midi.h"
 #include "../../voice.h"
+#include "../../effects.h"
 #include "../../ui.h"
 
 #include <stdint.h>
@@ -337,6 +338,445 @@ TEST(midi_no_midi_byte_identical) {
          * regenerator's responsibility (make golden), not ours. */
         ASSERT_TRUE(n >= 64);
     }
+}
+
+/* ============================================================
+ * T025-T028 + T031 + T032: CC mapping + channel filter coverage
+ *
+ * These tests lift audio_midi.c above the per-file coverage gate
+ * by exercising the CC dispatch branch in audio_midi_drain()
+ * (US2 / tasks.md T030) for the full spec-mandated CC list plus
+ * the user's request-list of representative controllers (CC#0,
+ * CC#1, CC#7, CC#11, CC#64, CC#123). Implementation contract per
+ * `specs/003-midi-input/data-model.md` Entity 4 + H1 fix:
+ *
+ *     delta = (V - 64) * scale            (FR-020 + H1)
+ *     target = CC_MAP[C].target            (data-model.md Entity 4)
+ *     CC_TARGET_NONE == silently dropped   (FR-020 + Principle VII)
+ *     channel filter BEFORE dispatch       (FR-004 + M1 fix)
+ *     multiple CCs to same param sum (+)   (FR-022)
+ *
+ * The test pattern is canonical: bring every CC-mappable parameter
+ * to a known interior value (away from clamp edges), enqueue a CC
+ * event, drain, snapshot, assert the expected (baseline + delta).
+ * CC_TARGET_NONE entries must produce zero state changes. The
+ * dispatch helper `dispatch_one_cc_full(filter, channel, cc, value)`
+ * absorbs the audio_midi_init + audio_midi_enqueue + audio_midi_drain
+ * boilerplate so each TEST reads as a single intent statement.
+ * ============================================================ */
+
+/* Snapshot of the 6 parameters CC_MAP can target in v1. Flat struct,
+   stack-allocated by callers; safe under single-threaded test
+   execution (we are the audio thread here). */
+typedef struct {
+    uint16_t cutoff;
+    uint16_t resonance;
+    uint16_t delay_wet;
+    uint16_t delay_feedback;
+    uint16_t reverb_wet;
+    uint16_t compressor_threshold;
+} cc_snapshot_t;
+
+static cc_snapshot_t snapshot_cc_params(void) {
+    cc_snapshot_t s;
+    s.cutoff               = voice_get_cutoff();
+    s.resonance            = voice_get_resonance();
+    s.delay_wet            = delay_get_wet();
+    s.delay_feedback       = delay_get_feedback();
+    s.reverb_wet           = reverb_get_wet();
+    s.compressor_threshold = compressor_get_threshold();
+    return s;
+}
+
+/* Reset every CC-mappable parameter to a known INTERIOR value so the
+   (V - 64) * scale delta arithmetic does not trip the parameter's
+   clamp ceiling/floor. Voice controls clamp [30..180], delay wet
+   [0..256] / feedback [0..200], reverb wet [0..256], compressor
+   threshold [8000..30000]. Targets below are 20 units away from any
+   clamp so the test's +/- 36 / +/- 2160 deltas can never trip the
+   edge clamps. Pre-existing static state from earlier tests in the
+   same RUN_ALL cycle is normalized by this helper, so each CC test
+   starts from a known baseline.
+
+   One-shot delta arithmetic via the existing clamp-on-write behavior
+   of the adjust_* helpers -- NOT a +/- N stepping loop, which
+   infinite-oscillates when the starting value is not a multiple of
+   N (code-review blocker 2026-07-07). The clamp inside voice_adjust_* /
+   delay_adjust_* / reverb_adjust_* / compressor_adjust_* clamps the
+   post-write value to the documented range, so passing the raw
+   `target - current` delta works for any current state. */
+static void reset_cc_targets_to_interior(void) {
+    voice_adjust_cutoff(80 - (int)voice_get_cutoff());
+    voice_adjust_resonance(80 - (int)voice_get_resonance());
+    delay_adjust_wet(100 - (int)delay_get_wet());
+    delay_adjust_feedback(100 - (int)delay_get_feedback());
+    reverb_adjust_wet(100 - (int)reverb_get_wet());
+    compressor_adjust_threshold(20000 - (int)compressor_get_threshold());
+}
+
+/* Full single-CC dispatch. The filter argument lets T031 drop into
+   the drain with a non-default --midi-channel N; the (channel,
+   cc_num, value) triple is the live MIDI message surface. Resets
+   the queue via audio_midi_init() so each call is self-contained. */
+static void dispatch_one_cc_full(uint8_t filter, uint8_t channel,
+                                 uint8_t cc_num, uint8_t value) {
+    audio_midi_init(filter);    /* -1 = opt-out, 0 = all, 1..16 = single channel */
+    midi_event_t ev = {
+        .type    = MIDI_EVENT_CC,
+        .channel = channel,
+        .key     = cc_num,
+        .value   = value
+    };
+    audio_midi_enqueue(&ev);
+    audio_midi_drain();
+}
+
+/* Convenience wrapper for the no-channel-filter T025 sub-tests. */
+static void dispatch_one_cc(uint8_t channel, uint8_t cc_num, uint8_t value) {
+    dispatch_one_cc_full(0, channel, cc_num, value);
+}
+
+/* T025a (FR-020 + H1): CC#1 (mod wheel) -> CC_TARGET_CUTOFF
+ * scale=+1. delta = (100-64)*1 = +36. */
+TEST(midi_cc1_mod_wheel_to_cutoff) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    uint16_t baseline = voice_get_cutoff();
+    dispatch_one_cc(1, 1, 100);
+    ASSERT_EQ(voice_get_cutoff(), baseline + 36);
+}
+
+/* T025b: CC#7 (channel volume per MIDI 1.0 standard name) -> 
+ * CC_TARGET_COMPRESSOR_THRESH scale=+60 per data-model.md Entity 4.
+ * Note: spec routes CC#7 to the master-bus COMPRESSOR threshold, not
+ * a literal per-channel volume knob -- the "channel volume" name is
+ * the standard MIDI 1.0 controller; the synth's mapping is to
+ * threshold per the spec contract. The user's request list
+ * (CC#7 channel-volume) is honored as the controller identity, not
+ * as a hint to redefine the target. delta = (100-64)*60 = +2160. */
+TEST(midi_cc7_channel_volume_to_compressor) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    uint16_t baseline = compressor_get_threshold();
+    dispatch_one_cc(1, 7, 100);
+    ASSERT_EQ(compressor_get_threshold(), (uint16_t)(baseline + 2160));
+}
+
+/* T025c (FR-020): CC#71 (resonance / timbre) -> CC_TARGET_RESONANCE
+ * scale=+1. */
+TEST(midi_cc71_resonance) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    uint16_t baseline = voice_get_resonance();
+    dispatch_one_cc(1, 71, 100);
+    ASSERT_EQ(voice_get_resonance(), baseline + 36);
+}
+
+/* T025d (FR-020): CC#74 (brightness) -> CC_TARGET_CUTOFF scale=+1.
+ * Same target as CC#1; FR-022 multi-CC composition is verified
+ * separately in T028. */
+TEST(midi_cc74_brightness_to_cutoff) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    uint16_t baseline = voice_get_cutoff();
+    dispatch_one_cc(1, 74, 100);
+    ASSERT_EQ(voice_get_cutoff(), baseline + 36);
+}
+
+/* T025e (FR-020): CC#91 (reverb send) -> CC_TARGET_REVERB_WET
+ * scale=+1. */
+TEST(midi_cc91_reverb_send) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    uint16_t baseline = reverb_get_wet();
+    dispatch_one_cc(1, 91, 100);
+    ASSERT_EQ(reverb_get_wet(), baseline + 36);
+}
+
+/* T025f (FR-020): CC#93 (chorus / delay send) -> CC_TARGET_DELAY_WET
+ * scale=+1. */
+TEST(midi_cc93_delay_send) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    uint16_t baseline = delay_get_wet();
+    dispatch_one_cc(1, 93, 100);
+    ASSERT_EQ(delay_get_wet(), baseline + 36);
+}
+
+/* T025g: user's representative CC#0 (Bank Select MSB) is
+ * CC_TARGET_NONE per spec -- dispatching it must NOT touch any
+ * parameter. State-diff assertion on all 6 modifiable params. */
+TEST(midi_cc0_bank_select_noop) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    cc_snapshot_t before = snapshot_cc_params();
+    dispatch_one_cc(1, 0, 100);
+    cc_snapshot_t after  = snapshot_cc_params();
+    ASSERT_EQ(after.cutoff,               before.cutoff);
+    ASSERT_EQ(after.resonance,            before.resonance);
+    ASSERT_EQ(after.delay_wet,            before.delay_wet);
+    ASSERT_EQ(after.delay_feedback,       before.delay_feedback);
+    ASSERT_EQ(after.reverb_wet,           before.reverb_wet);
+    ASSERT_EQ(after.compressor_threshold, before.compressor_threshold);
+}
+
+/* T025h: CC#11 (expression pedal, MIDI 1.0 standard name) is
+ * CC_TARGET_NONE per spec. */
+TEST(midi_cc11_expression_noop) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    cc_snapshot_t before = snapshot_cc_params();
+    dispatch_one_cc(1, 11, 100);
+    cc_snapshot_t after  = snapshot_cc_params();
+    ASSERT_EQ(after.cutoff,               before.cutoff);
+    ASSERT_EQ(after.resonance,            before.resonance);
+    ASSERT_EQ(after.delay_wet,            before.delay_wet);
+    ASSERT_EQ(after.delay_feedback,       before.delay_feedback);
+    ASSERT_EQ(after.reverb_wet,           before.reverb_wet);
+    ASSERT_EQ(after.compressor_threshold, before.compressor_threshold);
+}
+
+/* T025i: CC#64 (sustain pedal, MIDI 1.0 standard name) is
+ * CC_TARGET_NONE per spec. The user's "sustain pedal gate" naming
+ * refers to the standard MIDI 1.0 behavior (pedal holds notes past
+ * Note Off), but v1 keeps CC#64 in NONE per data-model.md Entity 4
+ * (Principle VII: unassigned CCs silently dropped, sustain-pedal
+ * hold semantics reserved for future US-phase). The dispatch must
+ * produce zero state changes. */
+TEST(midi_cc64_sustain_pedal_noop) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    cc_snapshot_t before = snapshot_cc_params();
+    dispatch_one_cc(1, 64, 100);
+    cc_snapshot_t after  = snapshot_cc_params();
+    ASSERT_EQ(after.cutoff,               before.cutoff);
+    ASSERT_EQ(after.resonance,            before.resonance);
+    ASSERT_EQ(after.delay_wet,            before.delay_wet);
+    ASSERT_EQ(after.delay_feedback,       before.delay_feedback);
+    ASSERT_EQ(after.reverb_wet,           before.reverb_wet);
+    ASSERT_EQ(after.compressor_threshold, before.compressor_threshold);
+}
+
+/* T025j: CC#123 (All Notes Off, MIDI 1.0 standard message) is
+ * CC_TARGET_NONE per spec. v1 does NOT auto-release held
+ * MIDI-triggered notes on CC#123 -- the synth continues from
+ * internal generative state per FR-034 (disconnect-handling
+ * contract applies to CC values too). The dispatch must produce
+ * zero state changes. */
+TEST(midi_cc123_all_notes_off_noop) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    cc_snapshot_t before = snapshot_cc_params();
+    dispatch_one_cc(1, 123, 100);
+    cc_snapshot_t after  = snapshot_cc_params();
+    ASSERT_EQ(after.cutoff,               before.cutoff);
+    ASSERT_EQ(after.resonance,            before.resonance);
+    ASSERT_EQ(after.delay_wet,            before.delay_wet);
+    ASSERT_EQ(after.delay_feedback,       before.delay_feedback);
+    ASSERT_EQ(after.reverb_wet,           before.reverb_wet);
+    ASSERT_EQ(after.compressor_threshold, before.compressor_threshold);
+}
+
+/* T025k: spec's other NONE entries CC#16/17/19 (General Purpose
+ * 1/2/4) are silently dropped per Principle VII. Single assertion
+ * dispatches all three and verifies zero side effects on the
+ * same 6 parameters. */
+TEST(midi_cc16_17_19_gp_noop) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    cc_snapshot_t before = snapshot_cc_params();
+    dispatch_one_cc(1, 16, 100);
+    dispatch_one_cc(1, 17, 100);
+    dispatch_one_cc(1, 19, 100);
+    cc_snapshot_t after  = snapshot_cc_params();
+    ASSERT_EQ(after.cutoff,               before.cutoff);
+    ASSERT_EQ(after.resonance,            before.resonance);
+    ASSERT_EQ(after.delay_wet,            before.delay_wet);
+    ASSERT_EQ(after.delay_feedback,       before.delay_feedback);
+    ASSERT_EQ(after.reverb_wet,           before.reverb_wet);
+    ASSERT_EQ(after.compressor_threshold, before.compressor_threshold);
+}
+
+/* T028 (FR-022): Two CCs targeting the same parameter sum
+ * additively. CC#1 V=100 -> delta=+36; CC#74 V=80 -> delta=+16.
+ * Total: baseline + 36 + 16 = +52 against CUTOFF. */
+TEST(midi_cc_multi_sums_additive_to_cutoff) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    uint16_t baseline = voice_get_cutoff();
+    audio_midi_init(0);
+    midi_event_t e1 = { .type = MIDI_EVENT_CC, .channel = 1, .key = 1,  .value = 100 };
+    midi_event_t e2 = { .type = MIDI_EVENT_CC, .channel = 1, .key = 74, .value = 80  };
+    audio_midi_enqueue(&e1);
+    audio_midi_enqueue(&e2);
+    audio_midi_drain();
+    ASSERT_EQ(voice_get_cutoff(), baseline + 36 + 16);
+}
+
+/* T031 (US3 / FR-004 + M1 fix): --midi-channel N drops events
+ * whose channel != N at drain time, BEFORE the CC dispatch.
+ * With channel_filter = 5: events on channels 1, 2, 3, 4, 6, 7,
+ * 8, 9, 10, 11, 12, 13, 14, 15, 16 are silently dropped; events
+ * on channel 5 dispatch and reach the CC dispatch switch in
+ * audio_midi_drain(). */
+TEST(midi_channel_filter_drops_non_matching) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    uint16_t baseline = voice_get_cutoff();
+    /* filter=5, channel=1 -> dropped at drain (channel_filter=5 != 1). */
+    dispatch_one_cc_full(5, 1,  1, 100);
+    ASSERT_EQ(voice_get_cutoff(), baseline);
+    /* filter=5, channel=5 -> dispatched (channel_filter=5 == 5). */
+    dispatch_one_cc_full(5, 5,  1, 100);
+    ASSERT_EQ(voice_get_cutoff(), baseline + 36);
+    /* filter=5, channel=16 -> dropped (channel_filter=5 != 16). */
+    dispatch_one_cc_full(5, 16, 1, 100);
+    ASSERT_EQ(voice_get_cutoff(), baseline + 36);
+    /* filter=5, channel=6 -> dropped (channel_filter=5 != 6). */
+    dispatch_one_cc_full(5, 6,  1, 100);
+    ASSERT_EQ(voice_get_cutoff(), baseline + 36);
+    /* Clean up: opt out of MIDI for the rest of the test cycle. */
+    audio_midi_init(-1);
+}
+
+/* T032 (US3): audio_midi_list_devices NULL-pointer guard. NULL
+ * out or NULL count each return -1 (audio_midi.c:audio_midi_list_devices
+ * "if (out == 0 || count == 0) return -1;" paranoia guard). Valid
+ * pointers return whatever the platform backend returns -- in this
+ * unit-test environment, the post-T022 ALSA / winmm backends return
+ * -1 because there is no MIDI device to enumerate. CI runners have
+ * the real backends linked in. */
+TEST(midi_list_devices_null_guard) {
+    int32_t count = 0;
+    midi_input_device_t devs[4];
+    /* NULL out pointer -> -1. */
+    ASSERT_EQ(audio_midi_list_devices(NULL, &count), -1);
+    /* NULL count pointer -> -1. */
+    ASSERT_EQ(audio_midi_list_devices(devs, NULL), -1);
+    /* Both valid: returns whatever the platform backend has -- in
+     * this unit-test environment, the post-T022 backend returns -1
+     * because there is no MIDI device to enumerate. */
+    ASSERT_EQ(audio_midi_list_devices(devs, &count), -1);
+}
+
+/* T033: live MODE dispatch coverage-lift. The T019 --no-midi
+ * helper-test early-returns on (g_enabled == 0) BEFORE reaching
+ * audio_midi_drain's switch, so its enqueue+drain flow never lands
+ * on the NOTE_ON / NOTE_OFF / CC / default arms. The new T025 CC
+ * tests ONLY enqueue MIDI_EVENT_CC events, so the NOTE_ON + NOTE_OFF
+ * arms AND the default: arm in the dispatch switch are unreachable
+ * without a dedicated live-mode test. Coverage of audio_midi.c
+ * without T033 lands at ~88-91% (per post-fix code-review); adding
+ * the 95% gate to ci.yml in this PR relies on T033 to clear it.
+ *
+ * Three sub-phases, each targeting a distinct switch arm:
+ *   P1: NOTE_ON V=100 -> live NOTE_ON's V>0 sub-path
+ *       (voice_pool_trigger_midi called; mask != 0 immediately after).
+ *   P2: matching NOTE_OFF (key=48, channel=1) -> live NOTE_OFF arm
+ *       (voice_pool_release_midi drives the matched voice to ENV_R;
+ *       voice_pool_mix() through the 28800-sample release (ROLE_MELODY)
+ *       returns mask to 0).
+ *   P3: NOTE_ON V=0 -> live NOTE_ON's V=0 sub-path (FR-011 special
+ *       case: V=0 == Note Off). The drain's Note On branch contains
+ *       `if (ev.value == 0) release else trigger`; this pre-triggers
+ *       key=50 first so the subsequent V=0 has a matching voice to
+ *       release. mask != 0 confirms the V=0 branch reached
+ *       voice_pool_release_midi. */
+TEST(midi_note_on_off_live_dispatch) {
+    test_init_synth();
+    voice_pool_init();
+    audio_midi_init(0);    /* enable the MIDI dispatch path */
+
+    /* P1: live NOTE_ON branch (V>0 sub-path). */
+    midi_event_t ev_on = {
+        .type    = MIDI_EVENT_NOTE_ON,
+        .channel = 1,
+        .key     = 48,
+        .value   = 100
+    };
+    audio_midi_enqueue(&ev_on);
+    audio_midi_drain();
+    ASSERT_TRUE(voice_pool_active_mask() != 0u);
+
+    /* P2: live NOTE_OFF branch (matching key + channel -> release). */
+    midi_event_t ev_off = {
+        .type    = MIDI_EVENT_NOTE_OFF,
+        .channel = 1,
+        .key     = 48,
+        .value   = 0
+    };
+    audio_midi_enqueue(&ev_off);
+    audio_midi_drain();
+    /* ROLE_MELODY release = 28800 samples (env_table + role_release).
+     * Drive well past it (40000 voice_pool_mix calls = 1 full release
+     * + the preceding attack+decay for the FM voice path). */
+    for (int n = 0; n < 40000; n++) voice_pool_mix();
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+
+    /* P3: live NOTE_ON branch (V=0 sub-path per FR-011). Pre-trigger
+     * key=50 first so a later V=0 Note On has a matching voice to
+     * release; without a prior active voice, the V=0 release path is
+     * a quiet no-op (no observable side effect on mask). */
+    midi_event_t ev_pre_50 = {
+        .type    = MIDI_EVENT_NOTE_ON,
+        .channel = 1,
+        .key     = 50,
+        .value   = 100
+    };
+    audio_midi_enqueue(&ev_pre_50);
+    audio_midi_drain();
+    ASSERT_TRUE(voice_pool_active_mask() != 0u);
+    midi_event_t ev_v0_50 = {
+        .type    = MIDI_EVENT_NOTE_ON,
+        .channel = 1,
+        .key     = 50,
+        .value   = 0   /* FR-011: V=0 == Note Off */
+    };
+    audio_midi_enqueue(&ev_v0_50);
+    audio_midi_drain();
+    /* V=0 path called voice_pool_release_midi; the matched voice is
+     * now in ENV_R, which counts as "active" per voice_pool_active_mask. */
+    ASSERT_TRUE(voice_pool_active_mask() != 0u);
+    /* Drive release completion for cleanup. */
+    for (int n = 0; n < 40000; n++) voice_pool_mix();
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+
+    /* Opt out of MIDI for downstream tests. */
+    audio_midi_init(-1);
+}
+
+/* ============================================================
+/* T034: audio_midi_open / audio_midi_close round-trip. Closes the
+ * last coverage gap in audio_midi.c: no test exercises the platform
+ * backend #if-branch in audio_midi_open() or the g_enabled reset in
+ * audio_midi_close(). The post-T022 platform stubs return -1 from
+ * audio_midi_linux_init / audio_midi_winmm_init / audio_midi_linux_list_devices
+ * etc., so audio_midi_open also returns -1 from this unit-test env.
+ * After audio_midi_close() flips g_enabled to 0, the next drain is
+ * a no-op even if a NOTE_ON is enqueued -- simulates the real-world
+ * teardown sequence (init -> open -> drain loop -> close -> init -1). */
+TEST(midi_open_close_round_trip) {
+    test_init_synth();
+    voice_pool_init();
+    audio_midi_init(0);
+    /* Post-T022 platform backends return -1 from the Phase 1+2 stubs. */
+    ASSERT_EQ(audio_midi_open(0), -1);
+    ASSERT_EQ(audio_midi_open(1), -1);
+    /* g_enabled is still 1 here -- drain would still dispatch. Tear
+     * down via audio_midi_close and verify the g_enabled gate kicks in. */
+    audio_midi_close();
+    midi_event_t ev_on = {
+        .type    = MIDI_EVENT_NOTE_ON,
+        .channel = 1,
+        .key     = 48,
+        .value   = 100
+    };
+    audio_midi_enqueue(&ev_on);
+    audio_midi_drain();
+    /* Drain after close -> no dispatch -> mask stays 0. */
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+    /* Re-arm opt-out for downstream tests. */
+    audio_midi_init(-1);
 }
 
 /* ============================================================

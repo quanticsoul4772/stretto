@@ -25,6 +25,7 @@
  */
 #include "audio_midi.h"
 #include "voice.h"
+#include "effects.h"    /* T030 CC dispatch reaches voice/reverb/delay/compressor */
 #include "gen.h"
 
 /* --- Module-static state --- *
@@ -43,6 +44,38 @@ typedef struct {
 } midi_queue_t;
 
 static midi_queue_t q;  /* BSS-allocated; arena-allocated mirror below. */
+
+/* CC_MAP[128] - the static CC -> synth-parameter routing table (per
+ * data-model.md Entity 4 + tasks.md T029). One entry per MIDI CC
+ * number; unspecified indices are zero-initialized by the designated
+ * initializer (C99 §6.7.8 p21) so they default to { target=NONE,
+ * scale=0 } and the dispatch below treats them as silently dropped.
+ * Total footprint: 128 * sizeof(cc_map_entry_t) bytes in .rodata
+ * (data-model.md budgets 512 B; actual may be 8 B/entry on platforms
+ * where cc_target_t is enum-int-sized -- documented as a known spec
+ * drift so a future budget bump can lift it cleanly).
+ *
+ * Scale is signed (int8) so the (V - 64) * scale delta can swing
+ * negative within `voice_get_*` clamp ranges. CC#7's +60 scale makes
+ * (V-64)*60 reach roughly +/-3780 on V swing 0..127 against the
+ * compressor's [8000, 30000] threshold range -- well-matched to the
+ * documented ~+/-63 swing on the +/-1-scale CCs against the user's
+ * narrower [30, 180] voice_cutoff / [0, 180] voice_resonance clamps. */
+static const cc_map_entry_t CC_MAP[128] = {
+    [0]   = { .target = CC_TARGET_NONE },                            /* Bank Select (MSB) - unassigned */
+    [1]   = { .target = CC_TARGET_CUTOFF,           .scale = +1  },  /* Mod Wheel */
+    [7]   = { .target = CC_TARGET_COMPRESSOR_THRESH,.scale = +60 },  /* Channel Volume (MIDI 1.0 standard name; synth routes to compressor threshold per data-model.md Entity 4) */
+    [10]  = { .target = CC_TARGET_NONE },                            /* Pan - unassigned */
+    [16]  = { .target = CC_TARGET_NONE },                            /* General Purpose 1 - silently dropped per Principle VII */
+    [17]  = { .target = CC_TARGET_NONE },                            /* General Purpose 2 */
+    [19]  = { .target = CC_TARGET_NONE },                            /* General Purpose 4 */
+    [64]  = { .target = CC_TARGET_NONE },                            /* Sustain Pedal - silently dropped per Principle VII (Phase 2 reserved) */
+    [71]  = { .target = CC_TARGET_RESONANCE,        .scale = +1  },  /* Resonance / Timbre */
+    [74]  = { .target = CC_TARGET_CUTOFF,           .scale = +1  },  /* Brightness / Cutoff */
+    [91]  = { .target = CC_TARGET_REVERB_WET,       .scale = +1  },  /* Reverb Send */
+    [93]  = { .target = CC_TARGET_DELAY_WET,        .scale = +1  },  /* Delay / Chorus Send */
+    [123] = { .target = CC_TARGET_NONE }                             /* All Notes Off - silently dropped per Principle VII */
+};
 
 /* FR-010 scale-degree + octave-clamp mapper. Computes the absolute
    MIDI note corresponding to raw input key K:
@@ -174,11 +207,38 @@ void audio_midi_drain(void) {
             case MIDI_EVENT_NOTE_OFF:
                 voice_pool_release_midi(mapped_key, ev.channel);
                 break;
-            case MIDI_EVENT_CC:
-                /* US2 phase: dispatch via CC_MAP[ev.key] -> adjust_*(delta).
-                 * Phase 1+2 leaves the slot empty so --midi is functional
-                 * for Note On/Off routes only. */
+            case MIDI_EVENT_CC: {
+                /* US2 (spec 003 + tasks.md T030): CC dispatch via
+                 * CC_MAP[ev.key] -> adjust_*(delta). Formula
+                 * (data-model.md Entity 4 + H1 fix):
+                 *   delta = (V - 64) * scale
+                 * CC_TARGET_NONE entries are silently dropped --
+                 * no fprintf, no callback overhead (Principle VII).
+                 * Multiple CCs targeting the same parameter sum
+                 * additively per FR-022 because the adjust_* calls
+                 * compose over the previous value. */
+                const cc_map_entry_t *entry = &CC_MAP[ev.key];
+                if (entry->target == CC_TARGET_NONE) break;
+                int delta = ((int)ev.value - 64) * (int)entry->scale;
+                switch (entry->target) {
+                    case CC_TARGET_CUTOFF:            voice_adjust_cutoff(delta);            break;
+                    case CC_TARGET_RESONANCE:         voice_adjust_resonance(delta);         break;
+                    case CC_TARGET_REVERB_WET:        reverb_adjust_wet(delta);              break;
+                    case CC_TARGET_DELAY_WET:         delay_adjust_wet(delta);               break;
+                    case CC_TARGET_DELAY_FEEDBACK:    delay_adjust_feedback(delta);          break;
+                    case CC_TARGET_FILTER_LFO_DEPTH:  voice_adjust_lfo_filter_depth(delta);  break;
+                    case CC_TARGET_MUTATION_RATE:
+                        /* gen_force_mutate() not yet implemented (Q-phase
+                         * out of scope for v1); CC is silently absorbed
+                         * so a producer that targets this slot does not
+                         * error, but produces no audible effect. */
+                        (void)delta;
+                        break;
+                    case CC_TARGET_COMPRESSOR_THRESH: compressor_adjust_threshold(delta);   break;
+                    default: break;  /* future targets: harmless no-op */
+                }
                 break;
+            }
             default:
                 break;
         }

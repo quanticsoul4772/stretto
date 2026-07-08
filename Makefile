@@ -150,7 +150,7 @@ clean:
 	       tests/unit/test_voice tests/unit/test_gen \
 	       tests/unit/test_lsystem tests/unit/test_chord_progression \
 	       tests/unit/test_section tests/unit/test_density \
-	       tests/unit/test_motif \
+	       tests/unit/test_motif tests/unit/test_midi \
 	       tests/unit/test_mixer tests/unit/test_wav tests/unit/test_keys \
 	       $(GENS) $(HEADERS) *.o *.win.o
 
