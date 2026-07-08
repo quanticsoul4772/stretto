@@ -1,3 +1,8 @@
+# CI step numbering: GitHub Actions auto-prepends `Set up job` to every
+# job, so UI step numbers are 1-indexed from the auto-added step. The
+# explicit `actions/checkout@v4` step is step #2 in the UI (not #1).
+# Use UI numbers in PR bodies / commit messages; the YAML order is
+# 0-indexed from `actions/checkout@v4` and internal to this file.
 name: CI
 
 on:
