@@ -7,6 +7,21 @@ LDFLAGS = -Wl,--gc-sections -Wl,-z,norelro \
           -Wl,--hash-style=sysv -no-pie \
           -pthread -latomic
 
+# libasound link flag, dragged in only when the system has
+# libasound2-dev installed (provides alsa.pc). Since T022 the
+# real ALSA worker in audio_midi_linux.c references libasound
+# symbols, every link that includes audio_midi_linux.o needs
+# this - the synth target, the synth_debug target, the
+# coverage-instrumented synth_cov target, the coverage unit-
+# test loop, and the per-test unit-test rule. CI installs
+# libasound2-dev (ci.yml apt-get line) so all link lines
+# resolve; dev boxes without it still build partial artifacts
+# (audio_midi_linux.o fails to link, surfaced at the synth
+# target). Detection uses pkg-config rather than ldconfig so
+# we honor the alsa.pc-installed contract that libasound2-dev
+# provides.
+LIBASOUND = $(shell pkg-config --exists alsa && echo -lasound)
+
 # UPX_BIN avoids the literal name "UPX" because the upx binary reads
 # its own UPX environment variable for default options.
 UPX_BIN   ?= upx
@@ -104,17 +119,18 @@ wavetable.h: gen_wavetable
 	./gen_wavetable > wavetable.h
 
 synth: $(OBJS)
-# -lasound is dragged in only when the system has libasound2-dev
-# installed. Until T022 lands the real ALSA worker in
-# audio_midi_linux.c, no symbols in any .o reference libasound, so
-# the linker is free to skip the -l flag. This keeps CI green when
-# the build image lacks libasound (typical for a stock Ubuntu
-# runner) while preserving a forward-compatible link command for
-# dev machines that do have it. Detection uses pkg-config rather
-# than ldconfig so we honor the alsa.pc-installed contract that
-# libasound2-dev provides.
-	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -lpulse \
-	    $(shell pkg-config --exists alsa && echo -lasound) -o synth
+# -lasound (via $(LIBASOUND)) is dragged in only when the system
+# has libasound2-dev installed; see the LIBASOUND definition
+# above for the rationale. Since T022 the real ALSA worker in
+# audio_midi_linux.c references libasound symbols, $(LIBASOUND)
+# resolves to -lasound on any link that includes audio_midi_linux.o
+# - the synth target, synth_debug, the coverage-instrumented
+# synth_cov, the coverage unit-test loop, and the per-test
+# unit-test rule. CI installs libasound2-dev (ci.yml apt-get line)
+# so all link lines resolve; dev boxes without it still build
+# partial artifacts (audio_midi_linux.o fails to link, surfaced
+# at this target).
+	gcc $(CFLAGS) $(LDFLAGS) $(OBJS) -lpulse $(LIBASOUND) -o synth
 	strip -s -R .comment synth
 
 synth.packed: synth
@@ -154,7 +170,15 @@ UNIT_TEST_SRCS = $(wildcard tests/unit/test_*.c)
 UNIT_TEST_BINS = $(UNIT_TEST_SRCS:.c=)
 
 tests/unit/test_%: tests/unit/test_%.c tests/unit/test.h $(OBJS_NO_MAIN)
-	gcc -O2 -Wall -no-pie -Itests/unit $< $(OBJS_NO_MAIN) -o $@ -lm -pthread -latomic
+# -pthread -latomic is REQUIRED here (no flag bag, e.g. CFLAGS/LDFLAGS,
+# propagates into this rule): $(OBJS_NO_MAIN) transitively links
+# audio_midi.o (uses __atomic_*) and audio_midi_linux.o (uses
+# pthread_create / pthread_join / __atomic_*). Without these flags
+# the link fails on architectures where libatomic is a separate
+# library and on any host where libpthread symbols are not already
+# pulled in by libc itself. $(LIBASOUND) covers audio_midi_linux.o's
+# libasound references.
+	gcc -O2 -Wall -no-pie -Itests/unit $< $(OBJS_NO_MAIN) -o $@ -lm -pthread -latomic $(LIBASOUND)
 
 test-unit: $(UNIT_TEST_BINS)
 	@echo "=== unit tests ==="
@@ -239,7 +263,7 @@ $(BUILD_COV)/%.o: %.c | $(BUILD_COV)
 	gcc $(COV_FLAGS) -c $< -o $@
 
 coverage: $(COV_OBJS)
-	gcc $(COV_FLAGS) $(COV_OBJS) -lpulse -o $(BUILD_COV)/synth_cov
+	gcc $(COV_FLAGS) $(COV_OBJS) -lpulse $(LIBASOUND) -o $(BUILD_COV)/synth_cov
 	@echo "=== render-mode regression ==="
 	# 110 s (~55 bars at 2.00 s/bar) covers INTRO (bars 0-23), BODY (24-47)
 	# and TENSION (48+) so section-gated branches in gen.c - chord
@@ -251,7 +275,7 @@ coverage: $(COV_OBJS)
 		base=$${t%.c}; \
 		out=$(BUILD_COV)/$$base.cov; \
 		gcc $(COV_FLAGS) -no-pie -Itests/unit $$t $(COV_TEST_OBJS) \
-		    -o $$out -lm; \
+		    -o $$out -lm $(LIBASOUND); \
 		./$$out >/dev/null || true; \
 	done
 	@echo "=== per-file line coverage (measured set only) ==="
@@ -282,7 +306,11 @@ DEBUG_OBJS   = $(OBJS:.o=.dbg.o)
 	gcc $(DEBUG_FLAGS) -MMD -MP -MF $*.dbg.d -c $< -o $@
 
 synth_debug: $(DEBUG_OBJS)
-	gcc $(DEBUG_FLAGS) $(DEBUG_OBJS) -lpulse -pthread -latomic -o synth_debug
+# $(DEBUG_FLAGS) already carries -pthread -latomic, so the explicit
+# literals that earlier Makefile revisions added were redundant.
+# $(LIBASOUND) tacks on -lasound (when libasound2-dev is installed)
+# because $(DEBUG_OBJS) includes audio_midi_linux.dbg.o.
+	gcc $(DEBUG_FLAGS) $(DEBUG_OBJS) -lpulse $(LIBASOUND) -o synth_debug
 
 debug: synth_debug
 	@echo "Built: synth_debug (unoptimized, asserts enabled, gdb-friendly)"
