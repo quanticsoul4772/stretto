@@ -33,12 +33,13 @@ int main(int argc, char **argv) {
        first and the MIDI dispatch block second.) */
     int positional_argc = 1;
     char *positional[8] = { argv[0] };
-    int midi_explicit_no    = 0;  /* --no-midi */
-    int midi_channel_filter = 0;  /* --midi-channel N (0 = all) */
-    int midi_list_devices   = 0;  /* --midi-list-devices */
-    int midi_explicit_idx   = -1; /* --midi <N>; -1 = unspecified */
-    int midi_default        = 0;  /* --midi-default alias */
-    int midi_seen           = 0;  /* any --midi-related flag was seen */
+    int midi_explicit_no     = 0;  /* --no-midi */
+    int midi_channel_filter  = 0;  /* --midi-channel N (0 = all) */
+    int midi_list_devices    = 0;  /* --midi-list-devices */
+    int midi_explicit_idx    = -1; /* --midi <N>; -1 = unspecified */
+    int midi_default_open    = 0;  /* --midi-default alias for --midi 0 (FR-002) */
+    int midi_wildcard        = 0;  /* --midi with no arg = subscribe all matching */
+    int midi_seen            = 0;  /* any --midi-related flag was seen */
 
     for (int i = 1; i < argc && positional_argc < 8; i++) {
         if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
@@ -54,7 +55,7 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--midi-list-devices") == 0) {
             midi_list_devices = 1; midi_seen = 1;
         } else if (strcmp(argv[i], "--midi-default") == 0) {
-            midi_default = 1; midi_seen = 1;
+            midi_default_open = 1; midi_seen = 1;
         } else if (strcmp(argv[i], "--midi-channel") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "--midi-channel: missing argument\n");
@@ -71,18 +72,28 @@ int main(int argc, char **argv) {
             midi_channel_filter = (int)ch;
             midi_seen = 1;
         } else if (strcmp(argv[i], "--midi") == 0) {
-            /* Optional numeric index. --midi alone = default device;
-               --midi <N> = explicit index. Non-numeric following arg
-               is left in positional[] for downstream parsing. */
+            /* Optional numeric index. --midi alone = wildcard (no
+               specific device); --midi <N> = explicit index decode.
+               A non-numeric following arg is left in positional[] for
+               downstream parsing (matches the prior convention). */
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 char *end;
                 unsigned long idx = strtoul(argv[i + 1], &end, 10);
                 if (*end == '\0') {
                     midi_explicit_idx = (int)idx;
                     i++;
+                } else {
+                    /* a non-numeric arg followed --midi (e.g.
+                       "--midi --no-ui") -- treat that as wildcard. */
+                    midi_wildcard = 1;
                 }
+            } else {
+                /* No following arg (e.g. "--midi" at the end of argv)
+                   OR the following arg starts with '-' (another
+                   flag) -- either way, treat as wildcard. */
+                midi_wildcard = 1;
             }
-            midi_default = 1; midi_seen = 1;
+            midi_seen = 1;
         } else {
             positional[positional_argc++] = argv[i];
         }
@@ -109,18 +120,33 @@ int main(int argc, char **argv) {
     }
     if (midi_explicit_no) {
         audio_midi_init(-1);  /* opt-out: queue stays disabled */
-    } else if (midi_explicit_idx >= 0 || midi_default) {
-        int idx = midi_explicit_idx >= 0 ? midi_explicit_idx : 0;
+    } else if (midi_explicit_idx >= 0 || midi_default_open || midi_wildcard) {
+        /* Resolve device_index to audio_midi_open():
+         *   --midi <N>:    explicit N (decode on Linux: client<<8|port,
+         *                 pass direct on WinMM)
+         *   --midi-default: explicit 0 per FR-002 (alias for --midi 0)
+         *   --midi (no N): wildcard -1 (audio_midi_linux_init walks
+         *                 enumerate filter and auto-subscribe; winmm
+         *                 falls back to WAVE_MAPPER)
+         * g_current_device_index on the backend tracks this for
+         * idempotency + close-and-rebind on N change. */
+        int idx;
+        if (midi_explicit_idx >= 0)      idx = midi_explicit_idx;
+        else if (midi_default_open)      idx = 0;
+        else /* midi_wildcard */         idx = -1;
         audio_midi_init(midi_channel_filter);
         if (audio_midi_open(idx) != 0) {
-            /* Phase 1+2: backend is a stub returning -1. US3 lands a
-               real pthread_create + ALSA sequencer open and fails
-               loudly if the device is unavailable. */
+            /* FR-002 + FR-034 semantics: --midi with a specific N
+             * fails loudly if the device is gone; --midi (wildcard)
+             * also fails if zero MIDI hw is enumerated. The synth
+             * continues playing from internal generative state per
+             * FR-005 + FR-034 (no auto-reconnect) so a missing
+             * keyboard does NOT crash the run. */
+            const char *kind = (idx < 0) ? "(wildcard)"
+                            : midi_default_open ? "(default) " : "";
             fprintf(stderr,
-                "MIDI: device index %d unavailable "
-                "(backend lands in US3 T022/T023)\n", idx);
-            /* Continue without MIDI — synth still plays from
-               internal generative state per FR-005. */
+                "MIDI: device index %d%s unavailable "
+                "(see --midi-list-devices)\n", idx, kind);
         }
     } else if (midi_seen) {
         /* Saw --midi-channel only; init with that filter but don't open. */

@@ -75,6 +75,12 @@ static HMIDIIN g_hin = NULL;
  * primitive per C99 §6.7.3 and would only mislead future readers
  * into thinking plain volatile suffices for cross-thread access). */
 static uint32_t g_run = 0u;
+/* Last device_index passed in to audio_midi_winmm_init. -1 means
+ * "WAVE_MAPPER" (default) or "never initialized". Same value on a
+ * subsequent open is a no-op (idempotency); different value triggers
+ * close-then-reopen so a fresh g_hin is opened against the
+ * newly-selected device. */
+static int      g_current_device_index = -1;
 
 static MIDIHDR   g_sysex_hdrs [WINMM_SYSEX_BUFFERS];
 static uint8_t   g_sysex_bufs [WINMM_SYSEX_BUFFERS][WINMM_SYSEX_SIZE];
@@ -194,11 +200,23 @@ static void midiInProc(HMIDIIN hMidiIn, UINT wMsg,
 }
 
 int audio_midi_winmm_init(int device_index) {
-    if (g_hin != NULL) return 0;   /* idempotent */
+    /* Idempotent + re-bind: same device_index is a no-op (g_hin stays
+     * open, g_current_device_index unchanged). Different device_index
+     * tears down via audio_midi_winmm_close() before re-opening.
+     * main.c is expected to call audio_midi_close() between renders
+     * but the defensive close-and-rebind here keeps the contract
+     * usable for tests that don't (e.g. T034 round-trip env-flex
+     * calls audio_midi_open(0) then audio_midi_open(1)). */
+    if (g_hin != NULL && g_current_device_index == device_index) return 0;
+    if (g_hin != NULL) audio_midi_winmm_close();
 
-    /* device_index < 0 means "use the default mapper" (the one the
-       control panel routes controller "From" dropdown to). Positive
-       values index midiInGetNumDevs() enumeration. */
+    /* device_index >= 0 decodes the raw device id used by
+     * midiInGetNumDevs enumeration / --midi-list-devices enumeration
+     * output (per PR #108 enumerate -> midiInGetDevCapsA path).
+     * device_index < 0 means "use the default mapper" (the one the
+     * control panel routes controller "From" dropdown to). Negative
+     * is used by main.c when --midi is passed without an explicit
+     * N -- the operator has no specific device, so the OS picks. */
     UINT devid;
     if (device_index < 0) {
         devid = WAVE_MAPPER;
@@ -255,6 +273,7 @@ int audio_midi_winmm_init(int device_index) {
         g_sysex_in_use = 0;
         return -1;
     }
+    g_current_device_index = device_index;
     return 0;
 }
 

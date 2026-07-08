@@ -130,13 +130,29 @@ int audio_midi_open(int device_index) {
      * audio_midi_winmm_* and Windows builds errored on
      * audio_midi_linux_*.) */
 #if defined(__linux__) || defined(__APPLE__)
-    return audio_midi_linux_init(device_index);
+    int rc = audio_midi_linux_init(device_index);
 #elif defined(_WIN32)
-    return audio_midi_winmm_init(device_index);
+    int rc = audio_midi_winmm_init(device_index);
 #else
     (void)device_index;
-    return -1;
+    int rc = -1;
 #endif
+    /* FR-001 + FR-002 + FR-034 mirror: if the platform backend
+     * failed to bind (no hw plugged in, libasound missing, the
+     * addressed MIDI controller is unplugged, midiInOpen errored,
+     * etc.), reset g_enabled so audio_midi_enqueue /
+     * audio_midi_drain short-circuit on the next audio-thread tick.
+     * Without this, audio_midi_init()'s optimistic g_enabled = 1
+     * would persist past a failed audio_midi_open() and leave the
+     * synth believing a phantom device is bound -- a byte-divergence
+     * from the FR-050/FR-053 --no-midi baseline and a misleading CC
+     * surface for the operator (CCs would still modulate params even
+     * though no controller is producing them, because the ring is
+     * never drained). main.c's "MIDI: device index N unavailable"
+     * stderr still surfaces on its own without needing this side
+     * effect. */
+    if (rc != 0) g_enabled = 0;
+    return rc;
 }
 
 void audio_midi_close(void) {
