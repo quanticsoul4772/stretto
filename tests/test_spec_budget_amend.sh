@@ -48,6 +48,25 @@ if [ ! -f "${script}" ]; then
     exit 2
 fi
 
+# Guard: refuse to run on a dirty working tree. This test tampers
+# with .specify/memory/constitution.md and Makefile, and case 6's
+# recovery path uses `git checkout --` to restore from HEAD. If the
+# user has un-committed changes outside Constitution + Makefile, the
+# test will still work (it only restores those 2 files). But if the
+# user has un-committed changes INSIDE Constitution + Makefile, the
+# test's recovery path will clobber them silently -- which is
+# exactly the trap that the 035 amend drill fell into. Bail with
+# a clear message instead of producing confusing FAIL output.
+if ! git diff --quiet HEAD 2>/dev/null; then
+    echo "FATAL: dirty working tree -- aborting." >&2
+    echo "       Commit or stash your changes before running this test." >&2
+    echo "       (The test tampers with .specify/memory/constitution.md + Makefile and uses" >&2
+    echo "       'git checkout --' for recovery, which would clobber un-committed changes.)" >&2
+    echo "       Dirty files:" >&2
+    git status --short | head -10 >&2
+    exit 1
+fi
+
 # Backup file paths (used by the cleanup trap; .bak extension so
 # they're easy to spot in /tmp if cleanup fails partway).
 constitution_bak="/tmp/.test_spec_budget_amend_constitution.bak.$$"
