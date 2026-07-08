@@ -237,6 +237,7 @@ Two tools prevent future drift:
 | `tools/spec-budget-amend.sh` | Write helper: bumps 1-3 budgets in BOTH files in lockstep, prints a `git diff` for review, refuses to commit. | Run manually before a v1.X.0 amendment PR. Makes the amendment a 1-invocation edit. |
 | `tests/test_spec_budget_check.sh` | 5-scenario regression for the bridge (tamper Constitution, tamper Makefile, malformed constant, recovery via `git checkout`). | Automatic; runs on every PR. |
 | `tests/test_spec_budget_amend.sh` | 6-scenario regression for the amend helper (happy-path, atomic multi-amend, input validation, dry-run, refuse-to-commit, recovery). | Automatic; runs on every PR. |
+| `make verify` (calls `tools/verify-bridge.sh`) | One-command local dev check: runs the 3 verification artifacts in sequence (bridge check + 2 regression suites), exits on first failure with a clear per-step status + recovery hint. | **Run this before opening a PR** to catch spec↔build drift + amend helper regressions locally instead of waiting for CI. Equivalent to running the 3 dedicated ci.yml steps (Bridge regression test + Amend helper regression test + the inline Binary size budget gate's pre-flight) on a dev box. |
 
 ### Amending the size budgets (v1.3.0+ workflow)
 
