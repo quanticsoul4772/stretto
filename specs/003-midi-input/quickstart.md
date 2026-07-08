@@ -30,8 +30,9 @@ Output (example, Windows):
 ### 1.2 Connect to a specific device
 
 ```bash
-./synth --midi              # first available device (device 0)
-./synth --midi 1            # device index 1
+./synth --midi              # wildcard: subscribe to every readable input port
+./synth --midi 1            # device index 1 (from --midi-list-devices)
+./synth --midi-default      # explicit device index 0
 ./synth --midi --no-ui      # headless mode (no oscilloscope, no help row)
 ```
 
@@ -39,7 +40,7 @@ Output (example, Windows):
 
 ```bash
 ./synth --midi --midi-channel 1   # only channel 1; ignore 2..16
-./synth --midi --midi-channel 0   # accept all channels (default)
+./synth --midi                    # accept all channels (default; omit --midi-channel)
 ```
 
 ### 1.4 Combined with existing flags
@@ -47,7 +48,8 @@ Output (example, Windows):
 ```bash
 ./synth --midi --seed 42            # reproducible seed + MIDI input
 ./synth --midi --no-ui              # headless live mode with MIDI
-./synth --render 30 out.wav --midi  # render path: --midi is ignored (no audio thread)
+./synth --render 30 out.wav --midi  # render path: MIDI is never opened (stderr notice;
+                                    # seeded renders stay byte-identical per Constitution III)
 ```
 
 ### 1.5 Capture / cycle motif replay

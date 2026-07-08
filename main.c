@@ -16,8 +16,10 @@
    dispatches to either render-to-WAV mode or live-audio playback.
 
    Usage:
-     stretto [--no-ui] [--seed N]           live mode
+     stretto [--no-ui] [--seed N] [--midi [N] | --midi-default | --no-midi]
+             [--midi-channel <1..16>]        live mode
      stretto --render <seconds> <out.wav> [--seed N]
+     stretto --midi-list-devices
 */
 int main(int argc, char **argv) {
     voice_pool_init();
@@ -39,7 +41,6 @@ int main(int argc, char **argv) {
     int midi_explicit_idx    = -1; /* --midi <N>; -1 = unspecified */
     int midi_default_open    = 0;  /* --midi-default alias for --midi 0 (FR-002) */
     int midi_wildcard        = 0;  /* --midi with no arg = subscribe all matching */
-    int midi_seen            = 0;  /* any --midi-related flag was seen */
 
     for (int i = 1; i < argc && positional_argc < 8; i++) {
         if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
@@ -51,11 +52,11 @@ int main(int argc, char **argv) {
             }
             gen_seed((uint32_t)s);
         } else if (strcmp(argv[i], "--no-midi") == 0) {
-            midi_explicit_no = 1; midi_seen = 1;
+            midi_explicit_no = 1;
         } else if (strcmp(argv[i], "--midi-list-devices") == 0) {
-            midi_list_devices = 1; midi_seen = 1;
+            midi_list_devices = 1;
         } else if (strcmp(argv[i], "--midi-default") == 0) {
-            midi_default_open = 1; midi_seen = 1;
+            midi_default_open = 1;
         } else if (strcmp(argv[i], "--midi-channel") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "--midi-channel: missing argument\n");
@@ -70,7 +71,6 @@ int main(int argc, char **argv) {
                 exit(1);
             }
             midi_channel_filter = (int)ch;
-            midi_seen = 1;
         } else if (strcmp(argv[i], "--midi") == 0) {
             /* Optional numeric index. --midi alone = wildcard (no
                specific device); --midi <N> = explicit index decode.
@@ -93,7 +93,6 @@ int main(int argc, char **argv) {
                    flag) -- either way, treat as wildcard. */
                 midi_wildcard = 1;
             }
-            midi_seen = 1;
         } else {
             positional[positional_argc++] = argv[i];
         }
@@ -104,11 +103,20 @@ int main(int argc, char **argv) {
     gen_init();
     effects_init();
 
-    /* MIDI dispatch (per FR-001..FR-006 + spec.md CLI surface).
-       Phase 1+2 wires the parser + init; real backend opens happen
-       in US3 (T036..T038) when audio_midi_linux_init /
-       audio_midi_winmm_init land their pthread_create + midiInOpen
-       implementations. */
+    /* MIDI dispatch (per FR-001..FR-006 + specs/003-midi-input/
+       contracts/cli.md). --midi-list-devices short-circuits to
+       list-and-exit; --midi / --midi-default open the backend and
+       fail loudly per FR-002; --render never opens MIDI so a seeded
+       render stays a pure function of (--seed, argv) per
+       Constitution III. */
+    int is_render = (argc >= 2 && strcmp(argv[1], "--render") == 0);
+    int midi_open_requested =
+        (midi_explicit_idx >= 0 || midi_default_open || midi_wildcard);
+
+    if (midi_channel_filter != 0 && !midi_open_requested) {
+        fprintf(stderr, "--midi-channel: requires --midi or --midi-default\n");
+        exit(1);
+    }
     if (midi_list_devices) {
         midi_input_device_t devs[32];
         int32_t cnt = 0;
@@ -116,11 +124,20 @@ int main(int argc, char **argv) {
         for (int32_t i = 0; i < cnt; i++) {
             printf("%d %s\n", devs[i].index, devs[i].name);
         }
+        if (cnt == 0) {
+            fprintf(stderr, "no MIDI input devices found\n");
+        }
         return 0;
     }
     if (midi_explicit_no) {
         audio_midi_init(-1);  /* opt-out: queue stays disabled */
-    } else if (midi_explicit_idx >= 0 || midi_default_open || midi_wildcard) {
+    } else if (midi_open_requested && is_render) {
+        /* render_chunk drains the MIDI queue, so an open device could
+           inject events into a seeded render. Never open in render
+           mode; g_enabled stays 0 and the render is byte-identical
+           to a no-MIDI run (Constitution III). */
+        fprintf(stderr, "MIDI: --midi is ignored in --render mode\n");
+    } else if (midi_open_requested) {
         /* Resolve device_index to audio_midi_open():
          *   --midi <N>:    explicit N (decode on Linux: client<<8|port,
          *                 pass direct on WinMM)
@@ -136,21 +153,20 @@ int main(int argc, char **argv) {
         else /* midi_wildcard */         idx = -1;
         audio_midi_init(midi_channel_filter);
         if (audio_midi_open(idx) != 0) {
-            /* FR-002 + FR-034 semantics: --midi with a specific N
-             * fails loudly if the device is gone; --midi (wildcard)
-             * also fails if zero MIDI hw is enumerated. The synth
-             * continues playing from internal generative state per
-             * FR-005 + FR-034 (no auto-reconnect) so a missing
-             * keyboard does NOT crash the run. */
-            const char *kind = (idx < 0) ? "(wildcard)"
-                            : midi_default_open ? "(default) " : "";
-            fprintf(stderr,
-                "MIDI: device index %d%s unavailable "
-                "(see --midi-list-devices)\n", idx, kind);
+            /* FR-002: an explicit MIDI request that cannot be
+             * satisfied is a startup error (exit non-zero). The
+             * continue-without-MIDI path is FR-034's MID-SESSION
+             * disconnect, not a failed startup open. audio_midi_open
+             * already reset g_enabled = 0 on this path. */
+            if (idx < 0) {
+                fprintf(stderr, "MIDI: no MIDI input devices found "
+                                "(see --midi-list-devices)\n");
+            } else {
+                fprintf(stderr, "MIDI: device index %d unavailable "
+                                "(see --midi-list-devices)\n", idx);
+            }
+            exit(1);
         }
-    } else if (midi_seen) {
-        /* Saw --midi-channel only; init with that filter but don't open. */
-        audio_midi_init(midi_channel_filter);
     }
     /* If no MIDI flag was seen at all (the default), audio_midi_init
        is never called - g_enabled stays 0 (BSS), drain() is a no-op,
@@ -181,7 +197,9 @@ int main(int argc, char **argv) {
         audio_play();
     } else {
         fprintf(stderr,
-            "usage: %s [--render <seconds> <output.wav>] [--no-ui] [--seed N]\n",
+            "usage: %s [--render <seconds> <output.wav>] [--no-ui] [--seed N]\n"
+            "       [--midi [N] | --midi-default | --no-midi]\n"
+            "       [--midi-channel <1..16>] [--midi-list-devices]\n",
             argv[0]);
         exit(1);
     }
