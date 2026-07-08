@@ -157,3 +157,7 @@ voice → {arena, effects}
 | — | — | — |
 
 The architecture stays well under the binary size budget (37 KB packed vs 48 KB ceiling) with 11 KB of headroom for future features, and well under the 128 KB arena (last measured ~25 KB peak). No principle is bent.
+
+## Amendment history
+
+- **2026-07-08** — Constitution v1.0.1 → v1.1.0: Principle I stripped-Linux binary budget amended ≤24 KB → ≤50 KB per PR #116. References to ≤24 KB / 24 KB / 24576 bytes for the Linux stripped binary size in this file are preserved as the spec-at-time-of-authoring claim; the current Constitution target is ≤50 KB per `.specify/memory/constitution.md` Principle I amendment paragraph (the 003 MIDI-input chain's principled ~19 KB cost is the documented reason for the raise).
