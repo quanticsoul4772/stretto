@@ -69,8 +69,21 @@ OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
 # pattern (slightly wider for UPX ratio variability). PACK_TARGET now
 # lives in the Constitution Principle I line explicitly as `≤30 KB
 # UPX-packed Linux binary`, closing the pre-#118 implicit-cap loophole.
-STRIP_TARGET = 51200
-PACK_TARGET  = 30720
+#
+# WIN_PACK_BUDGET introduced 2026-07-08 per Constitution v1.1.0
+# (Principle I line explicitly enumerates the Windows UPX cap; the
+# ci.yml `Binary size budget gate` step previously hardcoded the
+# 49152 B value inline). 48 KB = 49152 B is post-#117 measurement
+# baseline (~38 KB packed actual, last measured PR #117 binary-sizes
+# artifact); ~10 KB headroom under 48 KB. The 3 size-budget
+# variables (STRIP_TARGET / PACK_TARGET / WIN_PACK_BUDGET) are
+# enforced equal to the Constitution Principle I paragraph via
+# tools/spec-budget-check.sh, which runs as a pre-flight in
+# .github/workflows/ci.yml BEFORE the inline Binary size budget
+# gate step catches drift vs binary-sizes.txt measurements.
+STRIP_TARGET    = 51200
+PACK_TARGET     = 30720
+WIN_PACK_BUDGET = 49152
 
 all: synth
 
@@ -196,7 +209,7 @@ size:
 	@echo "Constitution Principle I targets:"
 	@printf '  STRIP_TARGET  (Linux synth stripped)   : %s bytes\n' '$(STRIP_TARGET)'
 	@printf '  PACK_TARGET   (Linux synth UPX-packed) : %s bytes\n' '$(PACK_TARGET)'
-	@printf '  WIN_PACK_BUDGET (Windows UPX-packed)  : 49152 bytes (48 KB)\n'
+	@printf '  WIN_PACK_BUDGET (Windows UPX-packed)  : %s bytes (%s KB)\n' '$(WIN_PACK_BUDGET)' "$$(( $(WIN_PACK_BUDGET) / 1024 ))"
 	@SIZE=$$(stat -c%s synth 2>/dev/null || echo 0); \
 	if [ "$$SIZE" != "0" ] && [ "$$SIZE" -gt "$(STRIP_TARGET)" ]; then \
 		echo "WARNING: synth $$SIZE > STRIP_TARGET $(STRIP_TARGET) -- exceeds Linux stripped budget"; \
