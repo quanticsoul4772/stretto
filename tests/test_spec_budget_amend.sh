@@ -48,6 +48,34 @@ if [ ! -f "${script}" ]; then
     exit 2
 fi
 
+# Guard: refuse to run if Constitution or Makefile have un-committed
+# changes. This test tampers with .specify/memory/constitution.md and
+# Makefile, and case 6's recovery path uses `git checkout --` to
+# restore from HEAD. If the user has un-committed changes to those
+# 2 files, the test's recovery path will clobber them silently --
+# which is exactly the trap that the 035 amend drill fell into.
+# Bail with a clear message instead of producing confusing FAIL
+# output.
+#
+# Scope is limited to the 2 files the test actually tampers with
+# (not the whole working tree), because the make test target runs
+# `chmod +x tests/test_spec_budget_*.sh` first, and that mode change
+# is detected by `git diff --quiet HEAD` as a modification. Checking
+# the whole tree would make the guard trigger spuriously on every
+# `make test` invocation -- which is exactly what happened in the
+# post-#129 main CI run (run 28977516712, step 5 failed because
+# the guard bailed on the chmod-induced mode change to the test
+# scripts themselves).
+if ! git diff --quiet HEAD -- .specify/memory/constitution.md Makefile 2>/dev/null; then
+    echo "FATAL: .specify/memory/constitution.md or Makefile has un-committed changes." >&2
+    echo "       Commit or stash your changes before running this test." >&2
+    echo "       (The test tampers with these 2 files and uses 'git checkout --' for" >&2
+    echo "       recovery, which would clobber un-committed changes.)" >&2
+    echo "       Dirty files (Constitution + Makefile only):" >&2
+    git diff --name-only HEAD -- .specify/memory/constitution.md Makefile 2>/dev/null | sed 's/^/         /' >&2
+    exit 1
+fi
+
 # Backup file paths (used by the cleanup trap; .bak extension so
 # they're easy to spot in /tmp if cleanup fails partway).
 constitution_bak="/tmp/.test_spec_budget_amend_constitution.bak.$$"
