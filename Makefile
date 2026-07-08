@@ -49,8 +49,19 @@ OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
                mixer.o wav.o ui.o keys.o \
                audio_midi.o audio_midi_linux.o
 
-# Size targets (bytes).
-STRIP_TARGET = 24576
+# Size targets (bytes). STRIP_TARGET bumped 24576 -> 51200 (~50 KB) on
+# 2026-07-08 per Constitution v1.1.0 Principle I amendment (PR #19): the
+# 003 MIDI chain grew synth stripped from ~24 KB (pre-#109 baseline) to
+# 43 880 B (post-#113, measured via `make size` artifact on PR #115). The
+# ~+19 KB cost is the principled cost of cross-platform MIDI input per
+# Principle III + IX + X. 51 200 leaves 14% headroom (7 320 B) over the
+# post-#113 measurement; future growth should reset the budget rather
+# than defer required functionality. PACK_TARGET stays at 12288: the
+# Linux UPX-packing measurement is still pre-#109 (~16 KB hedge per
+# ARCHITECTURE.md binary-size table) and the bump scope is intentionally
+# limited to the strip target (so we don't churn the UPX reimbursement
+# claim while still in the same drift surface).
+STRIP_TARGET = 51200
 PACK_TARGET  = 12288
 
 all: synth

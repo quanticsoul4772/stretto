@@ -5,7 +5,9 @@ Stretto is a tiny native generative ambient music synthesizer in C99. These prin
 ## Core Principles
 
 ### I. Tiny Native Binary (NON-NEGOTIABLE)
-Hard size budget: ≤48 KB UPX-packed Windows `.exe` (current 32 KB), ≤24 KB stripped Linux binary. CI gates the Windows budget on every PR. Choose minimal-dependency designs; prefer one-file modules over libraries. Features that would push past the budget must justify themselves explicitly or be deferred.
+Hard size budget: ≤48 KB UPX-packed Windows `.exe` (current 32 KB; last re-measured 2026-06 pre-PR #109, deferred followup), ≤50 KB stripped Linux binary (bumped 2026-07-08 from prior ≤24 KB target; current 43 880 B / ~43 KB measured post-#109/#113 per PR #115 `make size` artifact). CI gates the Windows budget on every PR. Choose minimal-dependency designs; prefer one-file modules over libraries. Features that would push past the budget must justify themselves explicitly or be deferred.
+
+The 24 KB → 50 KB amendment acknowledges that the 003 MIDI-input chain (FR-001..FR-054, ~209 lines of int32_t SPSC ring + CC dispatch + libasound sequencer worker + opt-out + 23 unit tests in `tests/unit/test_midi.c`) is the principled cost of supporting Principle III (Deterministic) + Principle IX (Cross-Platform From Day One) + Principle X (Generative > Random). The ~19 KB growth was the foreseeable cost of cross-platform MIDI input compensation that the PR #108→PR #109→PR #113 chain chose to eat on principle rather than defer.
 
 ### II. C99 Only
 No C++, no external runtime dependencies beyond libc + libpulse (Linux) / winmm (Windows). Build-time tools (`gen_*_table.c`) are also C99. No code generators outside what already exists. No build system beyond GNU Make.
@@ -85,4 +87,4 @@ GNU Make with auto-generated header dependencies (`-MMD -MP`). One pattern rule 
 - Removing a NON-NEGOTIABLE principle requires explicit user approval in the amendment PR.
 - All `/speckit-specify` and `/speckit-plan` outputs must declare compliance with each principle or document the exception.
 
-**Version**: 1.0.1 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-07-06
+**Version**: 1.1.0 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-07-08
