@@ -39,7 +39,7 @@ Add USB-MIDI keyboard input as a first-class control surface for the live synth,
 
 **Constraints**:
 - ≤48 KB UPX-packed Windows .exe (Constitution I hard limit; current 32 KB packed; budget 16 KB headroom)
-- ≤24 KB stripped Linux binary (soft target; Constitution I; `Makefile size` warns)
+- ≤50 KB stripped Linux binary (Constitution I; bumped 2026-07-08 from prior ≤24 KB soft target per v1.1.0; `Makefile size` warns above STRIP_TARGET = 51200 per Makefile)
 - No `malloc` (Constitution Memory model; 256-event ring buffer from arena)
 - No `time()` in any audio or MIDI path (Constitution III v1.0.1; FR-042)
 - C99 dialect; gcc `__atomic_*` built-ins for SPSC ring buffer head pointer (C99-compatible gcc extension)
@@ -120,4 +120,4 @@ tests/test_smoke_live.sh      # New step: open snd-seq-dummy loopback, send Note
 |-----------|------------|-------------------------------------|
 | (none) | All 10 principles PASS. | — |
 
-The two new runtime dependencies (libasound on Linux, winmm-already-linked on Windows) are not Constitution violations: libasound joins the existing `-lpulse` dynamic-link pattern; winmm is already linked for `waveOut`. The dynamic-link choice keeps the binary within the 24 KB / 48 KB budget; static linking libasound (~1 MB) would blow the budget.
+The two new runtime dependencies (libasound on Linux, winmm-already-linked on Windows) are not Constitution violations: libasound joins the existing `-lpulse` dynamic-link pattern; winmm is already linked for `waveOut`. The dynamic-link choice keeps the binary within the 50 KB / 48 KB budget (was 24 KB / 48 KB pre-2026-07-08 amendment; see Constitution v1.1.0); static linking libasound (~1 MB) would blow the budget.

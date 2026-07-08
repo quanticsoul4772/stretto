@@ -281,3 +281,7 @@ With multiple developers:
 - Stop at any checkpoint to validate a story independently.
 - Avoid: vague tasks, same-file conflicts, cross-story dependencies that break independence.
 - The full set of 90+ shipped PRs maps onto this task breakdown — every completed PR corresponds to one or more of these tasks with its own regen-golden (if intentional) commit.
+
+## Amendment history
+
+- **2026-07-08** — Constitution v1.0.1 → v1.1.0: Principle I stripped-Linux binary budget amended ≤24 KB → ≤50 KB per PR #116. The T061 task's "(24 KB stripped target)" parenthetical references the spec-at-time-of-authoring claim; the current Constitution target is ≤50 KB per `.specify/memory/constitution.md` Principle I amendment paragraph (the 003 MIDI-input chain's principled ~19 KB cost is the documented reason for the raise). The `Makefile::size` warning threshold in T061 (now STRIP_TARGET = 51200 per Makefile) references the new post-amendment value; the T061 task itself is complete and the warning logic is now wiring to the new budget.
