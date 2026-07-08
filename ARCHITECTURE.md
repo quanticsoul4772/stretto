@@ -7,7 +7,7 @@
 | Binary | Size |
 |---|---|
 | Linux `synth` (stripped, links libpulse) | 43 KB (43 880 B per `make synth` + `strip -s -R .comment`, measured against current `main` post-#113) |
-| Linux `synth.packed` (UPX) | ~16 KB (last measured 2026-06 pre-PR #109; UPX re-measure deferred to followup — see `Build details`) |
+| Linux `synth.packed` (UPX) | 25 KB (25 460 B per PR #117 `binary-sizes` CI artifact on current `main` post-#113; UPX ratio 57.94 %; was ~16 KB pre-#109 hedge; PACK_TARGET = 30 720 B per post-#118 Makefile enforces Constitution v1.2.0 cap) |
 | Windows `stretto.exe` (stripped) | ~238 KB (243 712 B un-stripped from `make win` build artifact on current `main`; final `strip -s -R .comment` does not run on the Windows cross-compile artifact in the current Makefile) |
 | Windows `stretto.packed.exe` (UPX) | ~37 KB (last measured 2026-06 pre-PR #109; UPX re-measure deferred to followup) |
 
@@ -675,6 +675,6 @@ CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `m
 
 ## Build details
 
-Linux flags (`-Os -flto -ffunction-sections -fdata-sections -Wl,--gc-sections`) and `strip -s -R .comment` are standard. `make pack` runs UPX `--ultra-brute` on top for a final ~33% reduction.
+Linux flags (`-Os -flto -ffunction-sections -fdata-sections -Wl,--gc-sections`) and `strip -s -R .comment` are standard. `make pack` runs UPX `--ultra-brute` on top for a final ~42% reduction (per PR #117 `binary-sizes` artifact: synth 43 944 B → synth.packed 25 460 B = 57.94 % retained = 42.06 % reduction; the prior ~33 % pre-#109 hedge reflected the smaller pre-003-chain baseline where 24 576 × 0.67 ≈ 16 384).
 
 Windows cross-compile uses `x86_64-w64-mingw32-gcc` with the same size flags. `make winpack` adds UPX. The packed Windows binary is ~37 KB — well under the 64 KB target from the original PLAN.md and the demoscene "tiny generative synth" tradition.

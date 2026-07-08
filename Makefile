@@ -56,13 +56,21 @@ OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
 # ~+19 KB cost is the principled cost of cross-platform MIDI input per
 # Principle III + IX + X. 51 200 leaves 14% headroom (7 320 B) over the
 # post-#113 measurement; future growth should reset the budget rather
-# than defer required functionality. PACK_TARGET stays at 12288: the
-# Linux UPX-packing measurement is still pre-#109 (~16 KB hedge per
-# ARCHITECTURE.md binary-size table) and the bump scope is intentionally
-# limited to the strip target (so we don't churn the UPX reimbursement
-# claim while still in the same drift surface).
+# than defer required functionality.
+#
+# PACK_TARGET bumped 12288 -> 30720 (~30 KB) on 2026-07-08 per
+# Constitution v1.2.0 amendment (this PR, 021-upx-remeasure). The actual
+# Linux UPX-packed synth size is 25 460 B per PR #117 `binary-sizes`
+# CI artifact on current `main` -- ~107 % over the prior 12 KB target
+# and ~59 % over the pre-#109 (~16 KB) ARCHITECTURE.md hedge. The 003
+# chain added the proportional ~13 KB UPX-packed growth on top of the
+# 19 KB stripped growth. 30 720 leaves ~21 % headroom (5 260 B) over
+# the post-#117 measurement; the headroom matches STRIP_TARGET's 14 %
+# pattern (slightly wider for UPX ratio variability). PACK_TARGET now
+# lives in the Constitution Principle I line explicitly as `≤30 KB
+# UPX-packed Linux binary`, closing the pre-#118 implicit-cap loophole.
 STRIP_TARGET = 51200
-PACK_TARGET  = 12288
+PACK_TARGET  = 30720
 
 all: synth
 
