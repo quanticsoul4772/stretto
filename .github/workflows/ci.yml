@@ -66,6 +66,7 @@ jobs:
         # the project's coverage discipline to ratchet up over time.
         run: |
           declare -A thresholds=(
+            [audio_midi.c]=90
             [arena.c]=95
             [effects.c]=95
             [voice.c]=95

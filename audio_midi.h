@@ -57,6 +57,40 @@ typedef struct {
     char    name[64];  /* truncated if longer */
 } midi_input_device_t;
 
+/* --- CC dispatch types (data-model.md Entity 4 + FR-020 / tasks.md T029) ---
+ *
+ * cc_target_t enumerates the synth parameters a CC can modulate.
+ * The static CC_MAP[128] in audio_midi.c maps each CC number to a
+ * target + scale; the dispatch switch in audio_midi_drain() calls
+ * the matching voice_* / reverb_* / delay_* / compressor_* adjust
+ * entry point with `delta = (V - 64) * scale` (H1 fix). CC_TARGET_NONE
+ * entries are silently dropped per Principle VII.
+ *
+ * Ordering matches data-model.md Entity 4 verbatim so future spec
+ * updates slot in at the end without renumbering. */
+typedef enum {
+    CC_TARGET_NONE = 0,                /* unassigned; CC is ignored */
+    CC_TARGET_CUTOFF,                   /* voice_adjust_cutoff(delta) */
+    CC_TARGET_RESONANCE,                /* voice_adjust_resonance(delta) */
+    CC_TARGET_REVERB_WET,               /* reverb_adjust_wet(delta) */
+    CC_TARGET_DELAY_WET,                /* delay_adjust_wet(delta) */
+    CC_TARGET_DELAY_FEEDBACK,           /* delay_adjust_feedback(delta) */
+    CC_TARGET_FILTER_LFO_DEPTH,         /* voice_adjust_lfo_filter_depth(delta) */
+    CC_TARGET_MUTATION_RATE,            /* gen_force_mutate() (future) */
+    CC_TARGET_COMPRESSOR_THRESH         /* compressor_adjust_threshold(delta) */
+} cc_target_t;
+
+/* One entry of the static CC_MAP[128]. target=CC_TARGET_NONE means
+ * silently dropped. scale is signed (int8) so the `(V-64)*scale`
+ * delta can swing negative; for target=NONE, scale is 0 and ignored.
+ * _pad is explicit so the struct stays 4 B (128 entries * 4 = 512 B
+ * in `.rodata` per data-model.md field sizing summary). */
+typedef struct {
+    cc_target_t target;
+    int8_t      scale;
+    uint8_t     _pad;
+} cc_map_entry_t;
+
 /* --- Audio-thread-side API (audio_midi.c) --- */
 void     audio_midi_init(int channel_filter);
 int      audio_midi_open(int device_index);
