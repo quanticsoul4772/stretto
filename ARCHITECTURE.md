@@ -673,6 +673,58 @@ CI also enforces a Windows packed binary size budget of 48 KB (last re-measured 
 
 CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `main`, plus the Windows cross-compile (`make winpack`). Coverage gate at 80% per file on `arena.c`, `voice.c`, `gen.c`. The Windows binary and coverage log are uploaded as build artifacts.
 
+### Size budget amendment workflow (Constitution ↔ Makefile bridge)
+
+The post-#117 cascade (PRs #121–#130) introduced a Constitution↔Makefile bridge: the 3 size budgets in Constitution Principle I (Windows UPX ≤48 KB, Linux UPX ≤30 KB, Linux stripped ≤50 KB) MUST stay in lockstep with the 3 Makefile variables (`WIN_PACK_BUDGET = 49152`, `PACK_TARGET = 30720`, `STRIP_TARGET = 51200`). Forgetting to bump one of them in a v1.X.0 amendment is what caused the original drift cascade. The bridge is enforced by 4 artifacts:
+
+| File | Role |
+|---|---|
+| `tools/spec-budget-check.sh` | Read-only bridge. Asserts `Makefile byte value = Constitution KB value × 1024` for all 3 budgets. Extracts via targeted `grep -oE` regex on Principle I paragraph (the `≤X KB` literal before each keyword, not the parenthetical measurement mentions). Exits 0 on match, 1 on drift, 2 on malformed inputs. |
+| `tools/spec-budget-amend.sh` | Write helper. Bumps 1-3 budgets in BOTH `.specify/memory/constitution.md` AND `Makefile` in lockstep via targeted `sed -E` regex (preserves surrounding text + cross-references). Prints a `git diff` for review. **Refuses to commit** (no `git add` or `git commit`); developer commits manually with a v1.X.0 rationale. Rejects shrink attempts (budgets can only grow per post-#117 policy). KB→bytes conversion done automatically (`KB × 1024`). |
+| `tests/test_spec_budget_check.sh` | 5-scenario regression: (1) happy-path, (2) tamper Constitution, (3) tamper Makefile, (4) malformed constant, (5) recovery via `git checkout`. |
+| `tests/test_spec_budget_amend.sh` | 6-scenario regression: (1) happy-path amend 1 budget, (2) atomic amend all 3, (3) input validation (0 flags / non-integer / <1 KB / shrink), (4) dry-run, (5) refuse-to-commit, (6) recovery via `git checkout`. Has a scoped dirty-tree guard (only checks Constitution + Makefile, not whole tree) to avoid the `chmod +x` mode-change trap. |
+
+The amend helper's flags:
+
+- `--win KB` — set Windows UPX-packed budget to KB
+- `--lin-upx KB` — set Linux UPX-packed budget to KB
+- `--lin-str KB` — set Linux stripped budget to KB
+- `--dry-run` — preview the changes without modifying any files
+- `--help` / `-h` — show usage
+
+At least one `--{win,lin-upx,lin-str}` flag is required. Multiple flags can be combined for an atomic 3-budget amend. The script's exit codes: 0 = amend complete (changes left in working tree, NOT committed), 1 = invalid input or amend failed (working tree restored to pre-amend state), 2 = FATAL setup failure (script bug / missing files).
+
+The amend script leaves the Makefile rationale paragraph (comment block above the 3 budget variables) AND the Constitution footer (Last Amended date + Version line) unchanged — those are editorial content, manually curated in the same amend-PR. See PR #127 / 032-spec-budget-amend for the helper's design rationale + PR #130 / 037-amend-test-dirty-guard-scope for the scoped dirty-tree guard fix.
+
+### CI step layout (post-#128)
+
+`.github/workflows/ci.yml` defines 18 explicit steps. **Note on step numbering:** GitHub Actions auto-prepends `Set up job` to every job, so UI step numbers are **1-indexed from the auto-added step**. The explicit `actions/checkout@v4` step (no `name:`) renders as `Run actions/checkout@v4` / step #2. The YAML order is 0-indexed from `actions/checkout@v4` and internal to the file. Use UI numbers in PR bodies / commit messages (the header comment at the top of `ci.yml` documents this convention so future PRs don't re-discover the off-by-one).
+
+The 18 steps (UI-numbered):
+
+| # | Step | Purpose |
+|---:|---|---|
+| 1 | Set up job | *(auto-prepended by GitHub Actions)* |
+| 2 | Run actions/checkout@v4 | *(no `name:`; auto-renders)* |
+| 3 | Install build deps | apt: gcc, make, libpulse-dev, libasound2-dev, upx-ucl, gcc-mingw-w64-x86-64, python3, python3-numpy |
+| 4 | Build Linux synth | `make` |
+| 5 | Bit-exact regression test | `make test` (bitexact + bridge + amend + unit) |
+| 6 | Bridge regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_check.sh` — 5 scenarios / 9 sub-checks. Pre-flight for the Binary size budget gate (step 14). |
+| 7 | Amend helper regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_amend.sh` — 6 scenarios / 21 sub-checks |
+| 8 | Unit tests | `make test-unit` (153 tests across 13 modules) |
+| 9 | Multi-seed integration test | `make test-multiseed` |
+| 10 | Live-mode smoke test (skips if no PA) | `make test-smoke` |
+| 11 | Cross-compile Windows .exe | `make win` |
+| 12 | UPX-pack Windows .exe | `make winpack` |
+| 13 | Binary sizes report | `make size | tee binary-sizes.txt` |
+| 14 | **Binary size budget gate** | 3-key gate against `binary-sizes.txt` (STRIP / PACK / WIN_PACK). Replaces the pre-#125 single-key gate. |
+| 15 | Coverage report | `make coverage | tee coverage.log` |
+| 16 | Coverage gates | Per-file coverage thresholds (90-95%) |
+| 17 | Upload Windows binary artifact | `stretto-windows` artifact |
+| 18 | Upload coverage log | `coverage-log` artifact |
+
+The pre-#125 cascade also had a redundant `Assert Spec↔Build size budgets` step that duplicated the bridge. PR #125 removed it; the Bridge regression test (step 6) + Binary size budget gate (step 14) are the only 2 spec↔build enforcement points now, with clear pre-flight / measurement roles.
+
 ## Build details
 
 Linux flags (`-Os -flto -ffunction-sections -fdata-sections -Wl,--gc-sections`) and `strip -s -R .comment` are standard. `make pack` runs UPX `--ultra-brute` on top for a final ~42% reduction (per PR #117 `binary-sizes` artifact: synth 43 944 B → synth.packed 25 460 B = 57.94 % retained = 42.06 % reduction; the prior ~33 % pre-#109 hedge reflected the smaller pre-003-chain baseline where 24 576 × 0.67 ≈ 16 384).

@@ -225,6 +225,82 @@ make golden-multiseed  # regenerate the four multi-seed reference hashes
 
 CI (GitHub Actions) runs all of the above on every push and pull request to `main`, plus the Windows cross-compile (`make winpack`). The Windows binary is uploaded as a build artifact.
 
+## Size budget amendment workflow
+
+The post-#117 spec↔build cascade (PRs #121–#130) introduced a Constitution↔Makefile bridge: the 3 size budgets (Windows UPX ≤48 KB, Linux UPX ≤30 KB, Linux stripped ≤50 KB) live in BOTH `.specify/memory/constitution.md` Principle I AND the `Makefile` (as `WIN_PACK_BUDGET`, `PACK_TARGET`, `STRIP_TARGET`). Forgetting to bump one of them in a v1.X.0 amendment is what caused the original drift cascade.
+
+Two tools prevent future drift:
+
+| Tool | Purpose | When to use |
+|---|---|---|
+| `tools/spec-budget-check.sh` | Read-only bridge: asserts Makefile byte values = Constitution KB values. Runs as ci.yml step `Bridge regression test` + `make test` target. | Automatic; no user action. Catches drift at PR-merge time. |
+| `tools/spec-budget-amend.sh` | Write helper: bumps 1-3 budgets in BOTH files in lockstep, prints a `git diff` for review, refuses to commit. | Run manually before a v1.X.0 amendment PR. Makes the amendment a 1-invocation edit. |
+| `tests/test_spec_budget_check.sh` | 5-scenario regression for the bridge (tamper Constitution, tamper Makefile, malformed constant, recovery via `git checkout`). | Automatic; runs on every PR. |
+| `tests/test_spec_budget_amend.sh` | 6-scenario regression for the amend helper (happy-path, atomic multi-amend, input validation, dry-run, refuse-to-commit, recovery). | Automatic; runs on every PR. |
+
+### Amending the size budgets (v1.3.0+ workflow)
+
+```bash
+# 1. Preview the change (no file modifications)
+tools/spec-budget-amend.sh --dry-run --win 49
+
+# 2. Apply the change (Constitution + Makefile updated in lockstep)
+tools/spec-budget-amend.sh --win 49
+
+# 3. Review the diff the script prints
+git diff .specify/memory/constitution.md Makefile
+
+# 4. (Optional) Update the Makefile rationale paragraph + Constitution footer
+#    (the script leaves both unchanged since they're editorial content)
+
+# 5. Commit manually
+git add .specify/memory/constitution.md Makefile
+git commit -m 'v1.X.0: bump <budget> from N to M KB per Principle I amendment'
+```
+
+**Flags:**
+
+- `--win KB` — set Windows UPX-packed budget to KB (positive integer, can only grow)
+- `--lin-upx KB` — set Linux UPX-packed budget to KB
+- `--lin-str KB` — set Linux stripped budget to KB
+- `--dry-run` — preview the changes without modifying any files
+- `--help` / `-h` — show usage
+
+At least one of `--win` / `--lin-upx` / `--lin-str` is required. Multiple flags can be combined for an atomic 3-budget amend (e.g. `tools/spec-budget-amend.sh --win 49 --lin-upx 32 --lin-str 60`).
+
+**Budget-grow policy:** per the post-#117 amendment policy, budgets can only GROW, not shrink. To shrink (e.g. after a major refactor reduces binary size), do it manually with explicit Constitution + Makefile edits + an accompanying PR-body rationale. The helper rejects shrink attempts with `FATAL: ... budget can only grow per post-#117 amendment policy`.
+
+**Refuse-to-commit:** the helper does NOT run `git add` or `git commit`. The developer reviews the printed `git diff` and commits manually. This is by design — amendment PRs need a v1.X.0 rationale in the commit message + PR body that the helper can't infer.
+
+**Dirty-tree guard:** the amend test (`tests/test_spec_budget_amend.sh`) refuses to run if `.specify/memory/constitution.md` or `Makefile` have un-committed changes. Scope is limited to those 2 files (not the whole working tree) because the `make test` target runs `chmod +x tests/test_spec_budget_*.sh` first, and that mode change would trigger a whole-tree `git diff --quiet HEAD` check spuriously. To run the test, commit or stash changes to those 2 files first.
+
+## CI step layout
+
+`.github/workflows/ci.yml` defines 18 explicit steps. **Note on step numbering:** GitHub Actions auto-prepends `Set up job` to every job, so UI step numbers are **1-indexed from the auto-added step**. The explicit `actions/checkout@v4` step (no `name:`) renders as `Run actions/checkout@v4` / step #2. The YAML order is 0-indexed from `actions/checkout@v4` and internal to the file. Use UI numbers in PR bodies / commit messages.
+
+| # (UI) | Step | Purpose |
+|---:|---|---|
+| 1 | Set up job | *(auto-prepended by GitHub Actions)* |
+| 2 | Run actions/checkout@v4 | *(no `name:`; auto-renders)* |
+| 3 | Install build deps | apt: gcc, make, libpulse-dev, libasound2-dev, upx-ucl, gcc-mingw-w64-x86-64, python3, python3-numpy |
+| 4 | Build Linux synth | `make` |
+| 5 | Bit-exact regression test | `make test` (bitexact + bridge + amend + unit) |
+| 6 | Bridge regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_check.sh` — 5 scenarios / 9 sub-checks. Pre-flight for the Binary size budget gate (step 14). |
+| 7 | Amend helper regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_amend.sh` — 6 scenarios / 21 sub-checks |
+| 8 | Unit tests | `make test-unit` (153 tests across 13 modules) |
+| 9 | Multi-seed integration test | `make test-multiseed` |
+| 10 | Live-mode smoke test (skips if no PA) | `make test-smoke` |
+| 11 | Cross-compile Windows .exe | `make win` |
+| 12 | UPX-pack Windows .exe | `make winpack` |
+| 13 | Binary sizes report | `make size | tee binary-sizes.txt` |
+| 14 | **Binary size budget gate** | 3-key gate against `binary-sizes.txt` (STRIP / PACK / WIN_PACK). Replaces the pre-#125 single-key gate. |
+| 15 | Coverage report | `make coverage | tee coverage.log` |
+| 16 | Coverage gates | Per-file coverage thresholds (90-95%) |
+| 17 | Upload Windows binary artifact | `stretto-windows` artifact |
+| 18 | Upload coverage log | `coverage-log` artifact |
+
+The pre-#125 cascade also had a redundant `Assert Spec↔Build size budgets` step that duplicated the bridge. PR #125 removed it; the Bridge regression test (step 6) + Binary size budget gate (step 14) are the only 2 spec↔build enforcement points now, with clear pre-flight / measurement roles.
+
 Approximate line coverage (unit + integration combined; CI enforces these as per-file gates):
 
 | File | Coverage | Gate |
