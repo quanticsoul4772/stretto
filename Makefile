@@ -271,6 +271,18 @@ test-smoke: synth
 	chmod +x tests/test_smoke_live.sh
 	./tests/test_smoke_live.sh
 
+# One-command local dev check for the Constitution<->Makefile bridge.
+# Bundles the 3 spec<->build verification artifacts in order, exiting
+# on first failure with a clear per-step status. Equivalent to running
+# the 3 dedicated ci.yml steps (Bridge regression test + Amend helper
+# regression test + the inline Binary size budget gate's pre-flight)
+# on a dev box. Use this before opening a PR to catch spec<->build
+# drift + amend helper regressions locally instead of waiting for CI.
+# See tools/verify-bridge.sh for the wrapper's full design + exit
+# codes + per-step failure-recovery hints.
+verify:
+	@bash tools/verify-bridge.sh
+
 # Capture golden hashes for all multi-seed renders.
 golden-multiseed: synth
 	@mkdir -p golden
@@ -389,7 +401,7 @@ debug: synth_debug
 	@file synth_debug
 
 .PHONY: all clean size pack test test-unit test-multiseed test-smoke \
-        coverage golden golden-multiseed play win winpack debug
+        verify coverage golden golden-multiseed play win winpack debug
 
 # Pick up the auto-generated header dependencies. The leading '-'
 # silences "no such file" when these have not been generated yet
