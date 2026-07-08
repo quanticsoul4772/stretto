@@ -759,11 +759,22 @@ TEST(midi_open_close_round_trip) {
     test_init_synth();
     voice_pool_init();
     audio_midi_init(0);
-    /* Post-T022 platform backends return -1 from the Phase 1+2 stubs. */
-    ASSERT_EQ(audio_midi_open(0), -1);
-    ASSERT_EQ(audio_midi_open(1), -1);
-    /* g_enabled is still 1 here -- drain would still dispatch. Tear
-     * down via audio_midi_close and verify the g_enabled gate kicks in. */
+    /* Post-T036 env-flexible: platform backends have real impls.
+     * Either return code is acceptable here:
+     *   rc =  0  -> device opened successfully (studio rig with hw)
+     *   rc = -1  -> open failed (libasound missing, no controller,
+     *               midiInOpen error, etc. -- typical CI env)
+     * The round-trip invariants below hold in both cases. */
+    int rc0 = audio_midi_open(0);
+    ASSERT_TRUE(rc0 == 0 || rc0 == -1);
+    int rc1 = audio_midi_open(1);
+    ASSERT_TRUE(rc1 == 0 || rc1 == -1);
+    /* Idempotent re-bind with the same N: same acceptable range. */
+    int rc0b = audio_midi_open(0);
+    ASSERT_TRUE(rc0b == 0 || rc0b == -1);
+    /* g_enabled is still 1 here (init(0) arm); drain would still
+     * dispatch. Tear down via audio_midi_close and verify the
+     * g_enabled gate kicks in. */
     audio_midi_close();
     midi_event_t ev_on = {
         .type    = MIDI_EVENT_NOTE_ON,
@@ -774,6 +785,42 @@ TEST(midi_open_close_round_trip) {
     audio_midi_enqueue(&ev_on);
     audio_midi_drain();
     /* Drain after close -> no dispatch -> mask stays 0. */
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+    /* Re-arm opt-out for downstream tests. */
+    audio_midi_init(-1);
+}
+
+/* ===========================================================
+ * T036 wildcard sentinel: audio_midi_open(-1) is the wildcard
+ * "subscribe to anything that announces" path. It must NOT be
+ * confused with "open device index -1" (which would crash on
+ * most backends - N is unsigned-interpreted). The platform
+ * backends validate N >= -1 (with -1 reserved) and route -1 to
+ * the wildcard iterate-subscribe (linux) / WAVE_MAPPER fallback
+ * (winmm). In the unit-test env with no real hw, the call either
+ * returns -1 (init failed earlier) or 0 (init succeeded, nothing
+ * to subscribe to because the platform returns no devices).
+ * Assert only that the call returns deterministically: no crash
+ * and consistent with the audio_midi_open(N >= 0) contract. */
+TEST(midi_open_wildcard_sentinel) {
+    test_init_synth();
+    voice_pool_init();
+    /* Wildcard opt-in: enable MIDI dispatch without binding to a
+     * specific enumerated device index. */
+    audio_midi_init(0);
+    int rcw = audio_midi_open(-1);
+    ASSERT_TRUE(rcw == 0 || rcw == -1);
+    /* Even with init(0), close must reset g_enabled. After close,
+     * enqueue+drain is a no-op: voices stay inactive. */
+    audio_midi_close();
+    midi_event_t ev = {
+        .type    = MIDI_EVENT_NOTE_ON,
+        .channel = 1,
+        .key     = 60,
+        .value   = 100
+    };
+    audio_midi_enqueue(&ev);
+    audio_midi_drain();
     ASSERT_EQ(voice_pool_active_mask(), 0u);
     /* Re-arm opt-out for downstream tests. */
     audio_midi_init(-1);

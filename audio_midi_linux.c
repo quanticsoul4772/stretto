@@ -1,41 +1,63 @@
-/* audio_midi_linux.c - libasound ALSA sequencer backend (US1 / T022).
- *
- * Phase 1+2 stub returned -1 from init; US1 replaces it with a real
- * pthread worker draining snd_seq_event_input() into the SPSC ring,
- * per spec/003-midi-input/research.md D1 (canonical libasound pattern;
- * snd_seq_create_thread() is NOT a stock libasound API).
+/* audio_midi_linux.c - libasound ALSA sequencer backend (T022 + PR
+ * bind wiring).
  *
  * Backend design:
- *   snd_seq_t *g_seq, int g_port, pthread_t g_thread - module-static
- *   singleton state. Init creates a SND_SEQ_OPEN_INPUT handle to
- *   "default", names the client "Stretto", creates one generic
- *   writable application port "Stretto Input", spawns one worker
- *   pthread that polls snd_seq_poll_descriptors for 100 ms, drains
- *   any pending events via snd_seq_event_input, and re-enqueues each
- *   NOTEON / NOTEOFF / CONTROLLER into the SPSC ring via
- *   audio_midi_enqueue(). End-users route their hardware to Stretto
- *   via `aconnect <client> 129:0` (no auto-subscribe so a wrong
- *   subscription layout doesn't fight the user's aconnect choices).
+ *   snd_seq_t *g_seq, int g_port, pthread_t g_thread, int
+ *   g_current_device_index - module-static singleton state. Init
+ *   creates a SND_SEQ_OPEN_INPUT handle to "default", names the
+ *   client "Stretto", creates one generic writable application
+ *   port "Stretto Input", auto-subscribes via snd_seq_connect_from
+ *   to either a single decoded (client<<8)|port address (explicit
+ *   `synth --midi N`) or to every enumerated MIDI_GENERIC /
+ *   MIDI_KEYBOARD port (wildcard `synth --midi`, N == -1), spawns
+ *   one worker pthread that polls snd_seq_poll_descriptors_count for
+ *   100 ms, drains any pending events via snd_seq_event_input,
+ *   and re-enqueues each NOTEON/NOTEOFF/CONTROLLER into the SPSC
+ *   ring via audio_midi_enqueue().
+ *
+ *   Auto-subscribe (vs the Phase-1+2 "wait for `aconnect`" pattern)
+ *   is the actual spec T022 contract: spec asks the implementer to
+ *   "subscribe to all clients/ports that send MIDI Keyboard events
+ *   (via snd_seq_connect_from ... iterating the enumerate output)"
+ *   which this implementation now honors. Per-port connect failures
+ *   in wildcard mode are tolerated (already-subscribed / permission
+ *   errors are not fatal for the whole wildcard); explicit-mode
+ *   connect failures return -1 because the operator hand-picked that
+ *   source and a misroute is operator-visible (FR-002).
  *
  *   All non-subscribed event types (active sensing, clock, sysex,
- *   etc) fall through silently - queue slots are precious (256
+ *   etc.) fall through silently - queue slots are precious (256
  *   entries), so MIDI_EVENT_NONE is NOT enqueued for them.
  *
- *   ALSA uses 0..15 for channels; MIDI_EVENT_NOTE_ON.channel lives in
- *   the MIDI 1.0 1..16 domain, so each parser branch adds +1.
+ *   ALSA uses 0..15 for channels; MIDI_EVENT_NOTE_ON.channel lives
+ *   in the MIDI 1.0 1..16 domain, so each parser branch adds +1.
  *
  *   Cooperative shutdown: audio_midi_linux_close clears the atomic
  *   g_run flag, joins the pthread. The worker's loop body polls for
- *   100 ms then exits; full shutdown latency is one poll window with
- *   no self-pipe / spare fd required.
+ *   100 ms then exits; full shutdown latency is one poll window
+ *   with no self-pipe / spare fd required.
+ *
+ *   Idempotent + re-bind: same device_index is a no-op (worker keeps
+ *   running, g_current_device_index unchanged). Different device_index
+ *   tears down via audio_midi_linux_close() then re-opens. callers
+ *   that genuinely want to swap devices between renders should call
+ *   audio_midi_close() explicitly between calls (cleaner Lua-style
+ *   lifecycle).
+ *
+ * FR-034 + Q3 (no auto-reconnect): disconnect during operation
+ * (PORT_EXIT / CLIENT_EXIT) is handled in the worker; the
+ * close-and-reopen-loop happens only on explicit reopen, NOT on
+ * disconnect. After disconnect the synth continues playing from
+ * internal generative state and CC-modulated parameters retain
+ * their last value.
  *
  * Compile guard: this .o is in Makefile's OBJS but not WIN_OBJS so
  * Windows builds never see these symbols. The .c file pulls in
- * alsa/asoundlib.h + pthread.h + poll.h but only on Linux. ci.yml
- * installs libasound2-dev on stock Ubuntu runners so the pkg-config
- * gate in the Makefile becomes active (linker pulls -lasound there)
- * while dev boxes without libasound2-dev still build partial
- * artifacts (compile fails on missing header).
+ * alsa/asoundlib.h + pthread.h + poll.h + string.h but only on
+ * Linux. ci.yml installs libasound2-dev on stock Ubuntu runners so
+ * the pkg-config gate in the Makefile becomes active (linker pulls
+ * -lasound there) while dev boxes without libasound2-dev still
+ * build partial artifacts (compile fails on missing header).
  */
 #include "audio_midi.h"
 #include <alsa/asoundlib.h>
@@ -58,6 +80,13 @@ static pthread_t  g_thread;
  * with __atomic_store_n / __ATOMIC_RELEASE. Pairing honors the C11
  * acquire/release model in audio_midi.c's research.md D3. */
 static uint32_t   g_run   = 0u;
+/* Last device_index passed in to audio_midi_linux_init. -1 means
+ * either "wildcard" or "never initialized". Same value on a
+ * subsequent open is a no-op (idempotency); different value
+ * triggers close-then-reopen. main.c is expected to call
+ * audio_midi_close() between renders but the close-and-rebind
+ * defensive path catches tests that don't. */
+static int        g_current_device_index = -1;
 
 static void *midi_worker(void *arg) {
     (void)arg;
@@ -131,8 +160,21 @@ static void *midi_worker(void *arg) {
 }
 
 int audio_midi_linux_init(int device_index) {
-    (void)device_index;   /* phase 1: end-user routes via aconnect */
-    if (g_seq != NULL) return 0;   /* idempotent */
+    /* FR-001 + FR-002: --midi [N] opens a specific enumerated device,
+     * --midi-default is an alias for --midi 0. main.c passes -1 for
+     * the wildcard / no-explicit-N case ("synth --midi" alone) which
+     * auto-subscribes to every readable MIDI_GENERIC / MIDI_KEYBOARD
+     * port. The decode (client<<8)|port mirrors audio_midi_linux_list_devices
+     * (PR #108) so the enumerate output is directly bindable. */
+    
+    /* Idempotency + re-bind: same-N is a no-op (worker keeps running).
+     * Different-N tears down via audio_midi_linux_close(); main.c is
+     * expected to call audio_midi_close() between renders but doing
+     * the defensive close-and-rebind here keeps test env's T034
+     * round-trip (audio_midi_open(0) then audio_midi_open(1)) green
+     * without tying the contract to a specific caller discipline. */
+    if (g_seq != NULL && g_current_device_index == device_index) return 0;
+    if (g_seq != NULL) audio_midi_linux_close();
 
     snd_seq_t *seq = NULL;
     if (snd_seq_open(&seq, "default", SND_SEQ_OPEN_INPUT, 0) < 0) return -1;
@@ -140,23 +182,92 @@ int audio_midi_linux_init(int device_index) {
         snd_seq_close(seq);
         return -1;
     }
-    int port = snd_seq_create_simple_port(
+    int synth_port = snd_seq_create_simple_port(
         seq, "Stretto Input",
         SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_NO_EXPORT,
         SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
-    if (port < 0) {
+    if (synth_port < 0) {
+        snd_seq_close(seq);
+        return -1;
+    }
+
+    int sub_count = 0;
+    if (device_index >= 0) {
+        /* Explicit --midi N: decode (client<<8)|port (matching the
+         * encode in audio_midi_linux_list_devices; identical to ALSA
+         * addr convention used by amidi / aconnect). aconnect to a
+         * single source. If the source port is no longer present
+         * (e.g., the operator's USB controller was unplugged between
+         * --midi-list-devices and --midi N), snd_seq_connect_from
+         * fails and we return -1. Per FR-034 + Q3 no auto-reconnect
+         * on disconnect: we cannot substitute the wildcard path
+         * here because the operator picked that specific N
+         * deliberately and a silent fallback to wildcard would
+         * obscure an operator-visible misroute. */
+        int src_client = (device_index >> 8) & 0xFF;
+        int src_port   = device_index & 0xFF;
+        if (snd_seq_connect_from(seq, synth_port, src_client, src_port) < 0) {
+            snd_seq_close(seq);
+            return -1;
+        }
+        sub_count = 1;
+    } else {
+        /* Wildcard --midi (no N). Iterate the same enumerate filter
+         * (CAP_READ + MIDI_GENERIC|MIDI_KEYBOARD) and aconnect to
+         * each matching source. Per-port connect failures
+         * (already-subscribed / permission denied / source just
+         * unplugged) are tolerated and silently dropped because the
+         * wildcard contract is "best-effort subscribe to all
+         * readable MIDI controllers", not "every individual source
+         * succeeds". Cap at MIDI_LIST_DEVICES_CAP so the rarest
+         * studio-rig scenarios (>32 controllers) don't run away. */
+        snd_seq_client_info_t *cinfo;
+        snd_seq_client_info_alloca(&cinfo);
+        snd_seq_client_info_set_client(cinfo, -1);   /* rewind iterator */
+        int my_client = snd_seq_client_id(seq);
+        while (snd_seq_query_next_client(seq, cinfo) >= 0) {
+            int client = snd_seq_client_info_get_client(cinfo);
+            if (client == my_client) continue;   /* skip Stretto itself */
+            snd_seq_port_info_t *pinfo;
+            snd_seq_port_info_alloca(&pinfo);
+            snd_seq_port_info_set_client(pinfo, client);
+            snd_seq_port_info_set_port(pinfo, -1);  /* rewind to first port */
+            while (snd_seq_query_next_port(seq, pinfo) >= 0) {
+                unsigned int caps = snd_seq_port_info_get_capability(pinfo);
+                unsigned int type = snd_seq_port_info_get_type(pinfo);
+                if (!(caps & SND_SEQ_PORT_CAP_READ)) continue;
+                if (!(type & (SND_SEQ_PORT_TYPE_MIDI_GENERIC |
+                              SND_SEQ_PORT_TYPE_MIDI_KEYBOARD))) continue;
+                int src_port = snd_seq_port_info_get_port(pinfo);
+                /* Per-port connect errors are tolerated in wildcard mode. */
+                snd_seq_connect_from(seq, synth_port, client, src_port);
+                sub_count++;
+                if (sub_count >= MIDI_LIST_DEVICES_CAP) break;
+            }
+            if (sub_count >= MIDI_LIST_DEVICES_CAP) break;
+        }
+    }
+
+    if (sub_count == 0) {
+        /* FR-002: when no MIDI device is connected, the synth exits
+         * with a non-zero code. audio_midi_open's -1 return drives
+         * main.c's "MIDI: device index N unavailable" error path
+         * (and for wildcard N=-1, the same error fires when no
+         * hardware is connected at all). */
         snd_seq_close(seq);
         return -1;
     }
 
     g_seq  = seq;
-    g_port = port;
+    g_port = synth_port;
+    g_current_device_index = device_index;
 
     __atomic_store_n(&g_run, 1, __ATOMIC_RELEASE);
     if (pthread_create(&g_thread, NULL, midi_worker, NULL) != 0) {
-        snd_seq_close(g_seq);
+        snd_seq_close(seq);
         g_seq  = NULL;
         g_port = -1;
+        g_current_device_index = -1;
         return -1;
     }
     return 0;
