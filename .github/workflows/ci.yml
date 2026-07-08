@@ -112,30 +112,32 @@ jobs:
         # any of the 3 budgets fails the CI run immediately rather
         # than hiding behind a `WARNING:` line from `make size`.
         #
-        # Budget constants mirror Makefile (drift source-of-truth):
-        #   STRIP_TARGET    = 51200  bytes (~50 KB) -- Linux synth stripped   (Constitution v1.1.0; PR #116)
-        #   PACK_TARGET     = 30720  bytes (~30 KB) -- Linux synth UPX-packed (Constitution v1.2.0; PR #121)
-        #   WIN_PACK_BUDGET = 49152  bytes (~48 KB) -- Windows UPX-packed     (Constitution v1.1.0)
-        # If Makefile values change, update these in lockstep.
-        # Note: the upstream `Bridge regression test
-        # (Constitution<->Makefile)` step (case 1) catches
-        # Makefile<->Constitution drift via
-        # tools/spec-budget-check.sh BEFORE this gate fires. If you
-        # bump Makefile WITHOUT bumping these inline constants, the
-        # bridge catches the drift at PR-merge time, but the gate
-        # will pin the old value at the measurement-enforcement step
-        # until these constants are bumped too. Always bump both.
+        # Budgets are NOT hardcoded here: `make size` echoes the three
+        # Makefile variables (STRIP_TARGET / PACK_TARGET /
+        # WIN_PACK_BUDGET) into binary-sizes.txt as budget_* key=value
+        # rows, and this gate reads measurements AND budgets from that
+        # one artifact. The Makefile is the measurement-side source of
+        # truth; the upstream `Bridge regression test
+        # (Constitution<->Makefile)` step ties the Makefile values to
+        # Constitution Principle I BEFORE this gate fires, so a
+        # Principle I amendment only ever needs to touch the
+        # Constitution + Makefile pair (tools/spec-budget-amend.sh).
         run: |
           set -e
           awk -F= '
-            $1 == "linux_synth_stripped"        { stripped = $2 }
-            $1 == "linux_synth_packed"          { packed = $2 }
-            $1 == "windows_stretto_exe_packed"  { win_packed = $2 }
+            $1 == "linux_synth_stripped"                { stripped = $2 }
+            $1 == "linux_synth_packed"                  { packed = $2 }
+            $1 == "windows_stretto_exe_packed"          { win_packed = $2 }
+            $1 == "budget_linux_synth_stripped"         { STRIP_BUDGET = $2 }
+            $1 == "budget_linux_synth_packed"           { PACK_BUDGET = $2 }
+            $1 == "budget_windows_stretto_exe_packed"   { WIN_PACK_BUDGET = $2 }
             END {
-              STRIP_BUDGET    = 51200
-              PACK_BUDGET     = 30720
-              WIN_PACK_BUDGET = 49152
               fail = 0
+
+              if (STRIP_BUDGET + 0 <= 0 || PACK_BUDGET + 0 <= 0 || WIN_PACK_BUDGET + 0 <= 0) {
+                print "FAIL: budget_* keys missing or non-numeric in binary-sizes.txt -- `make size` must echo STRIP_TARGET / PACK_TARGET / WIN_PACK_BUDGET as budget_* rows"
+                exit 1
+              }
 
               if (stripped == "") {
                 print "  linux_synth_stripped: MISSING key in binary-sizes.txt -- Constitution v1.1.0 enforcement required"
@@ -170,7 +172,7 @@ jobs:
                 print "  windows_stretto_exe_packed: not built locally (mingw unavailable) -- skipped"
               } else if (win_packed + 0 > WIN_PACK_BUDGET) {
                 printf("FAIL: windows_stretto_exe_packed=%s > WIN_PACK_BUDGET=%d -- Constitution v1.1.0 (Principle I Windows UPX cap)\n", win_packed, WIN_PACK_BUDGET)
-                print "      Amend Principle I in .specify/memory/constitution.md, OR amend WIN_PACK_BUDGET in this step, OR trim the trigger feature."
+                print "      Amend Principle I in .specify/memory/constitution.md, OR amend WIN_PACK_BUDGET in Makefile, OR trim the trigger feature."
                 fail = 1
               } else {
                 printf("  windows_stretto_exe_packed=%s bytes  ok (<= %d budget, Constitution v1.1.0)\n", win_packed, WIN_PACK_BUDGET)

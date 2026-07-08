@@ -189,7 +189,12 @@ clean:
 # Size report: builds every binary whose toolchain is locally available
 # (gcc + libpulse + libasound for synth; upx for *.packed; mingw for
 # stretto.exe variants) and prints byte counts for all 4 as key=value
-# (rows not built locally print "missing"). Use this for ARCHITECTURE.md
+# (rows not built locally print "missing"), plus the 3 budget_* rows
+# echoing STRIP_TARGET / PACK_TARGET / WIN_PACK_BUDGET so the ci.yml
+# `Binary size budget gate` step reads measurements AND budgets from
+# the same binary-sizes.txt artifact (single source of truth: this
+# Makefile; no inline budget constants in ci.yml).
+# Use this for ARCHITECTURE.md
 # binary-size hedge refresh: local dev hosts without upx OR mingw still
 # get the rows they CAN build, so future docs refreshes don't need
 # WSL toolchain debugging. CI has the full toolchain so all 4 rows are
@@ -205,6 +210,9 @@ size:
 	@printf 'linux_synth_packed=%s\n' "$$(stat -c%s synth.packed 2>/dev/null || echo missing)"
 	@printf 'windows_stretto_exe_stripped=%s\n' "$$(stat -c%s stretto.exe 2>/dev/null || echo missing)"
 	@printf 'windows_stretto_exe_packed=%s\n' "$$(stat -c%s stretto.packed.exe 2>/dev/null || echo missing)"
+	@printf 'budget_linux_synth_stripped=%s\n' '$(STRIP_TARGET)'
+	@printf 'budget_linux_synth_packed=%s\n' '$(PACK_TARGET)'
+	@printf 'budget_windows_stretto_exe_packed=%s\n' '$(WIN_PACK_BUDGET)'
 	@echo
 	@echo "Constitution Principle I targets:"
 	@printf '  STRIP_TARGET  (Linux synth stripped)   : %s bytes\n' '$(STRIP_TARGET)'
