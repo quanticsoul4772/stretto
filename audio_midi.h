@@ -42,9 +42,10 @@
  * >32 controllers can't run away. 32 matches the documented
  * `--midi-list-devices` printf width + the typ. USB-MIDI class-count
  * ceiling on Linux (USB subsystem limit) + midiInputPortCount on
- * Windows. The constant WAS NOT in PR #108's reviewed diff (likely a
- * rebase regression when #109 was squashed in); reintroduced here so
- * the backends compile cleanly under `make` + `make coverage`. */
+ * Windows. The constant was not present in the merged source
+ * despite the spec + PR #108's PR description referencing it; this
+ * file restores it so the backends compile cleanly under
+ * `make` + `make coverage`. */
 #define MIDI_LIST_DEVICES_CAP    32
 
 /* --- Event type discriminator (data-model.md Entity 1) --- */
