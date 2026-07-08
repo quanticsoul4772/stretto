@@ -63,6 +63,61 @@ Writes a stereo 16-bit 48 kHz WAV. Seconds in `1..3600`. No audio device opened.
 
 Fixes the PRNG / cellular automaton / Markov seeds to `N`. Same `--seed` always produces the same audio (this is how the regression test works).
 
+## MIDI
+
+Live MIDI keyboard input — plug a controller in, the synth plays notes as you press them (mixed over the generative output rather than replacing it). Two backends, identical interface:
+
+| Backend | Platform | API |
+|---|---|---|
+| libasound sequencer | Linux | `snd_seq_open INPUT` + `snd_seq_connect_from` + polling worker pthread |
+| WinMM | Windows | `midiInOpen` + `midiInProc` callback; sysex via `MIDIHDR` pool |
+
+### Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| (no flag) | MIO off | BSS-default `g_enabled = 0` — audio path is bitexact with `golden/regression_16s.sha256`. |
+| `--no-midi` | — | Same as omitting the flag; passes `audio_midi_init(-1)` so the queue short-circuits and drain() is a no-op. Use this in CI when MIDI hw isn't available. |
+| `--midi` | wildcard | Auto-subscribe to every readable ALSA `MIDI_GENERIC` / `MIDI_KEYBOARD` port (`snd_seq_query_next_client` + `snd_seq_query_next_port` walk; per-port connect failures tolerated). On WinMM, falls back to `WAVE_MAPPER` so the OS picks the default input. |
+| `--midi <N>` | explicit | Bind to the N-th device from the most recent `--midi-list-devices` output. ALSA addresses decode `(client << 8) \| port` to `snd_seq_connect_from(client, port)`. WinMM passes the raw device id to `midiInOpen`. |
+| `--midi-default` | explicit 0 | Alias for `--midi 0` (FR-002). |
+| `--midi-list-devices` | — | Prints one line per enumerated input device as `<index> <name>`, capped at 32. Exit 0. Use to discover the N for an explicit `--midi N`. |
+| `--midi-channel <1..16>` | all | Drop events whose channel != N at drain time, BEFORE CC dispatch. Default 0 = accept all 16 channels. |
+
+### Mapping (FR-010)
+
+- Note On / Off maps through the active scale (`SCALES[cur_scale]`) the same way the L-system marker does, so MIDI notes feel “in-scale” instead of chromatic. Velocity 0 on a Note On means Note Off (FR-011).
+- Octave offset clamps to [-2, +4] so a MIDI note never strays out of the synth's audible range.
+- 11-voice pool with Q1 voice-stealing policy: idle first, in-release second (max env_time), oldest third.
+
+### CC mapping (US2 / FR-020)
+
+| CC# | Name (MIDI 1.0) | Target | Scale |
+|---|---|---|---|
+| 1 | Mod Wheel | Filter cutoff | +1 |
+| 7 | Channel Volume | Compressor threshold | +60 |
+| 71 | Resonance / Timbre | Filter resonance | +1 |
+| 74 | Brightness | Filter cutoff | +1 |
+| 91 | Reverb Send | Reverb wet | +1 |
+| 93 | Chorus / Delay | Delay wet | +1 |
+
+Delta = `(V - 64) * scale`, summing additively across multiple CCs targeting the same param (FR-022). All other CCs (including CC#64 sustain pedal, CC#123 All Notes Off, the 4 General Purpose slots) are silently dropped per Principle VII — the synth continues playing from its own generative state on a disconnect.
+
+### Disconnect (FR-034)
+
+When the OS disconnects the MIDI source (ALSA `PORT_EXIT` / `CLIENT_EXIT`, winmm `MIM_CLOSE`), the synth does **not** auto-reconnect. It continues from internal generative state and the CC-modulated parameters retain their last value. The audio path is unaffected.
+
+### Discoverability
+
+```
+./synth --midi-list-devices
+14 0:0 System Timer
+32 14:0 MIDI Through Port-0
+128 20:0 USB MIDI Controller
+```
+
+The first column is the `<index>` you pass to `--midi <N>`. Capped at 32 devices per the enumerator contract.
+
 ## Keyboard controls (live mode)
 
 | Key | Action |

@@ -1,5 +1,23 @@
 # Changelog
 
+## Recent: 003 MIDI input surface (ALSA + WinMM)
+
+Live MIDI keyboard input ships. Connect a controller to the synth's live mode — the synth plays your notes mixed over the generative output rather than replacing it.
+
+- **Two backends, identical interface.** Linux uses libasound sequencer (`snd_seq_open INPUT` + `snd_seq_connect_from` + polling worker pthread). Windows uses WinMM (`midiInOpen` + `midiInProc` callback, 4-buffer sysex `MIDIHDR` pool). Both deliver events to the same atomic SPSC ring (256 entries, drop counter) consumed by the existing `audio_midi_drain` slot in `mixer.c::render_chunk`.
+- **Device routing** (`--midi <N>`, `--midi-default`, `--midi` wildcard, `--midi-list-devices`). Wildcard iterates `snd_seq_query_next_client` + `snd_seq_query_next_port` with a dual CAP filter (`CAP_READ + MIDI_GENERIC|MIDI_KEYBOARD`) per the spec's PR-108 enumerate contract; per-port connect failures are tolerated. Explicit mode decodes `(client << 8) | port` (Linux) / raw device id (WinMM) so `--midi-list-devices` output is directly bindable.
+- **Channel filter** (`--midi-channel <1..16>`). Drops events with `channel != N` at drain time, BEFORE the CC dispatch switch — so channel mismatch costs nothing.
+- **Scale-degree + velocity mapping (FR-010 / FR-011)**. Notes map through the active scale (`SCALES[cur_scale][K%7]`) the same way the L-system marker does, with octave offset clamped to `[-2, +4]`. Velocity 0 = Note Off. 11-voice pool with Q1 voice-stealing (idle → in-release → oldest).
+- **CC dispatch (US2 / FR-020 / FR-022)**. Table-driven `CC_MAP[128]` routes CC#1/7/71/74/91/93 to the corresponding synth parameter; all other CCs (including CC#64, CC#123, General Purpose 1–4) are silently dropped per Principle VII. Delta = `(V - 64) * scale`, summing additively across multiple CCs to the same param. Compressor threshold runtime-tunable.
+- **Disconnect (FR-034)**. ALSA `PORT_EXIT` / `CLIENT_EXIT` and winmm `MIM_CLOSE` set the atomic `g_run` shutdown flag from the producer side; `audio_midi_close` completes teardown on the audio thread. No auto-reconnect — synth continues from internal generative state, CC parameters retain last value.
+- **--no-midi byte-identity (FR-050 / FR-053 / Constitution III v1.0.1)**. `audio_midi_init(-1)` keeps `g_enabled = 0` in BSS, so `audio_midi_enqueue` and `audio_midi_drain` short-circuit without touching the queue or any sine-table / voice-pool state. The 16-s `golden/regression_16s.sha256` is unaffected by `--no-midi`, the `--midi` / `--midi <N>` paths, or the absence of any MIDI flag at all.
+- **Tests.** 23 unit tests across `tests/unit/test_midi.c` (`midi_scale_degree_mapping`, `midi_velocity_scaling`, `midi_octave_clamp`, `midi_voice_stealing`, `midi_no_midi_byte_identical`, The CC dispatch family T025a-k, `midi_cc_multi_sums_additive`, `midi_channel_filter_drops_non_matching`, `midi_list_devices_*`, `midi_note_on_off_live_dispatch`, `midi_open_close_round_trip`, `midi_open_wildcard_sentinel`). T019 directly hashes `golden/regression_16s.sha256` as a smoke check on the FR-053 contract.
+- **Smoke test.** `tests/test_smoke_live.sh` now runs two sub-checks: audio (PulseAudio) + MIDI (`modprobe snd-seq-dummy` + `./synth --midi --no-ui` for 2s). The MIDI sub-check skips cleanly if snd-seq-dummy isn't available, so CI without the kernel module still passes the audio check.
+- **Docs.** `ARCHITECTURE.md` (T041), `README.md` (T040 new `## MIDI` subsection: flag table + mapping contract + CC table + disconnect behavior + discoverability example), `CHANGELOG.md` (this entry, T042), `.specify/feature.json` (T043 new status registry, modeled on the existing `.specify/integrations/*.manifest.json` convention).
+- **`audio_midi.c`** is the single source-of-truth for the gate. `g_enabled = 0` flips when `audio_midi_init(-1)` runs (= `--no-midi` opt-out) OR when `audio_midi_open(N)` fails (so `--midi <N>` against an unplugged controller can't leave the synth in a phantom-device state). `audio_midi_close` resets `g_enabled = 0` unconditionally. The atomic SPSC ring uses `__atomic_*_n` per the Constitution III cross-thread memory model.
+
+Five PRs land 003 end-to-end: #102-#106 baseline (MIDI scaffolding + bind stubs + T041 ARCH refresh) → #107 (checklist sync, 36 [X] flips + 12 honest gaps) → #108 (T034/T035 platform enumerate + `MIDI_LIST_DEVICES_CAP`) → #109 (`--midi <N>` bind routing + `g_enabled` reset-on-failure fix).
+
 ## Recent: spec-kit bootstrap + Constitution III amendment to v1.0.1
 
 The `001-stretto-baseline` capability surface now has the full spec-kit artifact set under `specs/001-stretto-baseline/`. Five new / refreshed documents:

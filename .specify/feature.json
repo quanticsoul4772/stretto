@@ -1,0 +1,69 @@
+{
+  "feature": "003-midi-input",
+  "version": "1.0.0",
+  "installed_at": "2026-07-08T00:00:00Z",
+  "status": "shipped",
+  "spec_dir": "specs/003-midi-input",
+  "shipped_at": "2026-07-08",
+  "shipped_via_pr": 109,
+  "merged_in_main": true,
+  "summary": "Live MIDI keyboard input — ALSA (libasound sequencer) + WinMM (midiInOpen/midiInProc) backends wired through an atomic SPSC ring + table-driven CC dispatch. Explicit device routing via --midi <N> decodes (client<<8)|port on Linux / raw devid on WinMM; --midi wildcard auto-subscribes to every readable MIDI_GENERIC|MIDI_KEYBOARD port. --no-midi opt-out preserves the 16-s byte-identical golden (FR-050/FR-053).",
+  "user_stories": [
+    { "id": "US1", "title": "MIDI note triggering mapped to scale-degree + active voice pool" },
+    { "id": "US2", "title": "CC dispatch via CC_MAP[128] routes 6 controllers to filter/reverb/delay/compressor" },
+    { "id": "US3", "title": "Device discovery + channel filter via --midi-list-devices + --midi-channel" }
+  ],
+  "backends": {
+    "linux": {
+      "module": "audio_midi_linux.c",
+      "library": "libasound2-dev (libsndfile-style API: snd_seq_*)",
+      "header": "alsa/asoundlib.h",
+      "transport": "snd_seq_open(SND_SEQ_OPEN_INPUT) + snd_seq_connect_from + polling worker pthread (poll, 100ms window)"
+    },
+    "win32": {
+      "module": "audio_midi_winmm.c",
+      "library": "winmm.dll (midiInOpen / midiInProc / midiInGetDevCaps + MIDIHDR pool)",
+      "header": "mmsystem.h",
+      "transport": "midiInOpen(CALLBACK_FUNCTION) + 4 sysex MIDIHDR buffers + MIM_DATA short-message parser"
+    }
+  },
+  "surface": {
+    "header": "audio_midi.h",
+    "dispatcher": "audio_midi.c",
+    "cc_table": "CC_MAP[128] (8 mapped, 120 silently dropped per Principle VII)",
+    "ring": "midi_queue_t (256 entries x 4 B = 1024 B, BSS-allocated, atomic head/tail)"
+  },
+  "cli": [
+    { "flag": "--no-midi",            "effect": "audio_midi_init(-1); g_enabled stays 0" },
+    { "flag": "--midi",                "effect": "wildcard idx=-1; auto-subscribe to readable ALSA ports / WAVE_MAPPER on winmm" },
+    { "flag": "--midi <N>",            "effect": "explicit; decode (N>>8, N&0xFF) on linux, raw devid on winmm" },
+    { "flag": "--midi-default",        "effect": "alias for --midi 0 (FR-002)" },
+    { "flag": "--midi-channel <1..16>","effect": "channel filter at drain time, BEFORE CC dispatch" },
+    { "flag": "--midi-list-devices",   "effect": "enumerate; print '<index> <name>' per device, capped at 32" }
+  ],
+  "tests": {
+    "unit": "tests/unit/test_midi.c (23 tests across US1/US2/US3 + T036 wildcard sentinel)",
+    "smoke": "tests/test_smoke_live.sh (audio + new --midi wildcard sub-check via snd-seq-dummy)"
+  },
+  "docs": {
+    "arch": "ARCHITECTURE.md (T041 MIDI input surface subsection under Live audio backends)",
+    "operator": "README.md (## MIDI subsection: flag table, mapping contract, CC table, disconnect)",
+    "spec_kit": [
+      "specs/003-midi-input/spec.md",
+      "specs/003-midi-input/plan.md",
+      "specs/003-midi-input/research.md",
+      "specs/003-midi-input/tasks.md",
+      "specs/003-midi-input/quickstart.md"
+    ]
+  },
+  "key_invariants": [
+    "FR-050 / FR-053: --no-midi byte-identical with golden/regression_16s.sha256",
+    "FR-034: graceful disconnect via atomic g_run from the producer side; no auto-reconnect",
+    "Principle III v1.0.1: cross-platform invariant preserved (Linux glibc + Windows winmm, both little-endian x86)",
+    "Principle VII: unassigned CCs silently dropped (no per-CC overhead)"
+  ],
+  "followups": [
+    "T044-T049 (verification gates: CI, byte-identity, smoke, coverage, size, platform-scope) — continuous, kept [ ] in tasks.md by convention",
+    "Replace ~93% ARCH hedge with a real make coverage measurement now that PR #108 + #109 lift audio_midi.* further"
+  ]
+}
