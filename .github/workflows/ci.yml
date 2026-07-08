@@ -40,6 +40,11 @@ jobs:
         # file tamper + restore cycles); no build artefacts
         # required since the bridge is pure Constitution<->Makefile
         # static alignment.
+        # Also serves as the pre-flight for the `Binary size budget
+        # gate` step downstream: case 1 (happy-path) calls
+        # `tools/spec-budget-check.sh` against the current main, so
+        # a Constitution<->Makefile drift fails case 1 first, before
+        # the gate ever fires.
         run: bash tests/test_spec_budget_check.sh
 
       - name: Unit tests
@@ -74,34 +79,6 @@ jobs:
           name: binary-sizes
           path: binary-sizes.txt
 
-      - name: Assert Spec↔Build size budgets (Constitution Principle I vs Makefile)
-        # Pre-flight: catches spec/build drift BEFORE the inline
-        # binary-sizes gate ever fires. Triple-checks that
-        # Constitution Principle I (≤48 KB Windows / ≤30 KB Linux
-        # UPX / ≤50 KB Linux stripped) equals Makefile
-        # WIN_PACK_BUDGET / PACK_TARGET / STRIP_TARGET byte counts.
-        # Any future amendment that updates Principle I in
-        # .specify/memory/constitution.md but forgets a Makefile
-        # variable (or vice versa) fails this step immediately,
-        # preventing the post-mortem cascade PRs #118-#124 cleaned
-        # up (those caught spec/build drift only via the binary-sizes
-        # measurement artifact, not via spec/build static alignment).
-        # Convention: Constitution budgets in KB; Makefile budgets in
-        # bytes; 1 KB = 1024 B resolves 48 KB -> 49152 B / 50 KB ->
-        # 51200 B / 30 KB -> 30720 B cleanly to current values.
-        # The `Binary size budget gate` step downstream uses these
-        # SAME Makefile-resolved byte values implicitly via its
-        # internal hardcoded constants; if you bump Makefile WITHOUT
-        # bumping the gate's hardcoded constants, the gate still pins
-        # the old value; this script catches that drift too via
-        # Constitution alignment (the source of truth).
-        run: |
-          if [ ! -f tools/spec-budget-check.sh ]; then
-            echo "FAIL: tools/spec-budget-check.sh missing"
-            exit 1
-          fi
-          bash tools/spec-budget-check.sh
-
       - name: Binary size budget gate
         # Replaces the prior Windows-only `Windows packed binary size
         # budget` step (which used `stat -c%s stretto.packed.exe`
@@ -119,6 +96,14 @@ jobs:
         #   PACK_TARGET     = 30720  bytes (~30 KB) -- Linux synth UPX-packed (Constitution v1.2.0; PR #121)
         #   WIN_PACK_BUDGET = 49152  bytes (~48 KB) -- Windows UPX-packed     (Constitution v1.1.0)
         # If Makefile values change, update these in lockstep.
+        # Note: the upstream `Bridge regression test
+        # (Constitution<->Makefile)` step (case 1) catches
+        # Makefile<->Constitution drift via
+        # tools/spec-budget-check.sh BEFORE this gate fires. If you
+        # bump Makefile WITHOUT bumping these inline constants, the
+        # bridge catches the drift at PR-merge time, but the gate
+        # will pin the old value at the measurement-enforcement step
+        # until these constants are bumped too. Always bump both.
         run: |
           set -e
           awk -F= '
