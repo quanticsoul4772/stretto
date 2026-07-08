@@ -154,11 +154,33 @@ clean:
 	       tests/unit/test_mixer tests/unit/test_wav tests/unit/test_keys \
 	       $(GENS) $(HEADERS) *.o *.win.o
 
-size: synth
-	@SIZE=$$(stat -c%s synth); \
-	echo "Stripped binary size: $$SIZE bytes (target: $(STRIP_TARGET))"; \
-	if [ $$SIZE -gt $(STRIP_TARGET) ]; then \
-		echo "WARNING: exceeds $(STRIP_TARGET) byte target"; \
+# Size report: builds every binary whose toolchain is locally available
+# (gcc + libpulse + libasound for synth; upx for *.packed; mingw for
+# stretto.exe variants) and prints byte counts for all 4 as key=value
+# (rows not built locally print "missing"). Use this for ARCHITECTURE.md
+# binary-size hedge refresh: local dev hosts without upx OR mingw still
+# get the rows they CAN build, so future docs refreshes don't need
+# WSL toolchain debugging. CI has the full toolchain so all 4 rows are
+# populated; the matching ci.yml step uploads the report as the
+# `binary-sizes` artifact for any PR.
+size:
+	@$(MAKE) -s synth
+	@command -v $(UPX_BIN) >/dev/null 2>&1 && $(MAKE) -s synth.packed || echo "info: synth.packed: UPX ($(UPX_BIN)) not on PATH -- skipping"
+	@command -v $(WIN_CC) >/dev/null 2>&1 && $(MAKE) -s stretto.exe || echo "info: stretto.exe: Windows cross-compiler ($(WIN_CC)) not on PATH -- skipping"
+	@command -v $(UPX_BIN) >/dev/null 2>&1 && command -v $(WIN_CC) >/dev/null 2>&1 && $(MAKE) -s stretto.packed.exe || echo "info: stretto.packed.exe: UPX OR Windows toolchain missing -- skipping"
+	@printf '\n=== binary sizes (key=value; "missing" if not built locally) ===\n'
+	@printf 'linux_synth_stripped=%s\n' "$$(stat -c%s synth 2>/dev/null || echo missing)"
+	@printf 'linux_synth_packed=%s\n' "$$(stat -c%s synth.packed 2>/dev/null || echo missing)"
+	@printf 'windows_stretto_exe_stripped=%s\n' "$$(stat -c%s stretto.exe 2>/dev/null || echo missing)"
+	@printf 'windows_stretto_exe_packed=%s\n' "$$(stat -c%s stretto.packed.exe 2>/dev/null || echo missing)"
+	@echo
+	@echo "Constitution Principle I targets:"
+	@printf '  STRIP_TARGET  (Linux synth stripped)   : %s bytes\n' '$(STRIP_TARGET)'
+	@printf '  PACK_TARGET   (Linux synth UPX-packed) : %s bytes\n' '$(PACK_TARGET)'
+	@printf '  WIN_PACK_BUDGET (Windows UPX-packed)  : 49152 bytes (48 KB)\n'
+	@SIZE=$$(stat -c%s synth 2>/dev/null || echo 0); \
+	if [ "$$SIZE" != "0" ] && [ "$$SIZE" -gt "$(STRIP_TARGET)" ]; then \
+		echo "WARNING: synth $$SIZE > STRIP_TARGET $(STRIP_TARGET) -- exceeds Linux stripped budget"; \
 	fi
 
 test: synth

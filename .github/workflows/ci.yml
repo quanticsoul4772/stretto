@@ -41,6 +41,23 @@ jobs:
       - name: UPX-pack Windows .exe
         run: make winpack
 
+      - name: Binary sizes report
+        # Capture all 4 byte counts (Linux synth stripped, Linux
+        # synth.packed, Windows stretto.exe stripped, Windows
+        # stretto.packed.exe) via `make size`. CI's full toolchain
+        # populates all 4 rows; local dev hosts get a partial report
+        # (Makefile skips UPX/mingw rows whose toolchain is missing).
+        # Report is uploaded so PR-time refreshes of ARCHITECTURE.md
+        # binary-size row can be sourced from CI artifact instead of
+        # needing local toolchain reinstallation.
+        run: make size | tee binary-sizes.txt
+
+      - name: Upload binary sizes artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-sizes
+          path: binary-sizes.txt
+
       - name: Windows packed binary size budget
         # Project's stated goal is "<64 KB packed". Current is ~32 KB.
         # 48 KB budget = 50% headroom for future features. Doubling
