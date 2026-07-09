@@ -438,6 +438,43 @@ static void build_oscilloscope_grid(char *buf, int *p, int cap,
     append_str(buf, p, COL_RESET);
 }
 
+/* no-color.org: a NO_COLOR environment variable that is present AND
+   non-empty disables default color output. Cached once - the spec is
+   about launch environment, not live toggling. */
+static int no_color_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *v = getenv("NO_COLOR");
+        cached = (v != NULL && v[0] != '\0');
+    }
+    return cached;
+}
+
+/* Strip SGR (color) escape sequences - ESC [ ... m - from buf in
+   place, returning the new length. Functional escapes (cursor home /
+   hide, erase-line, clear) end in other final bytes and are kept.
+   Filtering at the single write site beats gating ~25 call sites
+   whose color escapes are fused into compile-time string literals
+   (e.g. " " COL_YELLOW "S:" COL_WHITE). Exposed (not static) so the
+   unit suite can exercise it without a PTY. */
+int ui_strip_sgr(char *buf, int len) {
+    int w = 0, r = 0;
+    while (r < len) {
+        if (buf[r] == 0x1b && r + 1 < len && buf[r + 1] == '[') {
+            int e = r + 2;
+            while (e < len && !(buf[e] >= 0x40 && buf[e] <= 0x7e)) e++;
+            if (e < len && buf[e] == 'm') {   /* SGR: drop it */
+                r = e + 1;
+                continue;
+            }
+            while (r <= e && r < len) buf[w++] = buf[r++];
+            continue;
+        }
+        buf[w++] = buf[r++];
+    }
+    return w;
+}
+
 void ui_draw_oscilloscope(int16_t *buf, uint32_t frames) {
     unsigned int tw = 80, th = 24;
     ui_term_get_size(&tw, &th);
@@ -458,5 +495,6 @@ void ui_draw_oscilloscope(int16_t *buf, uint32_t frames) {
     build_status_row(out, &p);
     build_oscilloscope_grid(out, &p, (int)sizeof(out), buf, frames, w, h);
 
+    if (no_color_enabled()) p = ui_strip_sgr(out, p);
     (void)!write(1, out, (size_t)p);
 }

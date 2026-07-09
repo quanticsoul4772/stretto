@@ -28,8 +28,14 @@ void ui_install_signal_handlers(void);
 /* Draw one oscilloscope frame plus the status row, using `buf` as
    the source signal (interleaved L,R,L,R int16 samples). Issues a
    single write() per frame so terminal I/O does not block the audio
-   thread. */
+   thread. Honors NO_COLOR (no-color.org): a present, non-empty
+   NO_COLOR strips the SGR color sequences (glyph heat-map ramp and
+   functional cursor escapes are kept). */
 void ui_draw_oscilloscope(int16_t *buf, uint32_t frames);
+
+/* Strip SGR (ESC [ ... m) sequences from buf in place; returns the
+   new length. Functional escapes are kept. Public for unit tests. */
+int ui_strip_sgr(char *buf, int len);
 
 /* --- help overlay --- */
 

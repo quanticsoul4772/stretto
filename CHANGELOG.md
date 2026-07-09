@@ -1,5 +1,9 @@
 # Changelog
 
+## Recent: NO_COLOR support (052)
+
+Per the no-color.org convention (RESEARCH_CLI.md P1): a present, non-empty `NO_COLOR` environment variable disables the ANSI color (SGR) sequences in the status row and oscilloscope; the glyph heat-map ramp and functional escapes (cursor home/hide, erase, clear) are kept, so the monochrome scope stays fully readable. Implementation: the status row builds its colors from compile-time fused string literals across ~25 call sites, so instead of restructuring them, SGR sequences are stripped in one pass at the single write site (`ui_strip_sgr`, exposed for unit testing; 4 new tests cover color removal, functional-escape preservation, plain text, and truncated-escape safety). One-line mentions in `--help` and the man page's new ENVIRONMENT section. UI-only; goldens untouched.
+
 ## Recent: last two RESEARCH_CLI leftovers - help overlay + positional overflow (051)
 
 - **D2**: the live help overlay (`?`) was missing the `l`/`L` compressor-threshold keys, which keys.c has dispatched and the README has documented since the compressor landed. One line in ui.c's HELP_TEXT.
