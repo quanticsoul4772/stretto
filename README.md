@@ -48,11 +48,20 @@ Plays generative audio out the default audio device, draws an ASCII oscilloscope
 ### Render mode
 
 ```
-./synth --render <seconds> <output.wav>
-.\stretto.exe --render <seconds> <output.wav>
+./synth --render <seconds> <out.wav|->
+.\stretto.exe --render <seconds> <out.wav|->
 ```
 
 Writes a stereo 16-bit 48 kHz WAV. Seconds in `1..3600`. No audio device opened.
+
+`-` streams the WAV to stdout for pipelines (sox/ffmpeg convention; byte-identical to the file output — the RIFF header is written up front from the known duration, no seek-back):
+
+```
+./synth --render 60 - --seed 7 | ffmpeg -i - out.flac
+./synth --render 10 - | aplay
+```
+
+A file literally named `-` needs `./-`. A downstream that closes early ends the render via SIGPIPE, standard pipeline behavior. Windows note: PowerShell older than 7.4 re-encodes binary pipes and redirection (byte-stream passthrough landed in 7.4) — use cmd.exe redirection or an output path there.
 
 ### Help and version
 

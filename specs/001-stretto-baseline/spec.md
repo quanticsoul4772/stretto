@@ -111,7 +111,7 @@ While listening, the user adjusts tempo, gate density, filter cutoff/resonance, 
 
 #### CLI surface
 - **FR-030**: System MUST accept `--seed N` (unsigned integer; must be parseable in full or exit with an error).
-- **FR-031**: System MUST accept `--render <seconds> <out.wav>` where seconds is `[1, 3600]`.
+- **FR-031**: System MUST accept `--render <seconds> <out.wav|->` where seconds is `[1, 3600]`. The output argument `-` streams the WAV to stdout, byte-identical to the file output (amended 2026-07-08; the RIFF header is written up front from the known duration, so no seek is required).
 - **FR-032**: System MUST accept `--no-ui` to suppress all terminal interaction.
 - **FR-033**: When `--render` is absent, the system MUST enter live-audio mode.
 - **FR-034**: System MUST exit with usage on any unrecognized argument combination.

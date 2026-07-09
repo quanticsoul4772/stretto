@@ -25,7 +25,7 @@ This table is the live index — the body is kept for the reasoning (especially
 | F1 `--help` / `-h` / `--version` | **Shipped** — PR #137 (GNU §4.8; `version.h` from `git describe`; `tests/test_cli.sh`) |
 | §7 mismatches D1, D3–D6, D8 | **Fixed** — PRs #134/#135; D7 was confirmed a non-bug in the original analysis |
 | M2 non-TTY stdin: auto-`--no-ui` instead of `exit(1)` | Open |
-| F2 `--render N -` streams WAV to stdout | Open |
+| F2 `--render N -` streams WAV to stdout | **Shipped** — 046 (byte-identical to file output; SIGPIPE default kept; fwrite/fclose error discipline added) |
 | F3+F4 preset capture (initial-state flags + print-state-on-quit) | Open |
 | F5 packaging minimum (man page, tagged releases + checksums) | Open — unblocked by F1 |
 | P1 `NO_COLOR` · P2 exit-code polish · P3 brew/AUR · N1 key record/replay | Open |
@@ -56,7 +56,7 @@ What is **absent**:
   `audio_pulse.c:38` and `audio_winmm.c:41`; zero `signal`/`sigaction` calls in the
   tree). Consequences in §4 finding M1.
 - No stdout streaming: `render_wav()` does `fopen(path, "wb")` (`wav.c:36`); `-` is
-  treated as a filename.
+  treated as a filename. *(Fixed in 046: `-` streams to stdout.)*
 - No `NO_COLOR` / TTY awareness on Linux: `ui_term_raw_mode()` **exits with an
   error** if stdin is not a TTY (`ui.c:90-93`), and ANSI color escapes are emitted
   unconditionally. (Windows degrades gracefully: `GetConsoleMode` failure flips

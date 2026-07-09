@@ -41,7 +41,7 @@ flag           := "--no-ui" | "--seed" UINT
                 |  "--midi-default"
                 |  "--midi-list-devices"
                 |  "--midi-channel" UINT ;
-positional_render := "--render" UINT PATH ;
+positional_render := "--render" UINT ( PATH | "-" ) ;   (* "-" = WAV to stdout, added 2026-07-08 *)
 
 UINT           := "0".."9"+ ;
 PATH           := any non-flag string ;
