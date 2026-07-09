@@ -11,6 +11,15 @@ on:
   pull_request:
     branches: [main]
 
+# Explicit least-privilege token (pre-publication hardening): this
+# workflow only builds and tests - it never writes to the repo. The
+# repo-level default is already read-only, but stating it here
+# survives any future settings change and is the posture fork PRs
+# should see on a public repo. release.yml declares its own
+# contents: write.
+permissions:
+  contents: read
+
 jobs:
   build-test-coverage:
     # Pinned (not -latest) and kept IDENTICAL to release.yml's runner:
