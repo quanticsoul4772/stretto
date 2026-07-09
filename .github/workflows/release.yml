@@ -81,9 +81,15 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          # No -dirty may have leaked into any later build: the tree
-          # must be clean after ALL builds and gates.
-          test -z "$(git status --porcelain)" || { git status --porcelain; exit 1; }
+          # No -dirty may have leaked into any later build: no TRACKED
+          # file may be modified after all builds and gates.
+          # --untracked-files=no matches `git describe --dirty`'s
+          # semantics exactly - untracked build artifacts (e.g.
+          # binary-sizes.txt, also gitignored now) are not dirt.
+          # (First rehearsal run 29028879971 failed here on exactly
+          # that false positive.)
+          test -z "$(git status --porcelain --untracked-files=no)" || \
+            { git status --porcelain --untracked-files=no; exit 1; }
           # The version literal must be embedded in the (unpacked)
           # Windows exe too - it was linked by a later make invocation
           # than the asserted ./synth.

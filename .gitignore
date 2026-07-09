@@ -60,6 +60,7 @@ commit_msg*.txt
 
 # One-off local measurement artifacts
 synth.stripped
+binary-sizes.txt
 
 # Per-user Claude Code settings (machine-local permissions)
 .claude/settings.local.json
