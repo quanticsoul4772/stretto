@@ -58,6 +58,88 @@ case $rc in
         ;;
 esac
 
+# ----- Terminal-restore sub-checks (Linux signal handler + fcntl restore) -----
+# A: SIGTERM during live-with-UI mode must leave the PTY with ECHO and
+#    ICANON restored (ui.c sig_restore_and_reraise), and the process
+#    must die by the signal (wait status 143 via the re-raise).
+# B: a clean 'q' quit must clear O_NONBLOCK on stdin. O_NONBLOCK lives
+#    on the open file description, so B runs synth in the PTY
+#    FOREGROUND with inherited stdin and probes the same fd afterward
+#    (a </dev/tty redirect would open a fresh description and make the
+#    assertion vacuous).
+# A uses SIGTERM, not SIGINT: non-interactive shells start background
+# jobs with SIGINT ignored, so a SIGINT-based check would silently not
+# kill the synth. Both sub-checks need script(1) + python3 to drive a
+# real PTY; skipped cleanly if unavailable. These run BEFORE the MIDI
+# sub-check because its modprobe gate exits 0 on non-root runners.
+if ! command -v script >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    echo "SKIP: script(1) or python3 unavailable; terminal-restore sub-checks skipped"
+else
+    cat > /tmp/stretto_term_probe.py <<'PYEOF'
+import termios, fcntl, os, sys
+lf = termios.tcgetattr(0)[3]
+echo   = bool(lf & termios.ECHO)
+icanon = bool(lf & termios.ICANON)
+nonblk = bool(fcntl.fcntl(0, fcntl.F_GETFL) & os.O_NONBLOCK)
+print("PROBE echo=%d icanon=%d nonblock=%d" % (echo, icanon, nonblk))
+sys.exit(0 if (echo and icanon and not nonblk) else 1)
+PYEOF
+
+    cat > /tmp/stretto_sigterm_check.sh <<EOF
+#!/bin/bash
+cd "$PWD"
+./synth </dev/tty >/dev/null 2>&1 &
+pid=\$!
+sleep 2
+kill -TERM "\$pid" 2>/dev/null
+for _ in \$(seq 1 20); do kill -0 "\$pid" 2>/dev/null || break; sleep 0.5; done
+if kill -0 "\$pid" 2>/dev/null; then kill -9 "\$pid"; echo "TERMCHECK-HANG"; exit 1; fi
+wait "\$pid"; rc=\$?
+python3 /tmp/stretto_term_probe.py || { echo "TERMCHECK-CORRUPT"; exit 1; }
+echo "TERMCHECK-OK rc=\$rc"
+EOF
+    chmod +x /tmp/stretto_sigterm_check.sh
+
+    echo "=== terminal-restore A: SIGTERM during live mode (PTY) ==="
+    out_a=$(timeout 30 script -qec /tmp/stretto_sigterm_check.sh /dev/null | tr -d '\r')
+    echo "$out_a"
+    case "$out_a" in
+        *"TERMCHECK-OK rc=143"*)
+            echo "PASS: SIGTERM terminal restore (exit 143)"
+            ;;
+        *)
+            pkill -x synth 2>/dev/null || true
+            echo "FAIL: SIGTERM left the terminal corrupted, hung, or wrong exit status"
+            exit 1
+            ;;
+    esac
+
+    cat > /tmp/stretto_q_check.sh <<EOF
+#!/bin/bash
+cd "$PWD"
+./synth >/dev/null 2>&1
+rc=\$?
+python3 /tmp/stretto_term_probe.py || { echo "QCHECK-CORRUPT"; exit 1; }
+echo "QCHECK-OK rc=\$rc"
+EOF
+    chmod +x /tmp/stretto_q_check.sh
+
+    echo "=== terminal-restore B: clean 'q' quit clears O_NONBLOCK (PTY) ==="
+    out_b=$( (sleep 2; printf q; sleep 1) | timeout 30 script -qec /tmp/stretto_q_check.sh /dev/null | tr -d '\r')
+    echo "$out_b"
+    case "$out_b" in
+        *"QCHECK-OK rc=0"*)
+            echo "PASS: clean-q fcntl + termios restore"
+            ;;
+        *)
+            pkill -x synth 2>/dev/null || true
+            echo "FAIL: clean 'q' quit left O_NONBLOCK set or termios raw"
+            exit 1
+            ;;
+    esac
+    rm -f /tmp/stretto_term_probe.py /tmp/stretto_sigterm_check.sh /tmp/stretto_q_check.sh
+fi
+
 # ----- MIDI smoke sub-check (specs/003-midi-input/T039) -----
 # Try to load snd-seq-dummy. If modprobe fails (container without
 # the module, kernel built without SND_SEQUENCER, etc.), skip the
