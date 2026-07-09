@@ -73,9 +73,10 @@ for f in "${bridge}" "${bridge_test}" "${amend_test}"; do
     [ -f "${f}" ] || { echo "FATAL: missing required file: ${f}" >&2; exit 2; }
 done
 
-# Make sure both test scripts are executable (the ci.yml `make test`
-# target does the same chmod, so this is consistent).
-chmod +x "${bridge_test}" "${amend_test}"
+# No chmod: the test scripts are committed mode 100755. A chmod here
+# would flip tracked mode bits on Linux and make `git describe
+# --dirty` mark every subsequent build dirty (the retired #129/#130
+# chmod trap). They are invoked via `bash` below anyway.
 
 # --- 2. Helper: run a single step with a clear header ---
 # Args:

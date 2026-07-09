@@ -11,6 +11,7 @@
 #include "audio.h"
 #include "wav.h"
 #include "audio_midi.h"
+#include "version.h"
 
 /* stretto entry point. Parses argv, initializes the synth, then
    dispatches to either render-to-WAV mode or live-audio playback.
@@ -20,8 +21,69 @@
              [--midi-channel <1..16>]        live mode
      stretto --render <seconds> <out.wav> [--seed N]
      stretto --midi-list-devices
+     stretto --help | -h | --version
 */
+
+/* Single source for the usage synopsis: printed to stderr on usage
+   errors and to stdout by --help, so the two can never drift. The
+   program name is the constant "stretto", not argv[0], per GNU
+   Coding Standards 4.8.1 (the Linux binary is ./synth; the canonical
+   name is deliberate). */
+static const char USAGE[] =
+    "usage: stretto [--render <seconds> <output.wav>] [--no-ui] [--seed N]\n"
+    "               [--midi [N] | --midi-default | --no-midi]\n"
+    "               [--midi-channel <1..16>] [--midi-list-devices]\n"
+    "               [-h | --help] [--version]\n";
+
+static const char HELP_BODY[] =
+    "\n"
+    "stretto - a tiny generative music synthesizer (C99, no malloc,\n"
+    "single 128 KB arena). Runs live with an ASCII oscilloscope, or\n"
+    "renders to a 48 kHz stereo 16-bit WAV.\n"
+    "\n"
+    "  --render <s> <out.wav>  render s seconds (1..3600) to a WAV file\n"
+    "  --seed N                fix all generative state; with the same\n"
+    "                          flags, output is byte-identical per seed\n"
+    "  --no-ui                 headless live mode (no TTY required)\n"
+    "  --midi [N]              open MIDI input device N, or subscribe to\n"
+    "                          every input port if N is omitted; exits 1\n"
+    "                          if no device is available\n"
+    "  --midi-default          alias for --midi 0\n"
+    "  --no-midi               explicit MIDI opt-out (same as no flag)\n"
+    "  --midi-channel <1..16>  accept only this MIDI channel\n"
+    "  --midi-list-devices     list MIDI input devices and exit\n"
+    "  -h, --help              print this help and exit\n"
+    "  --version               print version information and exit\n"
+    "\n"
+    "In live mode, press ? for the key map, q to quit.\n"
+    "Report bugs: https://github.com/quanticsoul4772/stretto/issues\n";
+
+static const char VERSION_TEXT[] =
+    "stretto " STRETTO_VERSION "\n"
+    "Copyright (C) 2026 rbsmith4\n"
+    "License MIT: <https://opensource.org/license/mit>\n"
+    "This is free software: you are free to change and redistribute it.\n"
+    "There is NO WARRANTY, to the extent permitted by law.\n";
+
 int main(int argc, char **argv) {
+    /* GNU Coding Standards 4.8: --help / --version print to stdout,
+       exit successfully, and ignore every other option and argument -
+       including malformed ones (`--seed abc --help` prints help; that
+       is the standard's behavior, not a bug). Checked before any
+       engine init so neither flag can reach the seed-parse or
+       MIDI-open error paths. First occurrence of either flag wins. */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            fputs(USAGE, stdout);
+            fputs(HELP_BODY, stdout);
+            return 0;
+        }
+        if (strcmp(argv[i], "--version") == 0) {
+            fputs(VERSION_TEXT, stdout);
+            return 0;
+        }
+    }
+
     voice_pool_init();
 
     /* Pre-scan argv for --seed N + the five --midi* flags. --seed
@@ -175,9 +237,8 @@ int main(int argc, char **argv) {
 
     if (argc >= 2 && strcmp(argv[1], "--render") == 0) {
         if (argc != 4) {
-            fprintf(stderr,
-                "usage: %s --render <seconds> <output.wav> [--seed N]\n",
-                argv[0]);
+            fprintf(stderr, "render: expected --render <seconds> <output.wav>\n");
+            fputs(USAGE, stderr);
             exit(1);
         }
         char *end;
@@ -196,11 +257,7 @@ int main(int argc, char **argv) {
         if (argc == 2) ui_set_no_ui(1);
         audio_play();
     } else {
-        fprintf(stderr,
-            "usage: %s [--render <seconds> <output.wav>] [--no-ui] [--seed N]\n"
-            "       [--midi [N] | --midi-default | --no-midi]\n"
-            "       [--midi-channel <1..16>] [--midi-list-devices]\n",
-            argv[0]);
+        fputs(USAGE, stderr);
         exit(1);
     }
     return 0;

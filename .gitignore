@@ -21,6 +21,8 @@ env_table.h
 note_table.h
 euclid_table.h
 wavetable.h
+version.h
+version.h.tmp
 
 # Object files
 *.o

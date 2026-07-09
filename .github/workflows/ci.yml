@@ -16,6 +16,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history + tags so `git describe` (version.h / --version)
+          # yields a resolvable "1.2.0-final-N-g<hash>" instead of the
+          # bare hash of the ephemeral PR merge ref. Repo is tiny; the
+          # extra fetch cost is negligible.
+          fetch-depth: 0
 
       - name: Install build deps
         run: |
