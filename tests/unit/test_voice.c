@@ -462,6 +462,46 @@ TEST(voice_glide_skipped_in_release_tail) {
     ASSERT_TRUE(v.u.sub.inc[2] < v.u.sub.inc[0]);
 }
 
+/* ---- preset-capture absolute setters (047) ---- */
+
+TEST(set_cutoff_clamps_and_sets) {
+    voice_set_cutoff(140);
+    ASSERT_EQ(voice_get_cutoff(), 140);
+    voice_set_cutoff(-10);
+    ASSERT_EQ(voice_get_cutoff(), 30);
+    voice_set_cutoff(500);
+    ASSERT_EQ(voice_get_cutoff(), 180);
+}
+
+TEST(set_resonance_clamps_and_sets) {
+    voice_set_resonance(90);
+    ASSERT_EQ(voice_get_resonance(), 90);
+    voice_set_resonance(-1);
+    ASSERT_EQ(voice_get_resonance(), 0);
+    voice_set_resonance(999);
+    ASSERT_EQ(voice_get_resonance(), 180);
+    voice_set_resonance(100);
+}
+
+TEST(set_lfo_filter_depth_clamps_and_sets) {
+    voice_set_lfo_filter_depth(120);
+    ASSERT_EQ(voice_get_lfo_filter_depth(), 120);
+    voice_set_lfo_filter_depth(-1);
+    ASSERT_EQ(voice_get_lfo_filter_depth(), 0);
+    voice_set_lfo_filter_depth(9999);
+    ASSERT_EQ(voice_get_lfo_filter_depth(), 255);
+    voice_set_lfo_filter_depth(80);
+}
+
+TEST(set_filter_mode_masks_and_sets) {
+    voice_set_filter_mode(2);
+    ASSERT_EQ(voice_get_filter_mode(), 2);
+    voice_set_filter_mode(7);      /* & 3 -> 3 */
+    ASSERT_EQ(voice_get_filter_mode(), 3);
+    voice_set_filter_mode(0);
+    ASSERT_EQ(voice_get_filter_mode(), 0);
+}
+
 int main(void) {
     return RUN_ALL();
 }

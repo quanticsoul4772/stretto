@@ -94,6 +94,52 @@ TEST(compressor_threshold_adjuster_clamps) {
     ASSERT_EQ(compressor_get_threshold(), 30000);
 }
 
+/* ---- preset-capture absolute setters (047) ---- */
+
+TEST(reverb_set_wet_clamps_and_sets) {
+    reset_effects();
+    reverb_set_wet(96);
+    ASSERT_EQ(reverb_get_wet(), 96);
+    reverb_set_wet(-1);
+    ASSERT_EQ(reverb_get_wet(), 0);
+    reverb_set_wet(1000);
+    ASSERT_EQ(reverb_get_wet(), 256);
+    reverb_set_wet(60);
+}
+
+TEST(delay_set_wet_clamps_and_sets) {
+    reset_effects();
+    delay_set_wet(128);
+    ASSERT_EQ(delay_get_wet(), 128);
+    delay_set_wet(-1);
+    ASSERT_EQ(delay_get_wet(), 0);
+    delay_set_wet(1000);
+    ASSERT_EQ(delay_get_wet(), 256);
+    delay_set_wet(100);
+}
+
+TEST(delay_set_feedback_clamps_and_sets) {
+    reset_effects();
+    delay_set_feedback(150);
+    ASSERT_EQ(delay_get_feedback(), 150);
+    delay_set_feedback(-1);
+    ASSERT_EQ(delay_get_feedback(), 0);
+    delay_set_feedback(999);
+    ASSERT_EQ(delay_get_feedback(), 200);
+    delay_set_feedback(140);
+}
+
+TEST(compressor_set_threshold_clamps_and_sets) {
+    reset_effects();
+    compressor_set_threshold(25000);
+    ASSERT_EQ(compressor_get_threshold(), 25000);
+    compressor_set_threshold(1);
+    ASSERT_EQ(compressor_get_threshold(), 8000);
+    compressor_set_threshold(99999);
+    ASSERT_EQ(compressor_get_threshold(), 30000);
+    compressor_set_threshold(20000);
+}
+
 int main(void) {
     return RUN_ALL();
 }

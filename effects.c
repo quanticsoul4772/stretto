@@ -79,6 +79,20 @@ void delay_adjust_feedback(int delta) {
     delay_feedback = (uint16_t)v;
 }
 
+/* Absolute setters for the preset-capture CLI flags; same clamps as
+   the adjusters, int-typed for main.c's uniform flag table. */
+void delay_set_wet(int v) {
+    if (v < 0)   v = 0;
+    if (v > 256) v = 256;
+    delay_wet = (uint16_t)v;
+}
+
+void delay_set_feedback(int v) {
+    if (v < 0)   v = 0;
+    if (v > 200) v = 200;
+    delay_feedback = (uint16_t)v;
+}
+
 uint16_t delay_get_wet(void)      { return delay_wet; }
 uint16_t delay_get_feedback(void) { return delay_feedback; }
 
@@ -196,6 +210,13 @@ void reverb_adjust_wet(int delta) {
     reverb_wet = (uint16_t)v;
 }
 
+/* Absolute setter for the --reverb flag; clamp matches the adjuster. */
+void reverb_set_wet(int v) {
+    if (v < 0)   v = 0;
+    if (v > 256) v = 256;
+    reverb_wet = (uint16_t)v;
+}
+
 uint16_t reverb_get_wet(void)               { return reverb_wet; }
 void     reverb_set_wet_bias(int8_t bias)   { reverb_wet_bias = bias; }
 
@@ -278,6 +299,14 @@ void compressor_process(int16_t *buf, uint32_t frames) {
 
 void compressor_adjust_threshold(int delta) {
     int v = (int)comp_threshold + delta;
+    if (v < COMP_THRESHOLD_MIN) v = COMP_THRESHOLD_MIN;
+    if (v > COMP_THRESHOLD_MAX) v = COMP_THRESHOLD_MAX;
+    comp_threshold = v;
+}
+
+/* Absolute setter for the --comp-threshold flag; clamp matches the
+   adjuster. */
+void compressor_set_threshold(int v) {
     if (v < COMP_THRESHOLD_MIN) v = COMP_THRESHOLD_MIN;
     if (v > COMP_THRESHOLD_MAX) v = COMP_THRESHOLD_MAX;
     comp_threshold = v;

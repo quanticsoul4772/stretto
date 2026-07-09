@@ -144,6 +144,12 @@ void     voice_adjust_cutoff(int delta);
 void     voice_adjust_resonance(int delta);
 void     voice_adjust_lfo_filter_depth(int delta);
 void     voice_cycle_filter_mode(void);
+/* Absolute setters for the preset-capture CLI flags; clamps mirror
+   the adjusters ([30,180] / [0,180] / [0,255] / &3). */
+void     voice_set_cutoff(int v);
+void     voice_set_resonance(int v);
+void     voice_set_lfo_filter_depth(int v);
+void     voice_set_filter_mode(int m);
 uint16_t voice_get_cutoff(void);
 uint16_t voice_get_resonance(void);
 uint16_t voice_get_lfo_filter_depth(void);
