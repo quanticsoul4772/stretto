@@ -1,3 +1,13 @@
+# Default: every file git detects as text is normalized to LF in the
+# repo AND checked out as LF on every platform. Without this default,
+# extensionless files (LICENSE, Makefile, .gitignore, .registry, ...)
+# had no eol rule: Windows git (core.autocrlf=true) checked them out
+# CRLF while WSL/Linux git compared byte-exact against the LF blobs,
+# so the same clean tree showed phantom-modified files under WSL and
+# tripped dirty-tree accounting in the spec-budget test suites.
+# Specific rules below override this default (e.g. *.ps1 stays CRLF).
+* text=auto eol=lf
+
 # Source code (LF on every platform)
 *.c    text eol=lf
 *.h    text eol=lf
