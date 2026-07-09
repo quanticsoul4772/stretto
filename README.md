@@ -34,6 +34,17 @@ make pack
 
 Produces `synth.packed` (~25 KB; 25 460 B post-#117, within the 30 KB Constitution v1.2.0 cap).
 
+## Install
+
+```
+make && sudo make install     # installs /usr/local/bin/stretto + man page
+sudo make uninstall
+```
+
+Installs the binary under its canonical name `stretto` plus `man 1 stretto`. `PREFIX` and `DESTDIR` are honored (`make install DESTDIR=/tmp/pkg PREFIX=/usr` for packagers). Build **before** installing, as your user — `make install` deliberately does not build (a `sudo`-driven rebuild would embed `dev` as the version, since git refuses to run in another user's checkout).
+
+Prebuilt binaries with `sha256sums.txt` are attached to [tagged releases](https://github.com/quanticsoul4772/stretto/releases) — Windows users should take the unpacked `.exe` (the `-upx` variants trip antivirus false positives). Homebrew/AUR packaging is tracked as P3 in `RESEARCH_CLI.md`.
+
 ## Run
 
 ### Live mode
@@ -411,6 +422,9 @@ Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `
 | `golden/regression_16s.sha256` | Reference hash for the 16-second seed-0 render |
 | `golden/regression_multiseed.sha256.txt` | Reference hashes for the four multi-seed renders |
 | `.github/workflows/ci.yml` | CI: build, all tests, Windows cross-compile, coverage gates, size gate |
+| `.github/workflows/release.yml` | Tag-triggered release: full gates + version/cleanliness assertions, publishes checksummed binaries + `stretto.1` (rehearsable via `workflow_dispatch`) |
+| `stretto.1` | Man page (hand-written roff; linted + help↔man drift-gated by `tests/test_cli.sh`) |
+| `tools/size-budget-gate.sh` | The 3-key binary size budget gate (shared by ci.yml and release.yml) |
 | `PLAN.md` | Original design document (historical) |
 
 ## Environment notes

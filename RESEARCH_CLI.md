@@ -27,7 +27,7 @@ This table is the live index — the body is kept for the reasoning (especially
 | M2 non-TTY stdin: auto-`--no-ui` instead of `exit(1)` | Open |
 | F2 `--render N -` streams WAV to stdout | **Shipped** — 046 (byte-identical to file output; SIGPIPE default kept; fwrite/fclose error discipline added) |
 | F3+F4 preset capture (initial-state flags + print-state-on-quit) | **Shipped** — 047 (`specs/004-preset-capture`; dirty-bit capture — only user-set params are printed, since `--seed` alone reproduces mutate() drift and echoing drifted values would diverge) |
-| F5 packaging minimum (man page, tagged releases + checksums) | Open — unblocked by F1 |
+| F5 packaging minimum (man page, tagged releases + checksums) | **Shipped** — 048 (`stretto.1` + `make install` + release.yml with version/cleanliness/size gates; first tag v1.3.0 pending) |
 | P1 `NO_COLOR` · P2 exit-code polish · P3 brew/AUR · N1 key record/replay | Open |
 | §7 D2 (live help overlay missing `l`/`L` keys) · D9 (positional arg cap silently drops) | Open — minor |
 

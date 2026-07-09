@@ -673,7 +673,9 @@ The coverage build (`make coverage`) writes every artifact (instrumented `.o`, `
 
 CI also enforces a Windows packed binary size budget of 48 KB (current ~38 KB post-#117 per the `binary-sizes` CI artifact — Constitution Principle I target is the ≤48 KB UPX-packed Windows invariant). A PR that doubles the binary fails CI immediately.
 
-CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `main`, plus the Windows cross-compile (`make winpack`). Coverage gate at 80% per file on `arena.c`, `voice.c`, `gen.c`. The Windows binary and coverage log are uploaded as build artifacts.
+CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `main`, plus the Windows cross-compile (`make winpack`). Per-file coverage gates apply to the twelve measured modules at 90–95% (see the coverage table above). The Windows binary and coverage log are uploaded as build artifacts. The runner image is pinned (`ubuntu-24.04`, not `-latest`) and kept identical to the release workflow's: the build-time table generators use host libm (`sinf`/`exp`), so a glibc bump can flip a table entry and change every render hash — releases must run on the exact image CI gates the goldens on.
+
+**Releases** (`.github/workflows/release.yml`): pushing an annotated `v*` tag builds on the same pinned image, runs the full gate set (`make test`, `test-unit`, `test-multiseed`, plus `tools/size-budget-gate.sh` — the same 3-key budget gate ci.yml runs, extracted to a script so published binaries are gated too), asserts `./synth --version` equals `stretto <tag>` and that the tree stayed clean through all builds, then publishes `stretto-<tag>-{linux-x86_64,linux-x86_64-upx,windows-x86_64.exe,windows-x86_64-upx.exe}` + `stretto.1` + `sha256sums.txt` via an idempotent `gh release` sequence (draft → upload → publish, re-run-safe). `workflow_dispatch` rehearses the whole pipeline without publishing.
 
 ### Size budget amendment workflow (Constitution ↔ Makefile bridge)
 
