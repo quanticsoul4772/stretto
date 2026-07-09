@@ -1,5 +1,13 @@
 # Changelog
 
+## Recent: brew + AUR package definitions, prepared (053)
+
+RESEARCH_CLI.md P3, delivered as far as it can go: **the repository is private**, so package managers cannot fetch sources (the public archive URL 404s) and the tarball sha256 cannot even be pinned yet (an authenticated API tarball has a different directory prefix than the public archive URL, so its bytes differ). Publishing is one visibility flip plus each file's checklist away.
+
+- `Formula/stretto.rb` at the repo root - the repo doubles as its own Homebrew tap (`brew tap quanticsoul4772/stretto <repo-url>`). **Linux(brew)-only by declaration**: no macOS audio backend exists (live audio is PulseAudio/waveOut, and `__APPLE__` currently routes MIDI to the ALSA backend, which cannot build on macOS - a CoreAudio backend is the prerequisite for lifting this).
+- `packaging/aur/PKGBUILD` + hand-written `.SRCINFO`: builds with the unit suite as `check()`, installs via the upstream `make install DESTDIR PREFIX`, ships the LICENSE.
+- Both recipes pass `STRETTO_VERSION=<ver>` to make - verified against the real v1.3.0 tarball that a no-`.git` build otherwise reports `stretto dev`, that the command-line override beats the Makefile's `:=`, and that build → check → install produces a binary reporting `stretto 1.3.0` (13/13 unit binaries green in the tarball tree). PKGBUILD is `bash -n` clean; the formula's Ruby is locally unverifiable (no brew on the dev boxes) - `brew audit` is on the publication checklist.
+
 ## Recent: NO_COLOR support (052)
 
 Per the no-color.org convention (RESEARCH_CLI.md P1): a present, non-empty `NO_COLOR` environment variable disables the ANSI color (SGR) sequences in the status row and oscilloscope; the glyph heat-map ramp and functional escapes (cursor home/hide, erase, clear) are kept, so the monochrome scope stays fully readable. Implementation: the status row builds its colors from compile-time fused string literals across ~25 call sites, so instead of restructuring them, SGR sequences are stripped in one pass at the single write site (`ui_strip_sgr`, exposed for unit testing; 4 new tests cover color removal, functional-escape preservation, plain text, and truncated-escape safety). One-line mentions in `--help` and the man page's new ENVIRONMENT section. UI-only; goldens untouched.

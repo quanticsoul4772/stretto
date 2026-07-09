@@ -1,0 +1,44 @@
+# Maintainer: rbsmith4 <rbsmith4@gmail.com>
+#
+# PUBLICATION CHECKLIST (the GitHub repo is private today; the source
+# URL 404s until it is public):
+#   1. Make the repo public.
+#   2. Replace sha256sums=('SKIP') with the real hash:
+#        curl -sL "$url/archive/refs/tags/v$pkgver.tar.gz" | sha256sum
+#   3. Regenerate .SRCINFO: makepkg --printsrcinfo > .SRCINFO
+#   4. Push PKGBUILD + .SRCINFO to ssh://aur@aur.archlinux.org/stretto.git
+pkgname=stretto
+pkgver=1.3.0
+pkgrel=1
+pkgdesc="Tiny deterministic generative music synthesizer (C99, no malloc, single 128 KB arena)"
+arch=('x86_64')
+url="https://github.com/quanticsoul4772/stretto"
+license=('MIT')
+depends=('libpulse' 'alsa-lib')
+makedepends=('gcc' 'make')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  # Tarball builds have no .git; STRETTO_VERSION overrides the
+  # git-describe machinery so --version reports the release, not "dev".
+  make STRETTO_VERSION="$pkgver"
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  # Pure-synth unit suite (no TTY / audio device / PulseAudio server
+  # needed; links libasound from depends). STRETTO_VERSION passed so
+  # the always-run version.h recipe does not flip the file to "dev"
+  # between build() and package().
+  make test-unit STRETTO_VERSION="$pkgver"
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  # The upstream install target is DESTDIR/PREFIX-aware and installs
+  # the binary under its canonical name plus the man page.
+  make install STRETTO_VERSION="$pkgver" DESTDIR="$pkgdir" PREFIX=/usr
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
