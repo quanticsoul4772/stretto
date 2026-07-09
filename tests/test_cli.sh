@@ -87,6 +87,28 @@ if ! cmp -s /tmp/cli_a.wav /tmp/cli_b.wav; then
     fail=1
 fi
 
+# --- non-TTY stdin/stdout degrades to headless (050) ---
+# `./synth </dev/null` used to die on the ENOTTY tcgetattr before
+# playing a sample. It must now degrade to --no-ui (parity with the
+# Windows GetConsoleMode path): headless notice on stderr, no
+# tcgetattr error, and the process either runs until the timeout
+# kills it (124/143) or exits 1 later at PulseAudio connect on
+# PA-less machines - either way it got PAST terminal setup.
+set +e
+timeout --preserve-status 2 ./synth </dev/null >/tmp/cli_stdout 2>/tmp/cli_stderr
+rc=$?
+set -e
+if grep -q "tcgetattr" /tmp/cli_stderr; then
+    echo "FAIL: non-TTY stdin still dies on tcgetattr"; fail=1
+fi
+if ! grep -q "running headless" /tmp/cli_stderr; then
+    echo "FAIL: non-TTY run missing the headless notice"; fail=1
+fi
+case "$rc" in
+    124|143|1|0) ;;
+    *) echo "FAIL: non-TTY run exited $rc (expected 124/143 or a PA-connect 1)"; fail=1 ;;
+esac
+
 # --- preset-capture flags (specs/004-preset-capture) ---
 # (a) All flags at their explicit defaults (minus --cutoff, whose
 #     compile-time default 200 sits above the 30..180 dial range)

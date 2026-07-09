@@ -1,5 +1,9 @@
 # Changelog
 
+## Recent: non-TTY stdin/stdout degrades to headless (050)
+
+`./synth < /dev/null` (or any redirected invocation without `--no-ui`) died on the ENOTTY `tcgetattr` before playing a sample - confirmed empirically during the 042 investigation, catalogued as RESEARCH_CLI.md M2. `ui_term_raw_mode` now checks `isatty(0) || isatty(1)` first and degrades to headless `--no-ui` mode with a one-line stderr notice - exact parity with the Windows path, where `GetConsoleMode` failure has always flipped the same flag (which now prints the same notice). `--no-ui` remains as the explicit form. Regression-tested in `tests/test_cli.sh` (asserts the notice appears and the ENOTTY death does not, tolerant of PA-less machines). Live-path only; goldens untouched.
+
 ## Recent: packaging minimum - man page, make install, release workflow (048)
 
 RESEARCH_CLI.md F5: the floor for "installable and trusted" is a man page, an install target, and tagged releases with checksummed binaries. `--version` (044) and the complete flag surface (047) unblocked it.

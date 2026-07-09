@@ -30,9 +30,11 @@ static void restore_terminal(void) {
 }
 
 void audio_play(void) {
-    /* --no-ui skips all terminal setup so the smoke test (no TTY
-       on stdin) can run cleanly. Without a TTY, tcgetattr fails
-       and the old code would exit(1).
+    /* --no-ui skips all terminal setup. Without the flag,
+       ui_term_raw_mode itself degrades to headless when stdin or
+       stdout is not a TTY (isatty check - parity with the Windows
+       GetConsoleMode path), so redirected invocations run instead
+       of dying on ENOTTY.
 
        atexit is registered BEFORE raw mode engages: restore_terminal
        no-ops until ui_term_raw_mode saves state, and registering

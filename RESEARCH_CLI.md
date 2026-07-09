@@ -24,7 +24,7 @@ This table is the live index — the body is kept for the reasoning (especially
 | M3 reconcile `contracts/cli.md` with `main.c` | **Shipped** — PR #134 (contract amended to as-built; FR-002 exit-1 enforced; `--render` never opens MIDI) |
 | F1 `--help` / `-h` / `--version` | **Shipped** — PR #137 (GNU §4.8; `version.h` from `git describe`; `tests/test_cli.sh`) |
 | §7 mismatches D1, D3–D6, D8 | **Fixed** — PRs #134/#135; D7 was confirmed a non-bug in the original analysis |
-| M2 non-TTY stdin: auto-`--no-ui` instead of `exit(1)` | Open |
+| M2 non-TTY stdin: auto-`--no-ui` instead of `exit(1)` | **Shipped** — 050 (`isatty(0) \|\| isatty(1)` degrade in `ui_term_raw_mode`, stderr notice, Windows-path parity) |
 | F2 `--render N -` streams WAV to stdout | **Shipped** — 046 (byte-identical to file output; SIGPIPE default kept; fwrite/fclose error discipline added) |
 | F3+F4 preset capture (initial-state flags + print-state-on-quit) | **Shipped** — 047 (`specs/004-preset-capture`; dirty-bit capture — only user-set params are printed, since `--seed` alone reproduces mutate() drift and echoing drifted values would diverge) |
 | F5 packaging minimum (man page, tagged releases + checksums) | **Shipped** — 048 (`stretto.1` + `make install` + release.yml with version/cleanliness/size gates; first tag v1.3.0 pending) |
