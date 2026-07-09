@@ -30,7 +30,7 @@
    Coding Standards 4.8.1 (the Linux binary is ./synth; the canonical
    name is deliberate). */
 static const char USAGE[] =
-    "usage: stretto [--render <seconds> <output.wav>] [--no-ui] [--seed N]\n"
+    "usage: stretto [--render <seconds> <out.wav|->] [--no-ui] [--seed N]\n"
     "               [--midi [N] | --midi-default | --no-midi]\n"
     "               [--midi-channel <1..16>] [--midi-list-devices]\n"
     "               [-h | --help] [--version]\n";
@@ -41,7 +41,8 @@ static const char HELP_BODY[] =
     "single 128 KB arena). Runs live with an ASCII oscilloscope, or\n"
     "renders to a 48 kHz stereo 16-bit WAV.\n"
     "\n"
-    "  --render <s> <out.wav>  render s seconds (1..3600) to a WAV file\n"
+    "  --render <s> <out.wav>  render s seconds (1..3600) to a WAV file;\n"
+    "                          '-' streams the WAV to stdout for piping\n"
     "  --seed N                fix all generative state; with the same\n"
     "                          flags, output is byte-identical per seed\n"
     "  --no-ui                 headless live mode (no TTY required)\n"
@@ -237,7 +238,7 @@ int main(int argc, char **argv) {
 
     if (argc >= 2 && strcmp(argv[1], "--render") == 0) {
         if (argc != 4) {
-            fprintf(stderr, "render: expected --render <seconds> <output.wav>\n");
+            fprintf(stderr, "render: expected --render <seconds> <out.wav|->\n");
             fputs(USAGE, stderr);
             exit(1);
         }

@@ -1,5 +1,17 @@
 # Changelog
 
+## Recent: --render N - streams WAV to stdout (046)
+
+`-` was treated as a filename; renders could only target files, so the composability the deterministic engine earns for free (`./synth --render 60 - --seed 7 | ffmpeg -i - out.flac`) was unreachable. The RIFF header has always been written up front from the known duration with no seek-back, so streaming needed no format work — only the sox/ffmpeg `-` filename convention in `render_wav`.
+
+- Byte-identical to the file output (asserted by a new `cmp` check in `tests/test_cli.sh`); goldens and the bit-exact regression are untouched.
+- Windows: `_setmode(_fileno(stdout), _O_BINARY)` on the `-` path — text-mode stdout would CRLF-translate the RIFF stream. README notes PowerShell older than 7.4 re-encodes binary pipes regardless (byte-stream passthrough landed in 7.4); use cmd.exe redirection there.
+- SIGPIPE keeps its default disposition: a downstream that closes early kills the render (exit 141), standard pipeline behavior. For parents that inherit SIGPIPE ignored, a new fwrite short-write check turns EPIPE into a clean error exit instead of rendering the full duration into a broken pipe.
+- Write-error discipline while in the file: the loop `fwrite`, the final `fflush(stdout)`, and the file-path `fclose` are all checked — previously a disk-full render could exit 0 with a silently truncated WAV (the tail of the render lives in the stdio buffer until close).
+- Coverage recipe gains a 1-second stdout render so `wav.c`'s new branch stays over its ≥90% gate. `tests/test_cli.sh` adds the equivalence check plus a broken-pipe smoke (accepts 141 or 1 — pinning the signal exit exactly would be a latent flake under SIGPIPE-ignoring parents).
+- Considered and rejected: an `isatty()` guard against dumping WAV bytes to a terminal — `-` is explicit opt-in, `cat` doesn't guard either, and the bytes are budgeted.
+- Spec surface: 001 FR-031 amended (`<out.wav|->`); 003 contract grammar `positional_render := "--render" UINT ( PATH | "-" )`; RESEARCH_CLI.md F2 flipped to Shipped.
+
 ## Recent: --help / -h / --version (044)
 
 `--help` and `--version` were unknown arguments: usage on stderr, exit 1, empty stdout — scripts and packagers probing `--version` (Homebrew audits, AUR helpers) read that as a broken binary, and no version identity existed anywhere in the tree.

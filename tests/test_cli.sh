@@ -74,7 +74,35 @@ if ! grep -q '^usage:' /tmp/cli_stderr; then
     echo "FAIL: unknown-flag usage error missing 'usage:' on stderr"; fail=1
 fi
 
-rm -f /tmp/cli_stderr /tmp/cli_stdout
+# --- stdout render ('-' path): byte-identical to a file render ---
+rm -f /tmp/cli_a.wav /tmp/cli_b.wav
+if ! ./synth --render 2 /tmp/cli_a.wav --seed 0 2>/dev/null; then
+    echo "FAIL: file render exited non-zero"; fail=1
+fi
+if ! ./synth --render 2 - --seed 0 >/tmp/cli_b.wav 2>/dev/null; then
+    echo "FAIL: stdout render exited non-zero"; fail=1
+fi
+if ! cmp -s /tmp/cli_a.wav /tmp/cli_b.wav; then
+    echo "FAIL: stdout render differs from file render (must be byte-identical)"
+    fail=1
+fi
+
+# --- broken pipe: downstream closing early must terminate the render
+#     promptly. 141 = died by SIGPIPE (default disposition, standard
+#     pipeline behavior); 1 = the fwrite error check, for parents
+#     that inherit SIGPIPE ignored. Asserting exactly 141 would be a
+#     latent flake for zero extra confidence. ---
+set +e
+timeout 20 bash -c './synth --render 60 - --seed 0 2>/dev/null | head -c 1000 >/dev/null; exit ${PIPESTATUS[0]}'
+rc=$?
+set -e
+case "$rc" in
+    141|1) ;;
+    124) echo "FAIL: broken-pipe render hung (timeout)"; fail=1 ;;
+    *) echo "FAIL: broken-pipe render exited $rc (expected 141 or 1)"; fail=1 ;;
+esac
+
+rm -f /tmp/cli_stderr /tmp/cli_stdout /tmp/cli_a.wav /tmp/cli_b.wav
 
 if [ "$fail" -ne 0 ]; then
     echo "FAIL: CLI contract test"
