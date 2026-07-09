@@ -7,9 +7,9 @@ Stretto is a tiny native generative ambient music synthesizer in C99. These prin
 ### I. Tiny Native Binary (NON-NEGOTIABLE)
 Hard size budget: ≤48 KB UPX-packed Windows `.exe` (current 38 KB post-#117 per PR #117 `binary-sizes` artifact; was 32 KB pre-#109, last re-measured 2026-06 pre-PR #109, deferred followup), ≤30 KB UPX-packed Linux binary (added 2026-07-08 per v1.2.0 amendment; current 25 460 B / ~25 KB measured post-#117 per PR #117 `binary-sizes` artifact; Makefile `PACK_TARGET = 30720` enforces this cap), ≤50 KB stripped Linux binary (bumped 2026-07-08 from prior ≤24 KB target per v1.1.0 amendment; current 43 944 B / ~43 KB measured post-#117 per PR #117 `binary-sizes` artifact — was 43 880 B post-#113 per PR #115; the 64 B drift between PR #115 and PR #117 measurements is noise-level on the strip path). CI gates the Windows budget on every PR. Choose minimal-dependency designs; prefer one-file modules over libraries. Features that would push past the budget must justify themselves explicitly or be deferred.
 
-The 24 KB → 50 KB (Linux stripped) amendment (v1.1.0 / PR #116) acknowledges that the 003 MIDI-input chain (FR-001..FR-054, ~209 lines of int32_t SPSC ring + CC dispatch + libasound sequencer worker + opt-out + 23 unit tests in `tests/unit/test_midi.c`) is the principled cost of supporting Principle III (Deterministic) + Principle IX (Cross-Platform From Day One) + Principle X (Generative > Random). The ~19 KB stripped growth was the foreseeable cost of cross-platform MIDI input compensation that the PR #108→PR #109→PR #113 chain chose to eat on principle rather than defer.
+The 24 KB → 50 KB (Linux stripped) amendment (v1.1.0 / PR #116; growth attribution corrected in v1.2.1) realigns the budget with measured reality. The prior ≤24 KB figure was an aspirational PLAN.md-era target the shipped synth never met: the pre-MIDI binary already measured ~39 KB (pre-#109 README / ARCHITECTURE size tables), and `make size` enforced the target as a WARNING only. The 003 MIDI-input chain (FR-001..FR-054, int32_t SPSC ring + CC dispatch + libasound sequencer worker + opt-out + 23 unit tests in `tests/unit/test_midi.c`) added ~5 KB on top of that (~39 KB → 43 944 B post-#117) — the principled cost of supporting Principle III (Deterministic) + Principle IX (Cross-Platform From Day One) + Principle X (Generative > Random) that the PR #108→PR #109→PR #113 chain chose to eat rather than defer. The 50 KB cap is the post-#117 measurement plus ~14 % headroom, now enforced as a hard CI gate (the pre-arc check was warning-only for Linux and gated Windows only).
 
-The 12 KB → 30 KB (Linux UPX-packed) amendment (v1.2.0 / PR #121 / this PR) closes the "implicit Linux UPX cap" loophole: prior versions of Principle I only enumerated the Windows UPX (≤48 KB) and Linux stripped (≤24 KB → ≤50 KB) budgets. The Linux UPX cap was implicit through the Makefile `PACK_TARGET = 12288`, which had drifted to ~half of reality pre-#117 (12 288 B Makefile target vs 25 460 B actual measurement per PR #117 `binary-sizes` artifact). Codifying the cap explicitly as ≤30 KB — ~21 % headroom over the measured 25 460 B (5 260 B) and matching STRIP_TARGET's 14 % headroom pattern — makes the architecture-level commitment traceable from Constitution v1.2.0 → Makefile `PACK_TARGET = 30720` → `make size` printout → CI binary-sizes artifact per PR. The 003 chain's ~13 KB proportional UPX-packed growth (in addition to the ~19 KB stripped growth already recognized by the v1.1.0 amendment) is what PR #121 bumps `PACK_TARGET` to absorb; the same Principles III + IX + X cited by the v1.1.0 amendment apply.
+The 12 KB → 30 KB (Linux UPX-packed) amendment (v1.2.0 / PR #121; growth attribution corrected in v1.2.1) closes the "implicit Linux UPX cap" loophole: prior versions of Principle I only enumerated the Windows UPX and Linux stripped budgets, leaving the Linux UPX cap implicit in the Makefile `PACK_TARGET = 12288` — a warning-only target the shipped synth likewise never met (the pre-MIDI `synth.packed` measured ~14–16 KB per the pre-#109 README / ARCHITECTURE tables). The 003 chain added ~9.5 KB packed on top of that (~16 KB pre-#109 → 25 460 B post-#117 per the PR #117 `binary-sizes` artifact). Codifying the cap explicitly as 30 KB — ~21 % headroom over the measured 25 460 B (5 260 B) and matching STRIP_TARGET's ~14 % headroom pattern — makes the architecture-level commitment traceable from Constitution v1.2.0 → Makefile `PACK_TARGET = 30720` → `make size` printout → CI binary-sizes artifact per PR. The same Principles III + IX + X cited by the v1.1.0 amendment apply.
 
 ### II. C99 Only
 No C++, no external runtime dependencies beyond libc + libpulse (Linux) / winmm (Windows). Build-time tools (`gen_*_table.c`) are also C99. No code generators outside what already exists. No build system beyond GNU Make.
@@ -24,10 +24,12 @@ Targeted at long-form listening (10+ minutes). Per-bar variation is fine; per-se
 Each concern lives in one `.c`/`.h` pair with a one-way dependency direction documented in `ARCHITECTURE.md`. No `extern` declarations across module boundaries, no weak-symbol workarounds, no circular includes. Current shape:
 
 ```
-main → {wav, audio, ui, gen, effects, voice, arena}
-audio_* → {mixer, ui, keys, arena}
+main → {wav, audio, ui, gen, effects, voice, audio_midi, arena}
+audio_pulse / audio_winmm → {mixer, ui, keys, arena}
+audio_midi → {effects, voice, arena}
+audio_midi_linux / audio_midi_winmm → {audio_midi}
 wav → {mixer, arena}
-mixer → {gen, voice, effects}
+mixer → {gen, voice, effects, audio_midi}
 keys → {ui, gen, voice, effects}
 ui → {voice, gen, effects}
 gen → {voice, lsystem, chord_progression, section, density, motif, effects}
@@ -89,4 +91,4 @@ GNU Make with auto-generated header dependencies (`-MMD -MP`). One pattern rule 
 - Removing a NON-NEGOTIABLE principle requires explicit user approval in the amendment PR.
 - All `/speckit-specify` and `/speckit-plan` outputs must declare compliance with each principle or document the exception.
 
-**Version**: 1.2.0 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-07-08
+**Version**: 1.2.1 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-07-08

@@ -58,3 +58,12 @@ tests/unit/*.cov
 
 # Stray working-tree docs (historical design doc re-extracted into the tree)
 The 64KB Wotja - A Decision-Ready Plan for a Demoscene-Style Generative Music Player on Linux.md
+
+# Agent scratch artifacts (PR bodies / commit messages drafted during
+# spec-kit runs; the canonical copies live on the GitHub PRs / commits)
+.specify/PR-*-body.md
+.specify/commit_msg_*.txt
+commit_msg*.txt
+
+# One-off local measurement artifacts
+synth.stripped
