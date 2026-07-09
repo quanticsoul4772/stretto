@@ -429,6 +429,25 @@ golden: synth
 play: synth
 	./synth
 
+# Install as the canonical name "stretto" (the Linux build artifact is
+# ./synth; USAGE and the man page use the canonical name). Deliberately
+# NO build prerequisite: the version.h FORCE recipe runs on every make,
+# and under `sudo make install` git fails the safe.directory ownership
+# check, so STRETTO_VERSION would fall back to "dev", main.o would
+# relink, and the INSTALLED binary would report `stretto dev` (plus
+# root-owned .o litter). Build first as your user: make && sudo make install.
+PREFIX ?= /usr/local
+
+install:
+	@test -x synth || { echo "install: ./synth not built; run 'make' first (as your user, not root)"; exit 1; }
+	install -Dm755 synth $(DESTDIR)$(PREFIX)/bin/stretto
+	install -Dm644 stretto.1 $(DESTDIR)$(PREFIX)/share/man/man1/stretto.1
+	@echo "installed: $(DESTDIR)$(PREFIX)/bin/stretto + man1/stretto.1"
+
+uninstall:
+	rm -f $(DESTDIR)$(PREFIX)/bin/stretto \
+	      $(DESTDIR)$(PREFIX)/share/man/man1/stretto.1
+
 # Debug build: -O0 -g -DDEBUG, assertions enabled, no LTO, no strip.
 # For stepping through SVF / envelope / scheduler behaviour in gdb.
 # Output: synth_debug. The normal build's .o files are untouched
@@ -451,7 +470,8 @@ debug: synth_debug
 	@file synth_debug
 
 .PHONY: all clean size pack test test-unit test-multiseed test-smoke \
-        verify coverage golden golden-multiseed play win winpack debug
+        verify coverage golden golden-multiseed play win winpack debug \
+        install uninstall
 
 # Pick up the auto-generated header dependencies. The leading '-'
 # silences "no such file" when these have not been generated yet

@@ -13,7 +13,12 @@ on:
 
 jobs:
   build-test-coverage:
-    runs-on: ubuntu-latest
+    # Pinned (not -latest) and kept IDENTICAL to release.yml's runner:
+    # the lookup tables are generated at build time with host libm
+    # (sinf/exp in gen_*_table.c), so a glibc bump can flip a table
+    # entry and change every render hash. Releases must run on the
+    # exact image CI gates the goldens on. Bump both files together.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -121,77 +126,18 @@ jobs:
         # Budgets are NOT hardcoded here: `make size` echoes the three
         # Makefile variables (STRIP_TARGET / PACK_TARGET /
         # WIN_PACK_BUDGET) into binary-sizes.txt as budget_* key=value
-        # rows, and this gate reads measurements AND budgets from that
+        # rows, and the gate reads measurements AND budgets from that
         # one artifact. The Makefile is the measurement-side source of
         # truth; the upstream `Bridge regression test
         # (Constitution<->Makefile)` step ties the Makefile values to
         # Constitution Principle I BEFORE this gate fires, so a
         # Principle I amendment only ever needs to touch the
         # Constitution + Makefile pair (tools/spec-budget-amend.sh).
-        run: |
-          set -e
-          awk -F= '
-            $1 == "linux_synth_stripped"                { stripped = $2 }
-            $1 == "linux_synth_packed"                  { packed = $2 }
-            $1 == "windows_stretto_exe_packed"          { win_packed = $2 }
-            $1 == "budget_linux_synth_stripped"         { STRIP_BUDGET = $2 }
-            $1 == "budget_linux_synth_packed"           { PACK_BUDGET = $2 }
-            $1 == "budget_windows_stretto_exe_packed"   { WIN_PACK_BUDGET = $2 }
-            END {
-              fail = 0
-
-              if (STRIP_BUDGET + 0 <= 0 || PACK_BUDGET + 0 <= 0 || WIN_PACK_BUDGET + 0 <= 0) {
-                print "FAIL: budget_* keys missing or non-numeric in binary-sizes.txt -- `make size` must echo STRIP_TARGET / PACK_TARGET / WIN_PACK_BUDGET as budget_* rows"
-                exit 1
-              }
-
-              if (stripped == "") {
-                print "  linux_synth_stripped: MISSING key in binary-sizes.txt -- Constitution v1.1.0 enforcement required"
-                fail = 1
-              } else if (stripped == "missing") {
-                print "  linux_synth_stripped: not built locally (toolchain row missing per Makefile size target) -- skipped"
-              } else if (stripped + 0 > STRIP_BUDGET) {
-                printf("FAIL: linux_synth_stripped=%s > STRIP_BUDGET=%d -- Constitution v1.1.0 (Principle I Linux stripped cap)\n", stripped, STRIP_BUDGET)
-                print "      Amend Principle I in .specify/memory/constitution.md, OR amend STRIP_TARGET in Makefile, OR trim the trigger feature."
-                fail = 1
-              } else {
-                printf("  linux_synth_stripped=%s bytes  ok (<= %d budget, Constitution v1.1.0)\n", stripped, STRIP_BUDGET)
-              }
-
-              if (packed == "") {
-                print "  linux_synth_packed: MISSING key in binary-sizes.txt -- Constitution v1.2.0 enforcement required"
-                fail = 1
-              } else if (packed == "missing") {
-                print "  linux_synth_packed: not built locally (UPX unavailable) -- skipped"
-              } else if (packed + 0 > PACK_BUDGET) {
-                printf("FAIL: linux_synth_packed=%s > PACK_BUDGET=%d -- Constitution v1.2.0 (Principle I Linux UPX cap)\n", packed, PACK_BUDGET)
-                print "      Amend Principle I in .specify/memory/constitution.md, OR amend PACK_TARGET in Makefile, OR trim the trigger feature."
-                fail = 1
-              } else {
-                printf("  linux_synth_packed=%s bytes  ok (<= %d budget, Constitution v1.2.0)\n", packed, PACK_BUDGET)
-              }
-
-              if (win_packed == "") {
-                print "  windows_stretto_exe_packed: MISSING key in binary-sizes.txt -- Constitution v1.1.0 enforcement required"
-                fail = 1
-              } else if (win_packed == "missing") {
-                print "  windows_stretto_exe_packed: not built locally (mingw unavailable) -- skipped"
-              } else if (win_packed + 0 > WIN_PACK_BUDGET) {
-                printf("FAIL: windows_stretto_exe_packed=%s > WIN_PACK_BUDGET=%d -- Constitution v1.1.0 (Principle I Windows UPX cap)\n", win_packed, WIN_PACK_BUDGET)
-                print "      Amend Principle I in .specify/memory/constitution.md, OR amend WIN_PACK_BUDGET in Makefile, OR trim the trigger feature."
-                fail = 1
-              } else {
-                printf("  windows_stretto_exe_packed=%s bytes  ok (<= %d budget, Constitution v1.1.0)\n", win_packed, WIN_PACK_BUDGET)
-              }
-
-              if (fail > 0) {
-                print "Binary size budget gate FAILED. See .specify/memory/constitution.md Principle I for principled defense of any future budget changes."
-              } else {
-                print "Binary size budget gate PASSED."
-              }
-              exit fail
-            }
-          ' binary-sizes.txt
+        #
+        # The gate body lives in tools/size-budget-gate.sh (extracted
+        # from the former inline awk) so release.yml enforces the
+        # IDENTICAL gate on the binaries it publishes.
+        run: bash tools/size-budget-gate.sh binary-sizes.txt
 
       - name: Coverage report
         run: |

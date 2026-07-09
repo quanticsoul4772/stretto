@@ -160,6 +160,35 @@ case "$rc" in
     *) echo "FAIL: broken-pipe render exited $rc (expected 141 or 1)"; fail=1 ;;
 esac
 
+# --- man page (048-packaging) ---
+# Skipped where groff is unavailable (e.g. Git Bash on Windows dev
+# boxes); ubuntu runners have it.
+if ! command -v groff >/dev/null 2>&1; then
+    echo "SKIP: groff unavailable; man-page checks skipped"
+else
+    # (a) Lint, ENFORCING: groff exits 0 on warnings (stderr only),
+    #     so the gate is "-ww (all warnings) + stderr must be empty".
+    #     -t preprocesses the tbl key table.
+    err=$(groff -man -t -ww -Tutf8 -z stretto.1 2>&1)
+    if [ -n "$err" ]; then
+        echo "FAIL: groff reports man-page problems:"
+        echo "$err"
+        fail=1
+    fi
+    # (b) Help<->man drift gate: every --flag token the binary's
+    #     --help emits must appear in stretto.1. A checker, not a
+    #     generator - the man page stays hand-written.
+    # Normalize the roff escapes (\- renders as -) before matching.
+    man_flat=$(sed 's/\\-/-/g' stretto.1)
+    help_flags=$(./synth --help | grep -oE -- '--[a-z][a-z-]+' | sort -u)
+    for f in $help_flags; do
+        if ! printf '%s' "$man_flat" | grep -q -- "$f"; then
+            echo "FAIL: --help flag '$f' is missing from stretto.1"
+            fail=1
+        fi
+    done
+fi
+
 rm -f /tmp/cli_stderr /tmp/cli_stdout /tmp/cli_a.wav /tmp/cli_b.wav
 
 if [ "$fail" -ne 0 ]; then

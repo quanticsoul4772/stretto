@@ -1,0 +1,230 @@
+.TH STRETTO 1 "2026-07-09" "stretto" "User Commands"
+.\" Hand-written; no version in .TH (stretto --version is authoritative).
+.\" Bump the date above whenever this page changes. The help<->man
+.\" drift gate in tests/test_cli.sh asserts every --help flag appears
+.\" here.
+.SH NAME
+stretto \- tiny deterministic generative music synthesizer
+.SH SYNOPSIS
+.B stretto
+.RI [ options ]
+.br
+.B stretto
+.B \-\-render
+.I seconds
+.RI ( out.wav | \- )
+.RI [ options ]
+.br
+.B stretto
+.B \-\-midi\-list\-devices
+.br
+.B stretto
+.RB { \-h | \-\-help | \-\-version }
+.SH DESCRIPTION
+.B stretto
+is a generative ambient music synthesizer in C99: no malloc, a single
+static 128 KB arena, and a packed binary measured in tens of kilobytes.
+Run bare, it plays live out the default audio device (PulseAudio on
+Linux, waveOut on Windows) and draws an ASCII oscilloscope sized to the
+terminal. With
+.BR \-\-render ,
+it writes a stereo 16\-bit 48 kHz WAV instead \(em or streams it to
+stdout for pipelines.
+.PP
+Eleven voice slots (super\-saw bass, section\-morphing chord pads,
+Karplus\-Strong/FM melody, three drums) are driven by cellular
+automata, Markov chains, an L\-system phrase generator, Euclidean
+rhythms, a 96\-bar song\-section state machine, and long\-term motif
+memory, through a Schroeder reverb, stereo delay, soft saturation, and
+a brickwall\-limited compressor.
+.SH OPTIONS
+.SS General
+.TP
+.BI \-\-seed " N"
+Fix all generative state to the unsigned integer
+.IR N .
+Identical seed and flags produce byte\-identical audio on every
+supported platform (see
+.BR DETERMINISM ).
+Without it, the seed derives from the clock and is reported by the
+resume line so the run stays recallable.
+.TP
+.B \-\-no\-ui
+Headless live mode: no terminal raw mode, no oscilloscope, no key
+handler. For scripts and CI.
+.TP
+.B \-h ", " \-\-help
+Print usage to stdout and exit 0, ignoring all other arguments.
+.TP
+.B \-\-version
+Print
+.RB \(dq "stretto <version>" \(dq
+and the license block to stdout and exit 0. The version is embedded at
+build time from
+.BR "git describe" .
+.SS Render mode
+.TP
+.BI \-\-render " seconds" " " ( out.wav | \- )
+Render
+.I seconds
+(1..3600) of audio to a WAV file. The output argument
+.B \-
+streams the WAV to stdout, byte\-identical to the file output \(em the
+RIFF header is written up front, so pipes need no seeking. A file
+literally named
+.B \-
+needs
+.BR ./\- .
+A downstream that closes early ends the render via SIGPIPE.
+.SS MIDI input
+.TP
+.BR \-\-midi " [" N ]
+Open MIDI input device
+.I N
+(0\-based, from
+.BR \-\-midi\-list\-devices ),
+or subscribe to every readable input port if
+.I N
+is omitted. Exits 1 if no device is available. Never opened in render
+mode. Notes map through the active scale; velocity 0 is note\-off.
+.TP
+.B \-\-midi\-default
+Alias for
+.BR "\-\-midi 0" .
+.TP
+.B \-\-no\-midi
+Explicit MIDI opt\-out; identical to omitting all MIDI flags.
+.TP
+.B \-\-midi\-list\-devices
+Print one line per MIDI input device as
+.RI \(dq "index name" \(dq
+and exit 0.
+.TP
+.BI \-\-midi\-channel " N"
+Accept only MIDI channel
+.I N
+(1..16). Requires
+.B \-\-midi
+or
+.BR \-\-midi\-default ;
+omit the flag to accept all channels.
+.SS Initial state (preset capture)
+Each flag sets one live\-tunable parameter before the first sample.
+Ranges mirror the live\-key clamps exactly; out\-of\-range values are
+hard errors, never silent clamps. Output is a pure function of
+.RB ( \-\-seed ,
+flags).
+.TP
+.BI \-\-scale " name" | 0\-5
+dorian, lydian, phrygian, locrian, harmminor, mixolydian.
+.TP
+.BI \-\-bar\-ms " 760\-7600"
+Bar length in milliseconds (default 2000).
+.TP
+.BI \-\-gate " 32\-255"
+Melody gate probability.
+.TP
+.BI \-\-mod\-depth " 100\-8000"
+FM modulation depth.
+.TP
+.BI \-\-cutoff " 30\-180"
+Filter cutoff base. The untouched default (200) sits above this dial
+range; omit the flag to keep it.
+.TP
+.BI \-\-resonance " 0\-180"
+Filter resonance base.
+.TP
+.BI \-\-lfo\-depth " 0\-255"
+Filter LFO depth.
+.TP
+.BI \-\-filter\-mode " name" | 0\-3
+lp, hp, bp, notch.
+.TP
+.BI \-\-reverb " 0\-256"
+Reverb wet mix.
+.TP
+.BI \-\-delay " 0\-256"
+Delay wet mix.
+.TP
+.BI \-\-feedback " 0\-200"
+Delay feedback.
+.TP
+.BI \-\-comp\-threshold " 8000\-30000"
+Compressor threshold.
+.SH LIVE-MODE KEYS
+.TS
+l l.
+SPACE	force a mutation now
++ / \-	tempo faster / slower (10%)
+[ / ]	FM mod depth down / up
+s	cycle scale
+g / G	gate probability down / up
+r / R	reverb wet down / up
+d / D	delay wet down / up
+f / F	delay feedback down / up
+c / C	filter cutoff down / up
+n / N	filter resonance down / up
+m / M	filter LFO depth down / up
+t	cycle filter mode (LP/HP/BP/notch)
+l / L	compressor threshold down / up
+?	toggle help overlay
+q	quit (prints the resume line)
+.TE
+.PP
+Ctrl\-C, SIGTERM, SIGQUIT, and SIGHUP restore the terminal and print
+the resume line before the process dies by the signal.
+.SH RESUME LINE
+On quit, live mode prints one pasteable line to stderr:
+.PP
+.EX
+resume with: --seed 3735928559 --scale lydian --bar-ms 1500
+.EE
+.PP
+It contains the run's seed (also captured for clock\-seeded runs) plus
+only the parameters you explicitly set via flag or key \(em the
+synth's internal mutation drift is never printed, because the seed
+alone reproduces that drift from bar 0. Recall reproduces a run with
+those values
+.B from bar 0
+(keystroke timing is not replayed; a mid\-session scale change alters
+the chord\-progression path from that point). MIDI CC tweaks are not
+captured. Render mode prints a seed\-only line at render start.
+.SH EXIT STATUS
+0 on success; 1 on usage or runtime errors (unknown flags,
+out\-of\-range values, unopenable output, unavailable MIDI device).
+Termination by SIGINT, SIGPIPE, or SIGTERM is reported by the shell as
+130, 141, or 143 respectively.
+.SH EXAMPLES
+Play live with a fixed seed and a brighter, faster start:
+.PP
+.EX
+stretto --seed 42 --cutoff 160 --bar-ms 1500
+.EE
+.PP
+Render one minute to a file, reproducibly:
+.PP
+.EX
+stretto --render 60 song.wav --seed 12345
+.EE
+.PP
+Stream a render through ffmpeg without touching disk:
+.PP
+.EX
+stretto --render 60 - --seed 7 | ffmpeg -i - out.flac
+.EE
+.PP
+Recall a session captured by the resume line:
+.PP
+.EX
+stretto --seed 3735928559 --scale lydian --bar-ms 1500
+.EE
+.SH DETERMINISM
+With
+.B \-\-seed
+.IR N ,
+audio output is byte\-identical across runs and across the supported
+build targets (Linux glibc, Windows). The runtime engine is
+integer\-only; the seed plus the initial\-state flags are the complete
+input contract. A bit\-exact SHA\-256 regression gates every change.
+.SH BUGS
+Report bugs: https://github.com/quanticsoul4772/stretto/issues

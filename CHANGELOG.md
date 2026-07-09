@@ -1,5 +1,15 @@
 # Changelog
 
+## Recent: packaging minimum - man page, make install, release workflow (048)
+
+RESEARCH_CLI.md F5: the floor for "installable and trusted" is a man page, an install target, and tagged releases with checksummed binaries. `--version` (044) and the complete flag surface (047) unblocked it.
+
+- **`stretto.1`**: hand-written roff at the repo root (no doc toolchain enters `make all`); no version in `.TH` (`--version` is authoritative). Kept true by two new gates in `tests/test_cli.sh`: an ENFORCING groff lint (`-ww` + stderr-must-be-empty - groff exits 0 on warnings, so exit-code checks are a no-op) and a help↔man drift gate asserting every `--help` flag appears in the page (a checker, not a generator - Constitution II intact).
+- **`make install` / `make uninstall`**: installs as the canonical name `stretto` (+ man page), honors PREFIX/DESTDIR. Deliberately takes NO build prerequisite: the `version.h` FORCE recipe runs on every make, and under `sudo` git fails the safe.directory ownership check, so a sudo-driven rebuild would silently install a binary reporting `stretto dev`. Guarded with a "run make first" error instead.
+- **`release.yml`**: annotated `v*` tags build on the SAME pinned runner as CI (ci.yml moved `ubuntu-latest` → `ubuntu-24.04` in lockstep: the build-time table generators use host libm, so a glibc bump can flip a table entry and change every render hash - releasing on an image CI never tests would gate goldens on an untested toolchain). Full test gates + a version assertion (`./synth --version` == `stretto <tag>`) + post-build tree-cleanliness and exe-embedded-version checks; artifacts (`linux-x86_64`, `-upx`, `windows-x86_64.exe`, `-upx.exe`, `stretto.1`, `sha256sums.txt`) published via an idempotent draft→upload→publish `gh release` sequence; `workflow_dispatch` rehearses everything without publishing. Release notes steer Windows users to the unpacked exe (UPX AV false positives) and disclaim GitHub's auto source tarballs.
+- **`tools/size-budget-gate.sh`**: the 3-key budget gate extracted from ci.yml's inline awk so releases enforce the identical gate - previously tag builds were the one set of binaries never size-gated (`make pack` only warns).
+- First packaged release will be **v1.3.0** (clean tag → clean `--version`; the `-final` tag suffix experiment ends, `v1.2.0-final` left as-is). Also fixed in passing: ARCHITECTURE's stale "coverage gate at 80% on 3 files" claim (actual: 12 files at 90-95%).
+
 ## Recent: preset capture - initial-state flags + resume line (047)
 
 The engine was deterministic per seed, but live tweaks died with the session and renders always started from defaults. Now every tunable is a launch flag and every session prints a pasteable recall line (`specs/004-preset-capture`):
