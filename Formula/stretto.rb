@@ -5,8 +5,9 @@
 # sha256 pinned against the public archive URL (repo made public
 # 2026-07-09; the tarball was verified to build and report
 # `stretto 1.3.0` with the STRETTO_VERSION override below).
-# Remaining checklist: brew audit --strict --formula ./Formula/stretto.rb
-# (no brew on the dev environments; run wherever brew exists).
+# `brew audit --strict quanticsoul4772/stretto/stretto` passes clean
+# (run 2026-07-09 via Linuxbrew in WSL). Re-run it when this file
+# changes.
 class Stretto < Formula
   desc "Tiny deterministic generative music synthesizer"
   homepage "https://github.com/quanticsoul4772/stretto"
@@ -17,10 +18,10 @@ class Stretto < Formula
   # No macOS audio backend exists: live audio is PulseAudio (Linux) /
   # waveOut (Windows), and __APPLE__ currently routes MIDI to the ALSA
   # backend, which cannot build on macOS. Linux(brew)-only until a
-  # CoreAudio backend is written.
-  depends_on :linux
-
+  # CoreAudio backend is written. (Ordering per brew audit: named
+  # dependencies sort alphabetically around the :linux symbol.)
   depends_on "alsa-lib"
+  depends_on :linux
   depends_on "pulseaudio"
 
   def install
