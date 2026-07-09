@@ -149,6 +149,18 @@ int ui_term_read_key(char *out) {
 }
 
 void ui_term_raw_mode(void) {
+    /* Not a TTY on either end (stdin redirected: no keys to read;
+       stdout redirected: the oscilloscope escapes would be garbage in
+       a file) -> degrade to headless --no-ui mode instead of dying.
+       Exact parity with the Windows path below, where GetConsoleMode
+       failure flips no_ui_flag. The old code exit(1)'d on the ENOTTY
+       tcgetattr, so `./synth < /dev/null` could not run at all. */
+    if (!isatty(0) || !isatty(1)) {
+        fprintf(stderr,
+            "stretto: stdin/stdout is not a terminal; running headless (--no-ui)\n");
+        no_ui_flag = 1;
+        return;
+    }
     if (tcgetattr(0, &saved_termios) < 0) {
         fprintf(stderr, "tcgetattr: %s\n", strerror(errno));
         exit(1);
@@ -253,7 +265,10 @@ void ui_term_raw_mode(void) {
     g_hout = GetStdHandle(STD_OUTPUT_HANDLE);
     if (!GetConsoleMode(g_hin, &g_old_in_mode) ||
         !GetConsoleMode(g_hout, &g_old_out_mode)) {
-        /* probably redirected; UI off */
+        /* Redirected stdin/stdout -> headless, same as the POSIX
+           isatty degrade above. */
+        fprintf(stderr,
+            "stretto: stdin/stdout is not a terminal; running headless (--no-ui)\n");
         no_ui_flag = 1;
         return;
     }
