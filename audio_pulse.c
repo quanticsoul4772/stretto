@@ -32,11 +32,22 @@ static void restore_terminal(void) {
 void audio_play(void) {
     /* --no-ui skips all terminal setup so the smoke test (no TTY
        on stdin) can run cleanly. Without a TTY, tcgetattr fails
-       and the old code would exit(1). */
+       and the old code would exit(1).
+
+       atexit is registered BEFORE raw mode engages: restore_terminal
+       no-ops until ui_term_raw_mode saves state, and registering
+       first means the exit(1) paths inside raw-mode setup (fcntl
+       failure after termios is already raw) still restore. The
+       signal handlers cover the non-exit() deaths (Ctrl-C, SIGTERM,
+       SIGQUIT, SIGHUP) that atexit can never see; they restore the
+       terminal async-signal-safely and re-raise. Installed in
+       --no-ui mode too: with no terminal state saved the handler is
+       a plain re-raise, so behavior there is unchanged. */
+    atexit(restore_terminal);
     if (!ui_get_no_ui()) {
         ui_term_raw_mode();
-        atexit(restore_terminal);
     }
+    ui_install_signal_handlers();
 
     /* Full pa_stream API with a threaded mainloop, matching what
        paplay does. pa_simple's internal helper thread was getting
@@ -139,8 +150,7 @@ void audio_play(void) {
                 pa_context_disconnect(ctx);
                 pa_context_unref(ctx);
                 pa_threaded_mainloop_free(ml);
-                restore_terminal();
-                exit(0);
+                exit(0);   /* atexit runs restore_terminal */
             }
         }
     }

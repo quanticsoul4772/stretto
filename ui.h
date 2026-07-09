@@ -15,6 +15,14 @@ int  ui_term_read_key(char *out);
 void ui_term_raw_mode(void);
 void ui_term_restore_mode(void);
 
+#ifndef _WIN32
+/* Install SIGINT / SIGTERM / SIGHUP / SIGQUIT handlers that restore
+   the terminal (async-signal-safe restore) and re-raise so the
+   process still dies by the signal. Linux live mode only; Windows
+   delivers Ctrl-C as keystroke 0x03 through the 'q' path instead. */
+void ui_install_signal_handlers(void);
+#endif
+
 /* --- one-frame render --- */
 
 /* Draw one oscilloscope frame plus the status row, using `buf` as

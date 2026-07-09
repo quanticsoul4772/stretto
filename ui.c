@@ -13,8 +13,10 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <termios.h>
+#include <signal.h>
 #define TIOCGWINSZ_VAL 0x5413
 static struct termios saved_termios;
+static int saved_fcntl_flags = 0;
 static int termios_saved = 0;
 #else
 #include <windows.h>
@@ -105,14 +107,49 @@ void ui_term_raw_mode(void) {
         fprintf(stderr, "fcntl: %s\n", strerror(errno));
         exit(1);
     }
+    saved_fcntl_flags = flags;
 }
 
 void ui_term_restore_mode(void) {
     if (termios_saved) {
         tcsetattr(0, TCSANOW, &saved_termios);
-        (void)!write(1, "\x1b[?25h\n", 8);
+        /* O_NONBLOCK lives on the open file description shared with
+           the parent shell; without this F_SETFL every live session
+           handed the shell back a nonblocking stdin. */
+        fcntl(0, F_SETFL, saved_fcntl_flags);
+        (void)!write(1, "\x1b[?25h\n", 7);
         termios_saved = 0;
     }
+}
+
+/* Restore the terminal from signal context, then die by the signal.
+   atexit handlers do NOT run on signal death, so this handler is the
+   only restore path for Ctrl-C / SIGTERM / SIGQUIT / SIGHUP during
+   live mode. Everything called here is on the POSIX async-signal-safe
+   list (tcsetattr, fcntl, write, raise). SA_RESETHAND restored the
+   default disposition before this handler ran, so the re-raise
+   terminates the process with an honest killed-by-signal wait status
+   (130 / 143 / ...), and a second Ctrl-C hard-kills even if the
+   restore itself were to wedge. */
+static void sig_restore_and_reraise(int sig) {
+    if (termios_saved) {
+        tcsetattr(0, TCSANOW, &saved_termios);
+        fcntl(0, F_SETFL, saved_fcntl_flags);
+        (void)!write(1, "\x1b[?25h\n", 7);
+    }
+    raise(sig);
+}
+
+void ui_install_signal_handlers(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sig_restore_and_reraise;
+    sa.sa_flags = SA_RESETHAND;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT,  &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGHUP,  &sa, NULL);
+    sigaction(SIGQUIT, &sa, NULL);
 }
 
 #else  /* _WIN32 */
@@ -160,7 +197,7 @@ void ui_term_raw_mode(void) {
 
 void ui_term_restore_mode(void) {
     if (win_term_saved) {
-        (void)!write(1, "\x1b[?25h\n", 8);
+        (void)!write(1, "\x1b[?25h\n", 7);
         SetConsoleMode(g_hin, g_old_in_mode);
         SetConsoleMode(g_hout, g_old_out_mode);
         win_term_saved = 0;
