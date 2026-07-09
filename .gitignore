@@ -35,19 +35,10 @@ synth_cov
 *.gcno
 *.gcov
 
-# Unit-test binaries
-tests/unit/test_arena
-tests/unit/test_voice
-tests/unit/test_gen
-tests/unit/test_lsystem
-tests/unit/test_chord_progression
-tests/unit/test_section
-tests/unit/test_density
-tests/unit/test_motif
-tests/unit/test_effects
-tests/unit/test_mixer
-tests/unit/test_wav
-tests/unit/test_keys
+# Unit-test binaries (glob + un-ignore sources: the old per-binary
+# list silently missed newly added tests, e.g. test_midi)
+tests/unit/test_*
+!tests/unit/test_*.c
 tests/unit/*.cov
 
 # Editor backups
@@ -67,3 +58,6 @@ commit_msg*.txt
 
 # One-off local measurement artifacts
 synth.stripped
+
+# Per-user Claude Code settings (machine-local permissions)
+.claude/settings.local.json
