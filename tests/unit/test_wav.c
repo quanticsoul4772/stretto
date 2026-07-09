@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 #define ensure_init() test_init_synth()
 
@@ -75,6 +76,82 @@ TEST(wav_file_size_matches_seconds) {
     /* 44-byte header + (seconds * SAMPLE_RATE) frames * 4 bytes/frame. */
     long expected = 44 + (long)seconds * SAMPLE_RATE * 4;
     ASSERT_EQ(sz, expected);
+}
+
+/* render_wav exits the process on I/O errors, so the error paths are
+   covered via fork - same pattern as test_arena's OOM test. */
+
+TEST(wav_unopenable_path_exits_1) {
+    ensure_init();
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* child: silence the error message, then hit the fopen-fail
+           path (parent directory does not exist). */
+        (void)!freopen("/dev/null", "w", stderr);
+        render_wav(1, "/nonexistent-dir/test_wav.wav");
+        _exit(0);                       /* unreachable on success */
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    ASSERT_TRUE(WIFEXITED(status));
+    ASSERT_EQ(WEXITSTATUS(status), 1);
+}
+
+TEST(wav_write_error_exits_1) {
+    ensure_init();
+    /* /dev/full opens writable but every write fails with ENOSPC -
+       exercises the fwrite short-write check + write_die. Skip
+       silently if the device is missing (non-Linux). */
+    FILE *probe = fopen("/dev/full", "wb");
+    if (!probe) return;
+    fclose(probe);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        (void)!freopen("/dev/null", "w", stderr);
+        render_wav(1, "/dev/full");
+        _exit(0);                       /* unreachable on success */
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    ASSERT_TRUE(WIFEXITED(status));
+    ASSERT_EQ(WEXITSTATUS(status), 1);
+}
+
+TEST(wav_stdout_dash_streams_valid_riff) {
+    ensure_init();
+    /* The "-" path in-process: point stdout at a temp file, render,
+       restore stdout, then validate the captured stream (RIFF magic +
+       exact size). Covers the to_stdout branch + fflush in the unit
+       suite. Byte-identity with a file render cannot be asserted
+       in-process (a second render continues the generative state, and
+       effects_init cannot re-run against the bump arena) - the
+       CLI-level cmp in tests/test_cli.sh proves identity through a
+       real pipe with fresh processes. */
+    const char *stdout_path = "/tmp/test_wav_dash_stdout.wav";
+
+    fflush(stdout);
+    int saved = dup(1);
+    ASSERT_TRUE(saved >= 0);
+    FILE *redir = freopen(stdout_path, "wb", stdout);
+    ASSERT_TRUE(redir != NULL);
+    render_wav(1, "-");
+    dup2(saved, 1);
+    close(saved);
+
+    FILE *b = fopen(stdout_path, "rb");
+    ASSERT_TRUE(b != NULL);
+    uint8_t hdr[44];
+    size_t n = fread(hdr, 1, 44, b);
+    fseek(b, 0, SEEK_END);
+    long sz = ftell(b);
+    fclose(b);
+    unlink(stdout_path);
+
+    ASSERT_EQ(n, 44);
+    ASSERT_EQ(memcmp(hdr, "RIFF", 4), 0);
+    ASSERT_EQ(memcmp(hdr + 8, "WAVE", 4), 0);
+    ASSERT_EQ(sz, 44 + (long)SAMPLE_RATE * 4);
 }
 
 int main(void) {

@@ -400,6 +400,10 @@ coverage: $(COV_OBJS)
 	# arpeggio, TENSION kick pattern, density swings - all execute under
 	# the render binary's coverage measurement.
 	./$(BUILD_COV)/synth_cov --render 110 /tmp/cov_render.wav --seed 0 >/dev/null
+	# 1-second stdout render exercises wav.c's to_stdout branch
+	# (added with `--render N -`) so the file stays over its >=90%
+	# coverage gate; WAV bytes discarded, diagnostics are stderr-only.
+	./$(BUILD_COV)/synth_cov --render 1 - --seed 0 >/dev/null
 	@echo "=== unit suite ==="
 	@for t in $(UNIT_TEST_SRCS); do \
 		base=$${t%.c}; \
