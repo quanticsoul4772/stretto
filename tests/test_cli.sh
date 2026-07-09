@@ -87,6 +87,24 @@ if ! cmp -s /tmp/cli_a.wav /tmp/cli_b.wav; then
     fail=1
 fi
 
+# --- positional overflow is an explicit usage error (051 / D9) ---
+# The pre-scan used to STOP at the 8th positional, silently dropping
+# everything after it - including a trailing recognized flag like
+# --seed. Overflow must now be a loud usage error.
+set +e
+./synth x1 x2 x3 x4 x5 x6 x7 x8 --seed 5 >/tmp/cli_stdout 2>/tmp/cli_stderr
+rc=$?
+set -e
+if [ "$rc" -ne 1 ]; then
+    echo "FAIL: positional overflow exited $rc (expected 1)"; fail=1
+fi
+if ! grep -q '^too many arguments' /tmp/cli_stderr; then
+    echo "FAIL: positional overflow missing 'too many arguments' on stderr"; fail=1
+fi
+if [ -s /tmp/cli_stdout ]; then
+    echo "FAIL: positional overflow wrote to stdout"; fail=1
+fi
+
 # --- non-TTY stdin/stdout degrades to headless (050) ---
 # `./synth </dev/null` used to die on the ENOTTY tcgetattr before
 # playing a sample. It must now degrade to --no-ui (parity with the

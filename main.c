@@ -175,7 +175,12 @@ int main(int argc, char **argv) {
     int param_values[UI_PARAM_COUNT];
     unsigned param_given = 0;      /* bit k = PARAM_FLAGS[k] present */
 
-    for (int i = 1; i < argc && positional_argc < 8; i++) {
+    /* No positional-cap guard in the loop condition: stopping the
+       scan early silently dropped everything after the 8th
+       positional, INCLUDING recognized flags like a trailing --seed.
+       Overflow is an explicit usage error in the else branch
+       instead. */
+    for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
             char *end;
             unsigned long s = strtoul(argv[++i], &end, 10);
@@ -267,6 +272,11 @@ int main(int argc, char **argv) {
                 param_values[k] = v;
                 param_given |= 1u << k;
             } else {
+                if (positional_argc >= 8) {
+                    fprintf(stderr, "too many arguments at \"%s\"\n", argv[i]);
+                    fputs(USAGE, stderr);
+                    exit(1);
+                }
                 positional[positional_argc++] = argv[i];
             }
         }

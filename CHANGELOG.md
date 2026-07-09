@@ -1,5 +1,12 @@
 # Changelog
 
+## Recent: last two RESEARCH_CLI leftovers - help overlay + positional overflow (051)
+
+- **D2**: the live help overlay (`?`) was missing the `l`/`L` compressor-threshold keys, which keys.c has dispatched and the README has documented since the compressor landed. One line in ui.c's HELP_TEXT.
+- **D9**: the argv pre-scan STOPPED at the 8th positional, silently dropping everything after it - including a trailing recognized flag like `--seed`, which would quietly produce a differently-seeded run than requested. Overflow is now an explicit usage error (`too many arguments at "<arg>"` + usage, exit 1), regression-tested in test_cli.sh with a trailing `--seed` after eight junk positionals.
+
+With this, every item RESEARCH_CLI.md rated above polish is shipped; remaining: P1 NO_COLOR, P2 exit-code taxonomy, P3 brew/AUR, N1 key record/replay.
+
 ## Recent: non-TTY stdin/stdout degrades to headless (050)
 
 `./synth < /dev/null` (or any redirected invocation without `--no-ui`) died on the ENOTTY `tcgetattr` before playing a sample - confirmed empirically during the 042 investigation, catalogued as RESEARCH_CLI.md M2. `ui_term_raw_mode` now checks `isatty(0) || isatty(1)` first and degrades to headless `--no-ui` mode with a one-line stderr notice - exact parity with the Windows path, where `GetConsoleMode` failure has always flipped the same flag (which now prints the same notice). `--no-ui` remains as the explicit form. Regression-tested in `tests/test_cli.sh` (asserts the notice appears and the ENOTTY death does not, tolerant of PA-less machines). Live-path only; goldens untouched.
