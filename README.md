@@ -139,7 +139,9 @@ The first column is the `<index>` you pass to `--midi <N>`. Capped at 32 devices
 | `l` / `L` | Compressor threshold down / up by 1000 (lowercase L / shift-L; not the digit `1` or capital `I`). Lower threshold = more compression. |
 | `?` | Toggle help overlay |
 | `q` | Quit (restores terminal state) |
-| `Ctrl-C` | Same as `q` via atexit handler |
+| `Ctrl-C` | Clean shutdown. Windows: arrives as keystroke `0x03`, routed through the `q` path. Linux: a signal handler restores the terminal (async-signal-safe) and re-raises, so the process dies by the signal with the terminal sane — same for `SIGTERM`, `SIGQUIT` (Ctrl-\), `SIGHUP`. |
+
+Known issue: `Ctrl-Z` (SIGTSTP) suspends with the terminal still in raw mode until `fg` resumes — suspend/resume handling is deferred.
 
 ## Status row
 
