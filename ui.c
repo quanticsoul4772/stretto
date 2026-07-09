@@ -51,6 +51,7 @@ static const char HELP_TEXT[] =
     "  n  /  N    filter resonance  down / up\r\n"
     "  m  /  M    filter LFO depth  down / up\r\n"
     "  t          cycle filter mode  LP / HP / BP / notch\r\n"
+    "  l  /  L    compressor threshold  down / up\r\n"
     "  ?          toggle this help\r\n"
     "  q          quit\r\n"
     "\r\n"
