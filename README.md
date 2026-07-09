@@ -54,6 +54,19 @@ Plays generative audio out the default audio device, draws an ASCII oscilloscope
 
 Writes a stereo 16-bit 48 kHz WAV. Seconds in `1..3600`. No audio device opened.
 
+### Help and version
+
+```
+./synth --help       # usage + flag reference (stdout, exit 0)
+./synth --version    # "stretto <version>" + license block (stdout, exit 0)
+```
+
+The version string is embedded at build time from `git describe`
+(`1.2.0-final-N-g<hash>`, `-dirty` suffix for modified trees; `dev`
+when building outside a git checkout). Both flags follow GNU Coding
+Standards §4.8: stdout, exit 0, and they take precedence over every
+other argument.
+
 ### Reproducible runs
 
 ```
@@ -322,7 +335,7 @@ Approximate line coverage (unit + integration combined; CI enforces these as per
 | `motif.c` | 100% | ≥95% |
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
-| `main.c` | 97% | ≥90% |
+| `main.c` | — | excluded (process-level argv branches; see Makefile `COV_SRCS_INTERACTIVE`) |
 | `ui.c`, `keys.c`, `audio_pulse.c` | — | excluded (require TTY + audio device) |
 
 Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `make coverage` can be alternated without `make clean`. Windows binary size budget (48 KB packed) is also gated in CI.
@@ -350,6 +363,7 @@ Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `
 | `audio.h` | One-function API (`audio_play()`); selects backend at link time |
 | `arena.c` / `.h` | Static 128 KB pool with bump allocator |
 | `gen_*_table.c` | Build-time generators for sine / envelope / MIDI note / Bjorklund / wavetable tables |
+| `version.h` (generated) | `#define STRETTO_VERSION` from `git describe`, written by a compare-and-swap Makefile rule so it only changes (and only `main.o` rebuilds) when the version does |
 | `Makefile` | `make`, `make win`, `make winpack`, `make pack`, `make test`, `make test-unit`, `make test-multiseed`, `make test-smoke`, `make coverage`, `make debug`, `make golden`, `make golden-multiseed` |
 | `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
 | `tests/test_multi_seed.sh` | Renders 4 seeds; determinism + audio bounds + golden hashes |
