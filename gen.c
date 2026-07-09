@@ -1,5 +1,6 @@
 #include "gen.h"
 #include "voice.h"
+#include "config.h"
 #include "euclid_table.h"
 #include "lsystem.h"
 #include "chord_progression.h"
@@ -320,8 +321,12 @@ static uint8_t effective_mutate_interval(void) {
 }
 
 /* Flag set by gen_seed; gen_init checks it and seeds from clock if
-   never explicitly seeded. */
+   never explicitly seeded. seed_input keeps the RAW (pre-hash) seed
+   so the resume line can print a --seed value that reproduces the
+   run - the clock-derived fallback flows through gen_seed too, so
+   every session's seed is recallable. */
 static int gen_seeded_explicitly = 0;
+static uint32_t seed_input = 0;
 
 /* xorshift32: turn one input seed into a sequence of well-distributed
    uint32 values so PRNG, ca_row, and ca_harm all start from
@@ -347,7 +352,10 @@ void gen_seed(uint32_t seed) {
     s = hash32(s);
     ca_harm = s ? s : 0x87654321u;
     gen_seeded_explicitly = 1;
+    seed_input = seed;
 }
+
+uint32_t gen_get_seed_input(void) { return seed_input; }
 
 void gen_init(void) {
     cur_degree         = 0;
@@ -774,4 +782,33 @@ void gen_adjust_gate(int delta) {
     if (p < 32)  p = 32;
     if (p > 255) p = 255;
     gate_prob = (uint8_t)p;
+}
+
+/* Absolute setters for the preset-capture CLI flags (--scale, --gate,
+   --bar-ms). Same clamps as the corresponding live-key adjusters; all
+   take int so main.c's flag table can hold one uniform function
+   pointer type. None consume PRNG draws - output stays a pure
+   function of (seed, flags). */
+
+void gen_set_scale(int idx) {
+    if (idx < 0) idx = 0;
+    if (idx >= (int)N_SCALES) idx = (int)N_SCALES - 1;
+    cur_scale = (uint8_t)idx;
+}
+
+void gen_set_gate(int v) {
+    if (v < 32)  v = 32;
+    if (v > 255) v = 255;
+    gate_prob = (uint8_t)v;
+}
+
+/* At 48 kHz with 48 substeps per bar, samples-per-substep numerically
+   equals milliseconds-per-bar (spss * 48 / 48000 s = spss ms). The
+   conversion keeps the flag meaningful if SAMPLE_RATE ever changes.
+   Clamp matches gen_set_tempo's [760, 7600]. */
+void gen_set_bar_ms(int ms) {
+    int64_t s = (int64_t)ms * SAMPLE_RATE / 48000;
+    if (s < 760)  s = 760;
+    if (s > 7600) s = 7600;
+    samples_per_substep = (uint32_t)s;
 }

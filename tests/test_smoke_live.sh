@@ -114,10 +114,12 @@ EOF
             ;;
     esac
 
+    # synth stderr goes to a file: script(1) merges the PTY streams,
+    # so the resume line can't be fished out of the transcript.
     cat > /tmp/stretto_q_check.sh <<EOF
 #!/bin/bash
 cd "$PWD"
-./synth >/dev/null 2>&1
+./synth >/dev/null 2>/tmp/stretto_q_stderr
 rc=\$?
 python3 /tmp/stretto_term_probe.py || { echo "QCHECK-CORRUPT"; exit 1; }
 echo "QCHECK-OK rc=\$rc"
@@ -125,7 +127,9 @@ EOF
     chmod +x /tmp/stretto_q_check.sh
 
     echo "=== terminal-restore B: clean 'q' quit clears O_NONBLOCK (PTY) ==="
-    out_b=$( (sleep 2; printf q; sleep 1) | timeout 30 script -qec /tmp/stretto_q_check.sh /dev/null | tr -d '\r')
+    # Feed 's' (cycle scale -> lydian) before 'q' so the resume line
+    # must capture the touched parameter, not just the seed.
+    out_b=$( (sleep 2; printf s; sleep 1; printf q; sleep 1) | timeout 30 script -qec /tmp/stretto_q_check.sh /dev/null | tr -d '\r')
     echo "$out_b"
     case "$out_b" in
         *"QCHECK-OK rc=0"*)
@@ -137,7 +141,19 @@ EOF
             exit 1
             ;;
     esac
-    rm -f /tmp/stretto_term_probe.py /tmp/stretto_sigterm_check.sh /tmp/stretto_q_check.sh
+
+    # Preset capture (specs/004-preset-capture): the quit path must
+    # print a pasteable resume line with the seed and the parameter
+    # touched by the 's' keypress above.
+    if grep -qE '^resume with: --seed [0-9]+ --scale lydian$' /tmp/stretto_q_stderr; then
+        echo "PASS: clean-q resume line captures seed + touched scale"
+    else
+        echo "FAIL: resume line missing or wrong; synth stderr was:"
+        cat /tmp/stretto_q_stderr
+        exit 1
+    fi
+    rm -f /tmp/stretto_term_probe.py /tmp/stretto_sigterm_check.sh \
+          /tmp/stretto_q_check.sh /tmp/stretto_q_stderr
 fi
 
 # ----- MIDI smoke sub-check (specs/003-midi-input/T039) -----

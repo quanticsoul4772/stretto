@@ -48,6 +48,10 @@ void audio_play(void) {
         ui_term_raw_mode();
     }
     ui_install_signal_handlers();
+    /* Initial resume-line snapshot (seed + any CLI-flag params) so a
+       session killed before its first keypress - including headless
+       --no-ui runs - is still recallable via the signal handler. */
+    keys_build_resume_line();
 
     /* Full pa_stream API with a threaded mainloop, matching what
        paplay does. pa_simple's internal helper thread was getting
@@ -150,6 +154,10 @@ void audio_play(void) {
                 pa_context_disconnect(ctx);
                 pa_context_unref(ctx);
                 pa_threaded_mainloop_free(ml);
+                /* Last-built snapshot = state at the user's last
+                   action (no rebuild: post-keypress mutate() drift is
+                   deliberately not captured). */
+                fputs(ui_get_resume_line(), stderr);
                 exit(0);   /* atexit runs restore_terminal */
             }
         }

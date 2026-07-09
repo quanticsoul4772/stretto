@@ -15,11 +15,17 @@ void     effects_init(void);
 void     delay_process(int16_t *buf, uint32_t frames);
 void     delay_adjust_wet(int delta);
 void     delay_adjust_feedback(int delta);
+/* Absolute setters for the preset-capture CLI flags; clamps mirror
+   the adjusters ([0,256] wet / [0,200] feedback / [8000,30000]
+   threshold). */
+void     delay_set_wet(int v);
+void     delay_set_feedback(int v);
 uint16_t delay_get_wet(void);
 uint16_t delay_get_feedback(void);
 
 void     reverb_process(int16_t *buf, uint32_t frames);
 void     reverb_adjust_wet(int delta);
+void     reverb_set_wet(int v);
 uint16_t reverb_get_wet(void);
 
 /* Section-driven additive bias on reverb wet, applied per-sample in
@@ -37,6 +43,7 @@ void     saturate_process(int16_t *buf, uint32_t frames);
    makeup gain, brickwall ceiling at 32000 (just below int16 max). */
 void     compressor_process(int16_t *buf, uint32_t frames);
 void     compressor_adjust_threshold(int delta);
+void     compressor_set_threshold(int v);
 uint16_t compressor_get_threshold(void);
 
 /* int16 saturating clamp. Shared so voice.c can call it instead of

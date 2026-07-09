@@ -797,6 +797,34 @@ void voice_cycle_filter_mode(void) {
     filter_mode = (uint8_t)((filter_mode + 1u) & 3u);
 }
 
+/* Absolute setters for the preset-capture CLI flags. Same clamps as
+   the adjusters above; int-typed for main.c's uniform flag table.
+   Note the cutoff dial range [30, 180] deliberately excludes the
+   compile-time default of 200 (see svf_f_base) - an untouched cutoff
+   is never printed by the resume line, so recall keeps the default. */
+
+void voice_set_cutoff(int v) {
+    if (v < 30)  v = 30;
+    if (v > 180) v = 180;
+    svf_f_base = (uint16_t)v;
+}
+
+void voice_set_resonance(int v) {
+    if (v < 0)   v = 0;
+    if (v > 180) v = 180;
+    svf_q_base = (uint16_t)v;
+}
+
+void voice_set_lfo_filter_depth(int v) {
+    if (v < 0)   v = 0;
+    if (v > 255) v = 255;
+    lfo_filter_depth = (uint16_t)v;
+}
+
+void voice_set_filter_mode(int m) {
+    filter_mode = (uint8_t)(m & 3);
+}
+
 uint16_t voice_get_cutoff(void)           { return svf_f_base; }
 uint16_t voice_get_resonance(void)        { return svf_q_base; }
 uint16_t voice_get_lfo_filter_depth(void) { return lfo_filter_depth; }

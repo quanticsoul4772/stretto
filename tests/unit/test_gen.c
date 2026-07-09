@@ -318,6 +318,50 @@ TEST(gen_intro_combo_redrawn_at_cycle_wrap) {
     ASSERT_TRUE(popcount >= 1 && popcount <= 3);
 }
 
+/* ---- preset-capture absolute setters (047) ---- */
+
+TEST(set_scale_clamps_and_sets) {
+    ensure_pool();
+    gen_set_scale(3);
+    ASSERT_EQ(gen_get_scale(), 3);
+    gen_set_scale(-5);
+    ASSERT_EQ(gen_get_scale(), 0);
+    gen_set_scale(99);
+    ASSERT_EQ(gen_get_scale(), 5);
+    gen_set_scale(0);
+}
+
+TEST(set_gate_clamps_and_sets) {
+    ensure_pool();
+    gen_set_gate(150);
+    ASSERT_EQ(gen_get_gate(), 150);
+    gen_set_gate(0);
+    ASSERT_EQ(gen_get_gate(), 32);
+    gen_set_gate(999);
+    ASSERT_EQ(gen_get_gate(), 255);
+    gen_set_gate(200);
+}
+
+TEST(set_bar_ms_clamps_and_sets) {
+    ensure_pool();
+    /* At 48 kHz, ms-per-bar == samples-per-substep. */
+    gen_set_bar_ms(1500);
+    ASSERT_EQ(gen_get_step_samples(), 1500u);
+    gen_set_bar_ms(1);
+    ASSERT_EQ(gen_get_step_samples(), 760u);
+    gen_set_bar_ms(999999);
+    ASSERT_EQ(gen_get_step_samples(), 7600u);
+    gen_set_bar_ms(2000);
+}
+
+TEST(seed_input_roundtrip) {
+    gen_seed(3735928559u);
+    ASSERT_EQ(gen_get_seed_input(), 3735928559u);
+    gen_seed(0);
+    ASSERT_EQ(gen_get_seed_input(), 0u);
+    gen_init();
+}
+
 int main(void) {
     return RUN_ALL();
 }

@@ -85,6 +85,36 @@ other argument.
 
 Fixes the PRNG / cellular automaton / Markov seeds to `N`. Same `--seed` always produces the same audio (this is how the regression test works).
 
+### Preset capture
+
+Every user-tunable parameter can be set at launch, and every session prints a pasteable recall line on quit:
+
+```
+./synth --scale lydian --bar-ms 1500 --reverb 120        # start with these values
+./synth --render 60 out.wav --seed 7 --filter-mode bp    # flags work for renders too
+...
+q                                                        # (or Ctrl-C / SIGTERM)
+resume with: --seed 3735928559 --scale lydian --bar-ms 1500 --reverb 120
+```
+
+| Flag | Range | Sets |
+|---|---|---|
+| `--scale <name\|0-5>` | dorian, lydian, phrygian, locrian, harmminor, mixolydian | scale |
+| `--bar-ms <760-7600>` | ms per bar (default 2000) | tempo |
+| `--gate <32-255>` | | melody gate probability |
+| `--mod-depth <100-8000>` | | FM modulation depth |
+| `--cutoff <30-180>` | | filter cutoff base |
+| `--resonance <0-180>` | | filter resonance base |
+| `--lfo-depth <0-255>` | | filter LFO depth |
+| `--filter-mode <m\|0-3>` | lp, hp, bp, notch | filter mode |
+| `--reverb <0-256>` | | reverb wet mix |
+| `--delay <0-256>` / `--feedback <0-200>` | | delay wet / feedback |
+| `--comp-threshold <8000-30000>` | | compressor threshold |
+
+Ranges mirror the live-key clamps; out-of-range values are hard errors, never silent clamps. Output is a pure function of (`--seed`, flags) — a flagged render is byte-reproducible, and flags at their defaults are byte-inert.
+
+The resume line contains the seed (also captured for clock-seeded runs) plus **only the parameters you explicitly set** — via flag or live key. The synth's own internal mutation drift is never printed: `--seed` alone reproduces that drift from bar 0, so echoing drifted values back would make the recalled run *diverge* at the first mutation. Semantics worth knowing: recall reproduces a run with those values **from bar 0**, not the keystroke timing of your session; a mid-session scale change alters the chord-progression path from that point, so a recalled run matches your session's harmony only up to where you changed scale. Two quirks: the untouched cutoff default (200) sits above the `--cutoff` dial range (30–180) — omit the flag to keep it; MIDI CC tweaks are not captured (a `--midi` session isn't reproducible anyway, since your playing perturbs the voice pool).
+
 ## MIDI
 
 Live MIDI keyboard input — plug a controller in, the synth plays notes as you press them (mixed over the generative output rather than replacing it). Two backends, identical interface:
