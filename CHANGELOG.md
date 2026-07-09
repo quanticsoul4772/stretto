@@ -1,5 +1,15 @@
 # Changelog
 
+## Recent: Linux signal-safe terminal restore (042)
+
+Ctrl-C, SIGTERM, or SIGQUIT during live mode on Linux left the terminal corrupted — echo off, canonical mode off, cursor hidden — requiring a manual `reset`. Root cause: no signal handlers existed; the only cleanup was `atexit(restore_terminal)`, and atexit handlers do not run on signal death (raw mode leaves `ISIG` set, so Ctrl-C delivered SIGINT with default terminate disposition). Confirmed empirically in WSL2 PTY experiments against both a minimal replica and the real binary before fixing.
+
+- **In-handler restore + re-raise** (design chosen over flag-and-poll after plan review): `ui_install_signal_handlers()` installs SIGINT/SIGTERM/SIGHUP/SIGQUIT handlers that restore termios + fcntl + cursor from signal context (`tcsetattr`, `fcntl`, `write`, `raise` are all POSIX async-signal-safe) and then re-raise, preserving the killed-by-signal wait status (130/143) the smoke test already expects. `SA_RESETHAND` makes the re-raise work and keeps a second Ctrl-C as a hard-kill escape hatch. The rejected flag-and-poll variant fails exactly when needed most — main thread wedged in `pa_threaded_mainloop_wait` with a dead PA server.
+- **`O_NONBLOCK` leak fixed (affected even clean quits)**: raw-mode setup put `O_NONBLOCK` on stdin but `ui_term_restore_mode` never removed it; the flag lives on the open file description shared with the parent shell, so every live session handed the shell back a nonblocking stdin (measured on the real binary). Flags are now saved and restored inside the idempotence guard.
+- **atexit registered before raw mode** in `audio_play()`, closing the window where a failed `fcntl` inside raw-mode setup would `exit(1)` with the terminal already raw and no restore registered. The now-redundant explicit restore on the `q` path is gone (atexit covers it). Handlers install from `audio_play()` only, so `--render` keeps default signal behavior. Windows unchanged (Ctrl-C is keystroke `0x03` → `q` path); its only edit is the shared fix for the cursor-show `write` emitting 8 bytes of a 7-char string (stray NUL).
+- **Two PTY regression sub-checks** in `tests/test_smoke_live.sh`, placed before the root-gated MIDI `modprobe` section so they actually run in CI: (A) SIGTERM during live mode → ECHO/ICANON restored, exit 143; (B) clean `q` → `O_NONBLOCK` clear on the *inherited* stdin description (a `</dev/tty` redirect would make that assertion vacuous — it probes a fresh description). Sub-check A uses SIGTERM because non-interactive shells start background jobs with SIGINT ignored. Both verified to FAIL against the pre-fix binary and PASS post-fix.
+- Determinism untouched: live path only; bit-exact + multiseed goldens pass unchanged.
+
 ## Recent: post-arc review fixes (041) — Constitution v1.2.1, gate single-sourcing, MIDI CLI contract reconciliation
 
 A review of the #107–#133 arc surfaced factual and design defects; this change fixes them. The WHY per item:
