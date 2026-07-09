@@ -1,22 +1,17 @@
-# Homebrew formula. The repo doubles as its own tap: once the repo is
-# PUBLIC, users run
+# Homebrew formula. The repo doubles as its own tap:
 #   brew tap quanticsoul4772/stretto https://github.com/quanticsoul4772/stretto
 #   brew install stretto
 #
-# PUBLICATION CHECKLIST (repo is private today; none of this resolves
-# until it is public):
-#   1. Make the repo public.
-#   2. Pin the real sha256:
-#        curl -sL https://github.com/quanticsoul4772/stretto/archive/refs/tags/v1.3.0.tar.gz | sha256sum
-#      (The hash CANNOT be precomputed while private: the API tarball
-#      an authenticated fetch returns has a different directory prefix
-#      than the public archive URL serves, so its bytes differ.)
-#   3. brew audit --strict --formula ./Formula/stretto.rb
+# sha256 pinned against the public archive URL (repo made public
+# 2026-07-09; the tarball was verified to build and report
+# `stretto 1.3.0` with the STRETTO_VERSION override below).
+# Remaining checklist: brew audit --strict --formula ./Formula/stretto.rb
+# (no brew on the dev environments; run wherever brew exists).
 class Stretto < Formula
   desc "Tiny deterministic generative music synthesizer"
   homepage "https://github.com/quanticsoul4772/stretto"
   url "https://github.com/quanticsoul4772/stretto/archive/refs/tags/v1.3.0.tar.gz"
-  sha256 "REPLACE_WITH_REAL_SHA256_ONCE_REPO_IS_PUBLIC"
+  sha256 "26a50398d9d15a56733aee36f585dd2a72d2df0c75fafd8d151c0e6d2dd85c0f"
   license "MIT"
 
   # No macOS audio backend exists: live audio is PulseAudio (Linux) /

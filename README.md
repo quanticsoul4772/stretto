@@ -47,7 +47,12 @@ Prebuilt binaries with `sha256sums.txt` are attached to [tagged releases](https:
 
 ### Homebrew (Linuxbrew) and AUR
 
-Package definitions are prepared in-tree — `Formula/stretto.rb` (the repo doubles as its own tap) and `packaging/aur/PKGBUILD` — **but cannot be published while this repository is private**: package managers fetch sources from the public archive URL, which 404s today. Once the repo is public, each file carries its own publication checklist (pin the tarball sha256, `brew audit` / regenerate `.SRCINFO`, push to AUR). The Homebrew formula is Linux-only by declaration: no macOS audio backend exists (live audio is PulseAudio/waveOut, and `__APPLE__` currently routes MIDI to the ALSA backend, which cannot build on macOS). Both recipes build with `make STRETTO_VERSION=<ver>` so tarball builds (no `.git`) report the release version instead of `dev`, and install via the upstream `make install`.
+```
+brew tap quanticsoul4772/stretto https://github.com/quanticsoul4772/stretto
+brew install stretto
+```
+
+The repo doubles as its own Homebrew tap (`Formula/stretto.rb`, sha256-pinned to the v1.3.0 tarball). **Linux(brew)-only**: no macOS audio backend exists (live audio is PulseAudio/waveOut, and `__APPLE__` currently routes MIDI to the ALSA backend, which cannot build on macOS). The AUR package definition lives at `packaging/aur/PKGBUILD` (+`.SRCINFO`), ready for the maintainer to push to `ssh://aur@aur.archlinux.org/stretto.git`. Both recipes build with `make STRETTO_VERSION=<ver>` so tarball builds (no `.git`) report the release version instead of `dev`, and install via the upstream `make install`.
 
 ## Run
 
