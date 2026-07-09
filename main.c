@@ -82,6 +82,7 @@ static const char HELP_BODY[] =
     "recall reproduces the run from bar 0 with those values.\n"
     "\n"
     "In live mode, press ? for the key map, q to quit.\n"
+    "NO_COLOR (non-empty) disables status/oscilloscope colors.\n"
     "Report bugs: https://github.com/quanticsoul4772/stretto/issues\n";
 
 static const char VERSION_TEXT[] =

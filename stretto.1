@@ -189,6 +189,13 @@ those values
 (keystroke timing is not replayed; a mid\-session scale change alters
 the chord\-progression path from that point). MIDI CC tweaks are not
 captured. Render mode prints a seed\-only line at render start.
+.SH ENVIRONMENT
+.TP
+.B NO_COLOR
+When present and non\-empty, disables the ANSI color sequences in the
+status row and oscilloscope (the glyph heat\-map ramp remains), per
+the no\-color.org convention. Cursor and screen\-control escapes are
+unaffected.
 .SH EXIT STATUS
 0 on success; 1 on usage or runtime errors (unknown flags,
 out\-of\-range values, unopenable output, unavailable MIDI device).

@@ -10,6 +10,7 @@
 #include "../../gen.h"
 #include "../../effects.h"
 #include <stdint.h>
+#include <string.h>
 
 /* test_init_synth + ui_set_no_ui (keeps ui_show_help / clear_screen
    quiet during the test run). */
@@ -153,6 +154,41 @@ TEST(keys_t_cycles_filter_mode) {
     ASSERT_EQ(voice_get_filter_mode(), 3);
     keys_dispatch('t');
     ASSERT_EQ(voice_get_filter_mode(), 0);
+}
+
+/* ---- NO_COLOR SGR filter (052) ---- */
+
+TEST(strip_sgr_removes_color_keeps_text) {
+    char buf[] = "\x1b[33mS:\x1b[97mD\x1b[0m done";
+    int n = ui_strip_sgr(buf, (int)(sizeof buf - 1));
+    buf[n] = '\0';
+    ASSERT_EQ(n, 8);
+    ASSERT_EQ(memcmp(buf, "S:D done", 8), 0);
+}
+
+TEST(strip_sgr_keeps_functional_escapes) {
+    /* Cursor home, hide cursor, erase line end in H / l / K - all
+       must survive; only the trailing SGR reset is removed. */
+    char buf[] = "\x1b[H\x1b[?25l\x1b[2Kx\x1b[0m";
+    int n = ui_strip_sgr(buf, (int)(sizeof buf - 1));
+    buf[n] = '\0';
+    ASSERT_EQ(n, 14);
+    ASSERT_EQ(memcmp(buf, "\x1b[H\x1b[?25l\x1b[2Kx", 14), 0);
+}
+
+TEST(strip_sgr_plain_text_unchanged) {
+    char buf[] = "no escapes at all";
+    int n = ui_strip_sgr(buf, (int)(sizeof buf - 1));
+    ASSERT_EQ(n, (int)(sizeof buf - 1));
+    ASSERT_EQ(memcmp(buf, "no escapes at all", (size_t)n), 0);
+}
+
+TEST(strip_sgr_truncated_escape_at_end_kept) {
+    /* A buffer ending mid-escape must not read past len or drop the
+       partial bytes silently. */
+    char buf[] = "x\x1b[3";
+    int n = ui_strip_sgr(buf, (int)(sizeof buf - 1));
+    ASSERT_EQ(n, (int)(sizeof buf - 1));
 }
 
 int main(void) {
