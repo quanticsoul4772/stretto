@@ -51,6 +51,23 @@ if [ ! -f "${script}" ]; then
     exit 2
 fi
 
+# Guard: refuse to run if Constitution or Makefile have un-committed
+# changes. Case 5's recovery path runs `git checkout --` on both
+# files, which silently clobbers un-committed work (this guard
+# existed only in the amend test until a dev-box `make test` with a
+# modified Makefile lost its uncommitted edits to exactly this path
+# during the 044 work). Scope is limited to the 2 files the test
+# tampers with, mirroring the amend test's post-#130 scoped guard.
+if ! git diff --quiet HEAD -- .specify/memory/constitution.md Makefile 2>/dev/null; then
+    echo "FATAL: .specify/memory/constitution.md or Makefile has un-committed changes." >&2
+    echo "       Commit or stash your changes before running this test." >&2
+    echo "       (Case 5 recovers via 'git checkout --' on these 2 files, which" >&2
+    echo "       would clobber un-committed changes.)" >&2
+    echo "       Dirty files (Constitution + Makefile only):" >&2
+    git diff --name-only HEAD -- .specify/memory/constitution.md Makefile 2>/dev/null | sed 's/^/         /' >&2
+    exit 1
+fi
+
 # Backup file paths (used by the cleanup trap; .bak extension so
 # they're easy to spot in /tmp if cleanup fails partway).
 constitution_bak="/tmp/.test_spec_budget_constitution.bak.$$"

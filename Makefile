@@ -27,6 +27,18 @@ LIBASOUND = $(shell pkg-config --exists alsa && echo -lasound)
 UPX_BIN   ?= upx
 UPX_FLAGS ?= --ultra-brute
 
+# Version identity for --version: git describe when building from a
+# checkout (leading 'v' stripped for GNU-format output; --dirty marks
+# locally-modified builds), "dev" for tarball builds with no git.
+# Subshell-parenthesized so the `|| echo dev` fallback fires on git
+# failure BEFORE the sed (a bare `git | sed || echo` would take sed's
+# exit status and yield an empty version outside a checkout).
+# version.h is deliberately NOT in $(HEADERS): a version change must
+# rebuild only main.o (the sole consumer). The version.h rule itself
+# lives BELOW `all:` - a rule up here would become the Makefile's
+# default goal and `make` would build nothing but version.h.
+STRETTO_VERSION := $(shell (git describe --tags --always --dirty 2>/dev/null || echo dev) | sed 's/^v//')
+
 HEADERS = sin_table.h env_table.h note_table.h euclid_table.h wavetable.h
 GENS    = gen_sin_table gen_env_table gen_note_table gen_euclid_table gen_wavetable
 # Shared synth + UI + WAV + mixer + key dispatch.
@@ -86,6 +98,22 @@ PACK_TARGET     = 30720
 WIN_PACK_BUDGET = 49152
 
 all: synth
+
+# FORCE (not .PHONY on version.h - that would force main.o rebuilds
+# every run): the recipe runs on every make, but the cmp-swap leaves
+# version.h's mtime untouched when the version is unchanged, so
+# nothing recompiles. Placed after `all:` so it cannot become the
+# default goal.
+version.h: FORCE
+	@printf '#define STRETTO_VERSION "%s"\n' '$(STRETTO_VERSION)' > version.h.tmp
+	@if cmp -s version.h.tmp version.h; then rm -f version.h.tmp; else mv version.h.tmp version.h; fi
+FORCE:
+
+# First-build ordering for the main.o variants (-MMD records the
+# include thereafter). BUILD_COV's main.o dep lives next to the
+# coverage rules - $(BUILD_COV) is defined further down and
+# target/prereq lists expand immediately.
+main.o main.win.o main.dbg.o: version.h
 
 # Windows cross-compile target.
 # Size-optimized flags mirror the Linux build: -Os + LTO + section
@@ -184,7 +212,7 @@ clean:
 	       tests/unit/test_section tests/unit/test_density \
 	       tests/unit/test_motif tests/unit/test_midi \
 	       tests/unit/test_mixer tests/unit/test_wav tests/unit/test_keys \
-	       $(GENS) $(HEADERS) *.o *.win.o
+	       $(GENS) $(HEADERS) version.h version.h.tmp *.o *.win.o
 
 # Size report: builds every binary whose toolchain is locally available
 # (gcc + libpulse + libasound for synth; upx for *.packed; mingw for
@@ -238,8 +266,13 @@ size:
 # `Bridge regression test (Constitution<->Makefile)` + `Amend helper
 # regression test (Constitution<->Makefile)` steps mirror this as
 # dedicated CI checks.
+# No chmod here: the test scripts are committed mode 100755. The old
+# `chmod +x` flipped tracked mode bits on Linux (core.fileMode=true),
+# which made `git describe --dirty` report every post-`make test`
+# build as -dirty (the #129/#130 "chmod trap", now retired at the
+# root by committing the executable bits).
 test: synth
-	chmod +x tests/test_spec_budget_check.sh tests/test_spec_budget_amend.sh
+	./tests/test_cli.sh
 	./tests/test_bitexact.sh
 	./tests/test_spec_budget_check.sh
 	./tests/test_spec_budget_amend.sh
@@ -350,6 +383,11 @@ COV_TEST_OBJS        = $(addprefix $(BUILD_COV)/,$(OBJS_NO_MAIN))
 
 $(BUILD_COV):
 	@mkdir -p $(BUILD_COV) $(BUILD_COV)/tests/unit
+
+# Coverage main.o needs version.h to exist on first build (the
+# coverage pattern rule has no $(HEADERS) prereq; see the version.h
+# rule near the top of this file).
+$(BUILD_COV)/main.o: version.h
 
 $(BUILD_COV)/%.o: %.c | $(BUILD_COV)
 	gcc $(COV_FLAGS) -c $< -o $@

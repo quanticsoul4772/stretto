@@ -1,5 +1,16 @@
 # Changelog
 
+## Recent: --help / -h / --version (044)
+
+`--help` and `--version` were unknown arguments: usage on stderr, exit 1, empty stdout — scripts and packagers probing `--version` (Homebrew audits, AUR helpers) read that as a broken binary, and no version identity existed anywhere in the tree.
+
+- **GNU Coding Standards §4.8 semantics**: both flags print to **stdout**, **exit 0**, and take precedence over every other option and argument (`--seed abc --help` prints help; `--help --render 60 x.wav` renders nothing). `--version`'s first line is machine-parseable (`stretto <ver>`, version after the last space, constant program name per §4.8.1 — deliberately "stretto", not `argv[0]`, even though the Linux binary is `./synth`), followed by the copyright / MIT / NO-WARRANTY block. `--help` ends with the Report-bugs line, help2man-compatible for a future man page. The usage synopsis is a single `USAGE[]` constant shared by the stderr error paths and `--help`, so the two cannot drift. This CLI-surface addition is recorded in `specs/003-midi-input/contracts/cli.md`'s exit-code table (new exit-0 row) as a standards-mandated exception to the "unknown flag = usage error" rule.
+- **Version identity**: `version.h` is generated from `git describe --tags --always --dirty` (leading `v` stripped; `dev` fallback for no-git tarball builds) by a compare-and-swap Makefile rule — the recipe runs every `make`, but the file only changes when the version does, so incremental builds stay no-ops and a version change rebuilds exactly `main.o` (explicit deps on the four `main.o` variants; deliberately not in `$(HEADERS)`).
+- **The #129/#130 "chmod trap" is retired at the root**: `make test` and `tools/verify-bridge.sh` ran `chmod +x` on two test scripts committed mode `100644`, flipping tracked mode bits on Linux — which would have made `git describe --dirty` mark every post-`make test` build dirty (poisoning the CI Windows artifact and churning `main.o`). The executable bits are now committed (`100755`, matching the other test scripts) and the chmod lines are gone.
+- **ci.yml checks out with `fetch-depth: 0`** so `git describe` on CI yields a resolvable `1.2.0-final-N-g<hash>` instead of the bare hash of the ephemeral PR merge ref.
+- **`tests/test_cli.sh`** (new, wired into `make test`): help/version stdout + exit-0 + clean-stderr assertions, the precedence-suppresses-side-effects check (no WAV created by `--help --render`), and the unchanged usage-error contract (stderr, exit 1). Needs no TTY / PA / audio device — runs unconditionally everywhere.
+- Determinism untouched (audio path unmodified; goldens unchanged). Size: ~1–2 KB of `.rodata` help/version text against 7,320 B stripped headroom.
+
 ## Recent: Linux signal-safe terminal restore (042)
 
 Ctrl-C, SIGTERM, or SIGQUIT during live mode on Linux left the terminal corrupted — echo off, canonical mode off, cursor hidden — requiring a manual `reset`. Root cause: no signal handlers existed; the only cleanup was `atexit(restore_terminal)`, and atexit handlers do not run on signal death (raw mode leaves `ISIG` set, so Ctrl-C delivered SIGINT with default terminate disposition). Confirmed empirically in WSL2 PTY experiments against both a minimal replica and the real binary before fixing.

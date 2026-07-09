@@ -56,6 +56,7 @@ The `main.c` argv pre-scan (existing pattern) strips `--seed N` and the `--midi*
 | Code | Meaning |
 |------|---------|
 | 0 | Success. Includes: `--midi-list-devices` printed and returned (even with zero devices); normal live-mode exit via 'q'; normal render-mode completion (including with ignored `--midi*` flags). |
+| 0 | `--help` / `-h` / `--version` (added 2026-07-08): print to **stdout** and exit 0, taking precedence over **every** other flag including `--midi*` and `--render` — the GNU Coding Standards §4.8 "ignore other options and arguments" semantics. `--midi-list-devices --help` therefore prints help, not the device list. |
 | 1 | Usage error: unknown flag, missing argument, out-of-range value, `--midi-channel` without an open flag. |
 | 1 | MIDI startup error (FR-002): `--midi N` requested but no device at index N; `--midi` (wildcard) / `--midi-default` requested but zero devices enumerated or the backend open failed. |
 | 1 | Render error: seconds out of range, output file unwritable, etc. (existing behavior). |

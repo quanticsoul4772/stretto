@@ -140,7 +140,7 @@ voice.c -> {arena, effects (for sat16), build-time tables}
 
 No reverse calls; no extern declarations across module boundaries; no weak symbols (the old `main_set_reverb_wet_bias` weak-stub workaround was eliminated when the master-bus moved into `effects.c`).
 
-The `gen_*` programs run during `make` and emit C headers (`sin_table.h`, `env_table.h`, `note_table.h`, `euclid_table.h`) that are `#include`d by `voice.c` and `gen.c`. Tables end up in `.rodata` of the final binary; they do not consume arena space.
+The `gen_*` programs run during `make` and emit C headers (`sin_table.h`, `env_table.h`, `note_table.h`, `euclid_table.h`) that are `#include`d by `voice.c` and `gen.c`. Tables end up in `.rodata` of the final binary; they do not consume arena space. A sixth generated header, `version.h` (`#define STRETTO_VERSION` from `git describe`, consumed only by `main.c` for `--version`), is written by a compare-and-swap Makefile rule: the recipe runs on every `make`, but the file's mtime only changes when the version does, so incremental builds stay no-ops and a version change rebuilds exactly `main.o`.
 
 ## Audio path
 
@@ -662,7 +662,7 @@ Approximate line coverage:
 | `motif.c` | 100% | ≥95% |
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
-| `main.c` | 97% | ≥90% |
+| `main.c` | — | excluded (process-level argv branches; see Makefile `COV_SRCS_INTERACTIVE`) |
 | `audio_midi.c` | 97.48% (gcov WSL Ubuntu per PR #112; CC dispatch + channel filter + ring buffer + opt-out; 23 unit tests in `tests/unit/test_midi.c` cover US1/US2/US3 + T034/T036 enumeration + wildcard-sentinel contracts) | ≥90% |
 | `ui.c`, `keys.c`, `audio_pulse.c`, `audio_midi_linux.c` | — | excluded (interactive; require TTY + audio device or snd-seq-dummy loopback to enumerate — listed in `Makefile` `COV_SRCS_INTERACTIVE`) |
 | `audio_midi_winmm.c` | — | platform-gated (Windows cross-compile only via `x86_64-w64-mingw32-gcc`; the Linux CI runner does not produce `audio_midi_winmm.o`, so it is implicitly excluded from `COV_SRCS_MEASURED` without needing an interactive-source listing) |
