@@ -39,6 +39,11 @@ void audio_play(void) {
         ui_term_raw_mode();
     }
     atexit(win_cleanup);
+    /* Initial resume-line snapshot (seed + any CLI-flag params). No
+       signal handlers on Windows - Ctrl-C arrives as keystroke 0x03
+       through the 'q' path, which prints the line below; a hard
+       console-kill in --no-ui mode prints nothing (documented). */
+    keys_build_resume_line();
 
     WAVEFORMATEX wf;
     memset(&wf, 0, sizeof(wf));
@@ -95,6 +100,10 @@ void audio_play(void) {
         while (ui_term_read_key(&ch)) {
             if (keys_dispatch(ch) == KEY_QUIT) {
                 win_cleanup();
+                /* Last-built snapshot = state at the user's last
+                   action; covers interactive Ctrl-C too (arrives as
+                   keystroke 0x03 through this path). */
+                fputs(ui_get_resume_line(), stderr);
                 exit(0);
             }
         }

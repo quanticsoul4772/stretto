@@ -12,4 +12,9 @@
    KEY_CONSUMED or KEY_IGNORED. */
 int keys_dispatch(char ch);
 
+/* Rebuild the resume line from current state + dirty bits (see ui.h).
+   Called from keys_dispatch on every consumed key and once from the
+   audio backends at startup. */
+void keys_build_resume_line(void);
+
 #endif

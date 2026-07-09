@@ -33,6 +33,10 @@ static const char USAGE[] =
     "usage: stretto [--render <seconds> <out.wav|->] [--no-ui] [--seed N]\n"
     "               [--midi [N] | --midi-default | --no-midi]\n"
     "               [--midi-channel <1..16>] [--midi-list-devices]\n"
+    "               [--scale S] [--bar-ms N] [--gate N] [--mod-depth N]\n"
+    "               [--cutoff N] [--resonance N] [--lfo-depth N]\n"
+    "               [--filter-mode M] [--reverb N] [--delay N]\n"
+    "               [--feedback N] [--comp-threshold N]\n"
     "               [-h | --help] [--version]\n";
 
 static const char HELP_BODY[] =
@@ -56,6 +60,27 @@ static const char HELP_BODY[] =
     "  -h, --help              print this help and exit\n"
     "  --version               print version information and exit\n"
     "\n"
+    "Initial-state flags (preset capture; ranges are hard errors):\n"
+    "  --scale <name|0-5>      dorian|lydian|phrygian|locrian|harmminor|\n"
+    "                          mixolydian\n"
+    "  --bar-ms <760-7600>     bar length in ms (default 2000)\n"
+    "  --gate <32-255>         melody gate probability\n"
+    "  --mod-depth <100-8000>  FM modulation depth\n"
+    "  --cutoff <30-180>       filter cutoff base (untouched default is\n"
+    "                          200, above this dial range - omit the flag\n"
+    "                          to keep it)\n"
+    "  --resonance <0-180>     filter resonance base\n"
+    "  --lfo-depth <0-255>     filter LFO depth\n"
+    "  --filter-mode <m|0-3>   lp|hp|bp|notch\n"
+    "  --reverb <0-256>        reverb wet mix\n"
+    "  --delay <0-256>         delay wet mix\n"
+    "  --feedback <0-200>      delay feedback\n"
+    "  --comp-threshold <8000-30000>  compressor threshold\n"
+    "\n"
+    "On quit (q, Ctrl-C, SIGTERM), live mode prints a pasteable\n"
+    "'resume with: --seed N ...' line with the parameters you set -\n"
+    "recall reproduces the run from bar 0 with those values.\n"
+    "\n"
     "In live mode, press ? for the key map, q to quit.\n"
     "Report bugs: https://github.com/quanticsoul4772/stretto/issues\n";
 
@@ -65,6 +90,49 @@ static const char VERSION_TEXT[] =
     "License MIT: <https://opensource.org/license/mit>\n"
     "This is free software: you are free to change and redistribute it.\n"
     "There is NO WARRANTY, to the extent permitted by law.\n";
+
+/* Preset-capture flag table (specs/004-preset-capture): one row per
+   initial-state flag, indexed by its UI_PARAM_* id. Ranges mirror the
+   engine setters' clamps exactly; out-of-range values are usage
+   errors rather than silent clamps. `named`: 1 = scale names, 2 =
+   filter-mode names (numeric always accepted too). Setters consume
+   no PRNG draws, so output stays a pure function of (seed, flags). */
+static void set_mod_depth_i(int v) { voice_set_mod_depth((uint16_t)v); }
+
+typedef struct {
+    const char *name;
+    int min, max;
+    void (*set)(int);
+    int named;
+} ParamFlag;
+
+static const ParamFlag PARAM_FLAGS[UI_PARAM_COUNT] = {
+    /* [UI_PARAM_SCALE]          */ { "--scale",          0,    5,     gen_set_scale,              1 },
+    /* [UI_PARAM_BAR_MS]         */ { "--bar-ms",         760,  7600,  gen_set_bar_ms,             0 },
+    /* [UI_PARAM_GATE]           */ { "--gate",           32,   255,   gen_set_gate,               0 },
+    /* [UI_PARAM_MOD_DEPTH]      */ { "--mod-depth",      100,  8000,  set_mod_depth_i,            0 },
+    /* [UI_PARAM_CUTOFF]         */ { "--cutoff",         30,   180,   voice_set_cutoff,           0 },
+    /* [UI_PARAM_RESONANCE]      */ { "--resonance",      0,    180,   voice_set_resonance,        0 },
+    /* [UI_PARAM_LFO_DEPTH]      */ { "--lfo-depth",      0,    255,   voice_set_lfo_filter_depth, 0 },
+    /* [UI_PARAM_FILTER_MODE]    */ { "--filter-mode",    0,    3,     voice_set_filter_mode,      2 },
+    /* [UI_PARAM_REVERB]         */ { "--reverb",         0,    256,   reverb_set_wet,             0 },
+    /* [UI_PARAM_DELAY]          */ { "--delay",          0,    256,   delay_set_wet,              0 },
+    /* [UI_PARAM_FEEDBACK]       */ { "--feedback",       0,    200,   delay_set_feedback,         0 },
+    /* [UI_PARAM_COMP_THRESHOLD] */ { "--comp-threshold", 8000, 30000, compressor_set_threshold,   0 },
+};
+
+/* Resolve a named flag value (scale / filter-mode); returns 1 on
+   match with *out set. Numeric fallback is handled by the caller. */
+static int resolve_named_value(const ParamFlag *pf, const char *s, int *out) {
+    if (pf->named == 1) {
+        for (int i = 0; i <= 5; i++)
+            if (strcmp(s, ui_scale_name(i)) == 0) { *out = i; return 1; }
+    } else if (pf->named == 2) {
+        for (int i = 0; i <= 3; i++)
+            if (strcmp(s, ui_filter_mode_name(i)) == 0) { *out = i; return 1; }
+    }
+    return 0;
+}
 
 int main(int argc, char **argv) {
     /* GNU Coding Standards 4.8: --help / --version print to stdout,
@@ -104,6 +172,8 @@ int main(int argc, char **argv) {
     int midi_explicit_idx    = -1; /* --midi <N>; -1 = unspecified */
     int midi_default_open    = 0;  /* --midi-default alias for --midi 0 (FR-002) */
     int midi_wildcard        = 0;  /* --midi with no arg = subscribe all matching */
+    int param_values[UI_PARAM_COUNT];
+    unsigned param_given = 0;      /* bit k = PARAM_FLAGS[k] present */
 
     for (int i = 1; i < argc && positional_argc < 8; i++) {
         if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
@@ -157,7 +227,48 @@ int main(int argc, char **argv) {
                 midi_wildcard = 1;
             }
         } else {
-            positional[positional_argc++] = argv[i];
+            /* Preset-capture flags: table lookup, value parse (name
+               or integer), range check. Unmatched tokens stay
+               positional. */
+            const ParamFlag *pf = NULL;
+            int k;
+            for (k = 0; k < UI_PARAM_COUNT; k++) {
+                if (strcmp(argv[i], PARAM_FLAGS[k].name) == 0) {
+                    pf = &PARAM_FLAGS[k];
+                    break;
+                }
+            }
+            if (pf) {
+                if (i + 1 >= argc) {
+                    fprintf(stderr, "%s: missing argument\n", pf->name);
+                    exit(1);
+                }
+                const char *val = argv[++i];
+                int v;
+                if (!resolve_named_value(pf, val, &v)) {
+                    char *end;
+                    long lv = strtol(val, &end, 10);
+                    if (*val == '\0' || *end != '\0'
+                        || lv < pf->min || lv > pf->max) {
+                        if (pf->named == 1)
+                            fprintf(stderr, "--scale: expected dorian|lydian|"
+                                "phrygian|locrian|harmminor|mixolydian or 0..5, "
+                                "got \"%s\"\n", val);
+                        else if (pf->named == 2)
+                            fprintf(stderr, "--filter-mode: expected "
+                                "lp|hp|bp|notch or 0..3, got \"%s\"\n", val);
+                        else
+                            fprintf(stderr, "%s: expected integer %d..%d, "
+                                "got \"%s\"\n", pf->name, pf->min, pf->max, val);
+                        exit(1);
+                    }
+                    v = (int)lv;
+                }
+                param_values[k] = v;
+                param_given |= 1u << k;
+            } else {
+                positional[positional_argc++] = argv[i];
+            }
         }
     }
     argc = positional_argc;
@@ -165,6 +276,20 @@ int main(int argc, char **argv) {
 
     gen_init();
     effects_init();
+
+    /* Apply the preset-capture flags AFTER gen_init/effects_init
+       (those reset tempo/scale/gate/threshold to defaults). Setters
+       consume no PRNG draws, so output stays a pure function of
+       (seed, flags). gen_init's early density_update ran with the
+       default gate, but density recomputes at substep 0 of the first
+       gen_step - before any trigger - so there is no byte-level
+       consequence; do not "fix" the ordering. */
+    for (int k = 0; k < UI_PARAM_COUNT; k++) {
+        if (param_given & (1u << k)) {
+            PARAM_FLAGS[k].set(param_values[k]);
+            ui_mark_param_set(k);
+        }
+    }
 
     /* MIDI dispatch (per FR-001..FR-006 + specs/003-midi-input/
        contracts/cli.md). --midi-list-devices short-circuits to
@@ -252,6 +377,12 @@ int main(int argc, char **argv) {
             fprintf(stderr, "render: seconds must be in 1..3600, got %ld\n", seconds);
             exit(1);
         }
+        /* Capture line for renders (any exit path, including Ctrl-C,
+           which has no handler on this path): seed only - the other
+           flags are already on the user's command line. stderr, since
+           stdout may be carrying WAV bytes for --render N -. */
+        fprintf(stderr, "resume with: --seed %u\n",
+                (unsigned)gen_get_seed_input());
         render_wav((int)seconds, argv[3]);
         fprintf(stderr, "arena: %zu/%d bytes used\n", arena_used(), HEAP_BYTES);
     } else if (argc == 1 || (argc == 2 && strcmp(argv[1], "--no-ui") == 0)) {

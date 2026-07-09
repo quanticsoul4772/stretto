@@ -87,6 +87,64 @@ if ! cmp -s /tmp/cli_a.wav /tmp/cli_b.wav; then
     fail=1
 fi
 
+# --- preset-capture flags (specs/004-preset-capture) ---
+# (a) All flags at their explicit defaults (minus --cutoff, whose
+#     compile-time default 200 sits above the 30..180 dial range)
+#     must render byte-identically to a flagless run: proves the
+#     setters consume no PRNG and perturb nothing.
+DEFAULT_FLAGS="--scale dorian --bar-ms 2000 --gate 200 --mod-depth 1500 \
+--resonance 100 --lfo-depth 80 --filter-mode lp --reverb 60 --delay 100 \
+--feedback 140 --comp-threshold 20000"
+rm -f /tmp/cli_p0.wav /tmp/cli_p1.wav /tmp/cli_p2.wav /tmp/cli_p3.wav
+if ! ./synth --render 2 /tmp/cli_p0.wav --seed 0 2>/dev/null; then
+    echo "FAIL: flagless preset baseline render exited non-zero"; fail=1
+fi
+if ! ./synth --render 2 /tmp/cli_p1.wav --seed 0 $DEFAULT_FLAGS 2>/dev/null; then
+    echo "FAIL: explicit-defaults render exited non-zero"; fail=1
+fi
+if ! cmp -s /tmp/cli_p0.wav /tmp/cli_p1.wav; then
+    echo "FAIL: explicit-default flags changed the output (setters must be inert at defaults)"
+    fail=1
+fi
+# (b) A non-default flag must change the output...
+if ! ./synth --render 2 /tmp/cli_p2.wav --seed 0 --scale lydian --cutoff 180 2>/dev/null; then
+    echo "FAIL: flagged render exited non-zero"; fail=1
+fi
+if cmp -s /tmp/cli_p0.wav /tmp/cli_p2.wav; then
+    echo "FAIL: --scale lydian --cutoff 180 did not change the output"; fail=1
+fi
+# (c) ...deterministically: same flags twice, byte-identical.
+if ! ./synth --render 2 /tmp/cli_p3.wav --seed 0 --scale lydian --cutoff 180 2>/dev/null; then
+    echo "FAIL: flagged render (repeat) exited non-zero"; fail=1
+fi
+if ! cmp -s /tmp/cli_p2.wav /tmp/cli_p3.wav; then
+    echo "FAIL: flagged render is not reproducible"; fail=1
+fi
+# (d) Out-of-range and malformed values are usage errors (exit 1,
+#     stderr), never silent clamps.
+for bad in "--gate 999" "--gate abc" "--scale nope" "--bar-ms 100" \
+           "--filter-mode xy" "--comp-threshold 7999"; do
+    set +e
+    ./synth --render 1 /tmp/cli_bad.wav $bad >/tmp/cli_stdout 2>/tmp/cli_stderr
+    rc=$?
+    set -e
+    if [ "$rc" -ne 1 ]; then
+        echo "FAIL: '$bad' exited $rc (expected 1)"; fail=1
+    fi
+    if [ -s /tmp/cli_stdout ]; then
+        echo "FAIL: '$bad' wrote to stdout"; fail=1
+    fi
+done
+rm -f /tmp/cli_bad.wav
+# (e) Render mode prints the seed capture line on stderr.
+if ! ./synth --render 1 /tmp/cli_p0.wav --seed 42 2>/tmp/cli_stderr; then
+    echo "FAIL: seed-line render exited non-zero"; fail=1
+fi
+if ! grep -q '^resume with: --seed 42$' /tmp/cli_stderr; then
+    echo "FAIL: render did not print 'resume with: --seed 42' on stderr"; fail=1
+fi
+rm -f /tmp/cli_p0.wav /tmp/cli_p1.wav /tmp/cli_p2.wav /tmp/cli_p3.wav
+
 # --- broken pipe: downstream closing early must terminate the render
 #     promptly. 141 = died by SIGPIPE (default disposition, standard
 #     pipeline behavior); 1 = the fwrite error check, for parents

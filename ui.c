@@ -8,12 +8,12 @@
 #include <stdint.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>   /* sig_atomic_t for the resume-line double buffer */
 
 #ifndef _WIN32
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <termios.h>
-#include <signal.h>
 #define TIOCGWINSZ_VAL 0x5413
 static struct termios saved_termios;
 static int saved_fcntl_flags = 0;
@@ -71,6 +71,66 @@ void ui_set_help_visible(int visible) { help_visible = visible; }
 
 void ui_set_no_ui(int flag) { no_ui_flag = flag; }
 int  ui_get_no_ui(void)     { return no_ui_flag; }
+
+/* --- preset capture: dirty bits + resume line ------------------ */
+
+/* Which parameters the USER explicitly set (CLI flag or live key).
+   Internal mutate() drift is deliberately never marked: --seed alone
+   reproduces all drift from bar 0, and printing drifted values would
+   seed the recalled run with them as INITIAL values and diverge at
+   the first mutation. */
+static uint16_t param_set_mask = 0;
+
+void ui_mark_param_set(int param) {
+    if (param >= 0 && param < UI_PARAM_COUNT)
+        param_set_mask |= (uint16_t)(1u << param);
+}
+
+int ui_param_is_set(int param) {
+    if (param < 0 || param >= UI_PARAM_COUNT) return 0;
+    return (param_set_mask >> param) & 1u;
+}
+
+static const char *SCALE_NAMES[6] = {
+    "dorian", "lydian", "phrygian", "locrian", "harmminor", "mixolydian"
+};
+static const char *FILTER_MODE_NAMES[4] = { "lp", "hp", "bp", "notch" };
+
+const char *ui_scale_name(int idx) {
+    return SCALE_NAMES[(idx >= 0 && idx < 6) ? idx : 0];
+}
+const char *ui_filter_mode_name(int idx) {
+    return FILTER_MODE_NAMES[idx & 3];
+}
+
+/* Double buffer: writers fill the inactive half, record its length
+   (plain int - the line can exceed sig_atomic_t's guaranteed 127
+   range), then flip the index LAST. The signal handler reads the
+   index once and write()s that half, so a signal landing mid-rebuild
+   still sees a complete previous snapshot. Buffers are BSS-zero, so
+   ui_get_resume_line returns "" until the first set. Worst-case line
+   is ~221 bytes (all 12 params + max-width values); 320 leaves
+   margin. */
+static char resume_buf[2][320];
+static int  resume_len[2] = { 0, 0 };
+static volatile sig_atomic_t resume_idx = 0;
+
+void ui_set_resume_line(const char *line) {
+    int next = 1 - (int)resume_idx;
+    int n = 0;
+    while (line[n] != '\0' && n < (int)sizeof(resume_buf[0]) - 2) {
+        resume_buf[next][n] = line[n];
+        n++;
+    }
+    resume_buf[next][n++] = '\n';
+    resume_buf[next][n]   = '\0';
+    resume_len[next] = n;
+    resume_idx = (sig_atomic_t)next;
+}
+
+const char *ui_get_resume_line(void) {
+    return resume_buf[resume_idx];
+}
 
 /* --- platform-specific terminal primitives --- */
 
@@ -136,6 +196,16 @@ static void sig_restore_and_reraise(int sig) {
         tcsetattr(0, TCSANOW, &saved_termios);
         fcntl(0, F_SETFL, saved_fcntl_flags);
         (void)!write(1, "\x1b[?25h\n", 7);
+    }
+    /* Resume line: UNCONDITIONAL (outside the termios_saved guard) -
+       headless --no-ui sessions never enter raw mode but are a
+       primary capture target. Single read of the volatile index; the
+       double buffer guarantees a complete snapshot; write() is
+       async-signal-safe. */
+    {
+        int idx = (int)resume_idx;
+        if (resume_len[idx] > 0)
+            (void)!write(2, resume_buf[idx], (size_t)resume_len[idx]);
     }
     raise(sig);
 }
