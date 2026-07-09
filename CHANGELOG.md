@@ -1,5 +1,19 @@
 # Changelog
 
+## Recent: preset capture - initial-state flags + resume line (047)
+
+The engine was deterministic per seed, but live tweaks died with the session and renders always started from defaults. Now every tunable is a launch flag and every session prints a pasteable recall line (`specs/004-preset-capture`):
+
+```
+resume with: --seed 3735928559 --scale lydian --bar-ms 1500 --reverb 120
+```
+
+- **12 initial-state flags** (`--scale --bar-ms --gate --mod-depth --cutoff --resonance --lfo-depth --filter-mode --reverb --delay --feedback --comp-threshold`), table-driven in main.c, ranges mirroring the live-key clamps exactly; out-of-range = usage error, never a silent clamp. Eleven new absolute setters in gen/voice/effects (mod-depth already had one); none consume PRNG, so output stays a pure function of (seed, flags) — asserted by a byte-compare of an explicit-defaults render against a flagless one.
+- **Dirty-bit capture, not value-vs-default** (the design's core, from plan review): only parameters the user explicitly set (flag or key) are printed. `mutate()` deterministically drifts gate/cutoff/resonance, and `--seed` alone already reproduces that drift from bar 0 — echoing drifted values back would seed the recall with them as *initial* values and diverge at the first mutation. Dirty bits are marked at the user-action call sites, never inside the shared `adjust_*` functions (which `voice_mutate_filter` also calls). The line is a snapshot at the last user action.
+- **Async-signal-safe emission**: the line lives in a double buffer in ui.c (writers fill the inactive half, flip a `sig_atomic_t` index last), so the 042 signal handler can `write()` a consistent snapshot on Ctrl-C/SIGTERM — including `--no-ui` headless runs (the write sits outside the `termios_saved` guard). Clean `q` prints via the normal path; render mode prints a seed-only line at render start (covers unseeded renders on any exit path). The raw pre-hash seed is now stashed in gen.c for both explicit and clock-derived seeding.
+- **Declared gaps**: MIDI CC tweaks are not captured (a `--midi` session is already non-reproducible — external notes perturb the voice pool); Windows hard console-kill in `--no-ui` prints nothing (interactive Ctrl-C prints via the `q` path). The untouched cutoff default (200) sits above the `--cutoff` dial range [30,180] and is deliberately never printed.
+- Tests: 12 new unit tests (setter clamps + seed roundtrip), 6 new test_cli.sh assertions (default-inertness byte-compare, divergence, reproducibility, range errors, render seed line), smoke-test clean-q sub-check now presses `s` before `q` and asserts `resume with: --seed N --scale lydian`. Goldens untouched.
+
 ## Recent: --render N - streams WAV to stdout (046)
 
 `-` was treated as a filename; renders could only target files, so the composability the deterministic engine earns for free (`./synth --render 60 - --seed 7 | ffmpeg -i - out.flac`) was unreachable. The RIFF header has always been written up front from the known duration with no seek-back, so streaming needed no format work — only the sox/ffmpeg `-` filename convention in `render_wav`.
