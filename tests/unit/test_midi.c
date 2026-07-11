@@ -581,13 +581,11 @@ TEST(midi_cc64_moves_no_parameters) {
     ASSERT_EQ(after.compressor_threshold, before.compressor_threshold);
 }
 
-/* T025j: CC#123 (All Notes Off, MIDI 1.0 standard message) is
- * CC_TARGET_NONE per spec. v1 does NOT auto-release held
- * MIDI-triggered notes on CC#123 -- the synth continues from
- * internal generative state per FR-034 (disconnect-handling
- * contract applies to CC values too). The dispatch must produce
- * zero state changes. */
-TEST(midi_cc123_all_notes_off_noop) {
+/* T025j (rewritten in 067): CC#123 (All Notes Off) is implemented as
+ * CC_TARGET_ALL_NOTES_OFF - it changes VOICE state only. Like the
+ * CC#64 rename precedent, this test pins what is still true: the
+ * dispatch must move zero synth PARAMETERS. */
+TEST(midi_cc123_moves_no_parameters) {
     test_init_synth();
     reset_cc_targets_to_interior();
     cc_snapshot_t before = snapshot_cc_params();
@@ -727,6 +725,65 @@ TEST(midi_sustain_pedal_is_per_channel) {
     pedal_mix(40000);
     ASSERT_TRUE(voice_pool_active_mask() != 0u);
     pedal_enqueue(MIDI_EVENT_CC, 1, 64, 63);   /* < 64 boundary = up */
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+    audio_midi_init(-1);
+}
+
+/* ============================================================
+ * CC#123 All Notes Off (067) - strict MIDI 1.0 semantics: a Note Off
+ * per sounding note on the channel; with the damper pedal down a
+ * Note Off means HOLD, so sounding notes convert to held and survive
+ * until pedal-up. Value byte is ignored.
+ * ============================================================ */
+TEST(midi_cc123_releases_channel_notes_only) {
+    test_init_synth();
+    voice_pool_init();
+    audio_midi_init(0);
+    /* Two notes on channel 1, one on channel 2. */
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 1, 60, 100);
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 1, 64, 100);
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 2, 67, 100);
+    audio_midi_drain();
+    pedal_enqueue(MIDI_EVENT_CC, 1, 123, 0);   /* value 0: the spec's byte */
+    audio_midi_drain();
+    pedal_mix(40000);
+    /* Channel 1's notes are gone; channel 2's still rings (parked at
+       sustain under gate semantics). */
+    ASSERT_TRUE(voice_pool_active_mask() != 0u);
+    pedal_enqueue(MIDI_EVENT_CC, 2, 123, 127); /* value-independence */
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+    audio_midi_init(-1);
+}
+
+TEST(midi_cc123_pedal_down_converts_to_held) {
+    test_init_synth();
+    voice_pool_init();
+    audio_midi_init(0);
+    /* Pedal down, then a STILL-SOUNDING note (no Note Off), then
+       CC#123: strict MIDI says the note converts to held, not
+       released - it must survive until pedal-up. */
+    pedal_enqueue(MIDI_EVENT_CC, 1, 64, 127);
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 1, 62, 100);
+    audio_midi_drain();
+    pedal_enqueue(MIDI_EVENT_CC, 1, 123, 0);
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_TRUE(voice_pool_active_mask() != 0u);   /* held, still ringing */
+    /* And a voice ALREADY held (Note Off arrived under the pedal)
+       must equally survive CC#123. */
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 1, 65, 100);
+    audio_midi_drain();
+    pedal_enqueue(MIDI_EVENT_NOTE_OFF, 1, 65, 0);  /* held via pedal */
+    pedal_enqueue(MIDI_EVENT_CC, 1, 123, 0);
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_TRUE(voice_pool_active_mask() != 0u);
+    /* Pedal-up: everything held flushes; full silence follows. */
+    pedal_enqueue(MIDI_EVENT_CC, 1, 64, 0);
     audio_midi_drain();
     pedal_mix(40000);
     ASSERT_EQ(voice_pool_active_mask(), 0u);

@@ -206,8 +206,9 @@ The first column is the `<index>` you pass to `--midi <N>`. On Linux it encodes 
 | 74 | Brightness | Filter cutoff | +1 |
 | 91 | Reverb Send | Reverb wet | +1 |
 | 93 | Chorus / Delay | Delay wet | +1 |
+| 123 | All Notes Off | Releases the channel's notes (pedal-held survive until pedal-up) | value-independent |
 
-Delta = `(V - 64) * scale`, summing additively across multiple CCs targeting the same parameter. CC#64 is the exception: it uses the raw value (pedal down/up), moves no parameters, and holds notes past their Note Off piano-style — all released together on pedal-up. All other CCs (All Notes Off, the General Purpose slots) are silently ignored.
+Delta = `(V - 64) * scale`, summing additively across multiple CCs targeting the same parameter. Two exceptions use the raw value and move no parameters: CC#64 (pedal down/up — holds notes past their Note Off piano-style, all released together on pedal-up) and CC#123 (All Notes Off — a Note Off for every sounding note on the channel; with the pedal down they convert to held, per MIDI 1.0, so a full panic is pedal-up then CC#123). All other CCs (the General Purpose slots) are silently ignored.
 
 ### Disconnect
 

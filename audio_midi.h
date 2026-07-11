@@ -91,9 +91,15 @@ typedef enum {
     CC_TARGET_FILTER_LFO_DEPTH,         /* voice_adjust_lfo_filter_depth(delta) */
     CC_TARGET_MUTATION_RATE,            /* gen_force_mutate() (future) */
     CC_TARGET_COMPRESSOR_THRESH,        /* compressor_adjust_threshold(delta) */
-    CC_TARGET_SUSTAIN                   /* CC#64 pedal (065): raw VALUE
+    CC_TARGET_SUSTAIN,                  /* CC#64 pedal (065): raw VALUE
                                            semantics (>= 64 down, < 64 up),
                                            not the (V-64)*scale delta */
+    CC_TARGET_ALL_NOTES_OFF             /* CC#123 (067): Note Off for every
+                                           sounding voice on the channel;
+                                           value byte deliberately ignored
+                                           (MIDI defines it as 0 - liberal
+                                           acceptance). Appended last per
+                                           the no-renumbering contract. */
 } cc_target_t;
 
 /* One entry of the static CC_MAP[128]. target=CC_TARGET_NONE means

@@ -77,7 +77,7 @@ static const cc_map_entry_t CC_MAP[128] = {
     [74]  = { .target = CC_TARGET_CUTOFF,           .scale = +1  },  /* Brightness / Cutoff */
     [91]  = { .target = CC_TARGET_REVERB_WET,       .scale = +1  },  /* Reverb Send */
     [93]  = { .target = CC_TARGET_DELAY_WET,        .scale = +1  },  /* Delay / Chorus Send */
-    [123] = { .target = CC_TARGET_NONE }                             /* All Notes Off - silently dropped per Principle VII */
+    [123] = { .target = CC_TARGET_ALL_NOTES_OFF }                    /* All Notes Off (067): Note Off per sounding note; pedal-held survive per MIDI 1.0 */
 };
 
 /* FR-010 scale-degree + octave-clamp mapper. Computes the absolute
@@ -288,6 +288,19 @@ void audio_midi_drain(void) {
                             g_sustain_mask &= (uint16_t)~bit;
                             voice_pool_flush_sustained(ev.channel);
                         }
+                        break;
+                    }
+                    case CC_TARGET_ALL_NOTES_OFF: {
+                        /* CC#123 (067), strict MIDI 1.0: a Note Off
+                         * per sounding note on the channel. With the
+                         * damper pedal down, Note Off = hold, so
+                         * sounding notes convert to held and ring
+                         * until pedal-up. Value byte ignored (spec
+                         * defines it as 0; liberal acceptance). A
+                         * full panic = CC#64 value 0, then CC#123. */
+                        int pedal_down =
+                            (g_sustain_mask >> (ev.channel - 1)) & 1;
+                        voice_pool_release_all_midi(ev.channel, pedal_down);
                         break;
                     }
                     case CC_TARGET_CUTOFF:            voice_adjust_cutoff(delta);            break;
