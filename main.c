@@ -120,6 +120,7 @@ static const ParamFlag PARAM_FLAGS[UI_PARAM_COUNT] = {
     /* [UI_PARAM_DELAY]          */ { "--delay",          0,    256,   delay_set_wet,              0 },
     /* [UI_PARAM_FEEDBACK]       */ { "--feedback",       0,    200,   delay_set_feedback,         0 },
     /* [UI_PARAM_COMP_THRESHOLD] */ { "--comp-threshold", 8000, 30000, compressor_set_threshold,   0 },
+    /* [UI_PARAM_SWING]          */ { "--swing",          0,    100,   gen_set_swing,              0 },
 };
 
 /* Resolve a named flag value (scale / filter-mode); returns 1 on

@@ -112,7 +112,7 @@ const char *ui_filter_mode_name(int idx) {
    index once and write()s that half, so a signal landing mid-rebuild
    still sees a complete previous snapshot. Buffers are BSS-zero, so
    ui_get_resume_line returns "" until the first set. Worst-case line
-   is ~221 bytes (all 12 params + max-width values); 320 leaves
+   is ~233 bytes (all 13 params + max-width values); 320 leaves
    margin. */
 static char resume_buf[2][320];
 static int  resume_len[2] = { 0, 0 };

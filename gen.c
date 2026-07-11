@@ -37,6 +37,12 @@
 #define DEFAULT_SAMPLES_PER_SUBSTEP 2000u
 static uint32_t samples_per_substep = DEFAULT_SAMPLES_PER_SUBSTEP;
 
+/* Swing (069): amount 0-100 (0 = straight, byte-inert default) and
+   the precomputed fire sample for the upcoming substep (next_step +
+   swing offset). Semantics + hazard analysis at gen_step. */
+static uint32_t swing_amount = 0;
+static uint32_t next_fire    = 0;
+
 static uint32_t gen_prng_state = 0xDEADBEEFu;
 static uint32_t prng(void) {
     uint32_t x = gen_prng_state;
@@ -371,6 +377,10 @@ void gen_init(void) {
     substep_count      = 0;
     sample_clock       = 0;
     next_step          = 0;
+    next_fire          = 0;   /* stale value from a prior run would
+                                 delay (== deadlock, pre-069) the
+                                 first tick of repeated-init tests */
+    swing_amount       = 0;
     samples_per_substep = DEFAULT_SAMPLES_PER_SUBSTEP;  /* reset tempo */
     gate_prob          = 200;
     mutate_lfo_phase   = 0;
@@ -682,8 +692,33 @@ static inline void schedule_melody(uint32_t substep_in_bar, uint8_t active_mask)
     }
 }
 
+/* Swing (069, FR in specs/004): the fire sample for the UPCOMING
+   substep, computed ONCE at schedule time (not per-sample: swing's
+   offset depends on samples_per_substep, which the live tempo keys
+   mutate - a per-sample recompute could move the target below
+   sample_clock and stall the tick). Odd 16th-steps only (substeps
+   3,9,...,45): melody / counter / 16ths-hihat / snare ghosts swing;
+   bass, chord, kick, the bar boundary (0) and the CA advance
+   (0/12/24/36) all sit on even 16ths and stay straight. Offset is
+   capped at spss-1 so a swung tick can never reach the next grid
+   slot (off >= spss would push residual delay into the triplet-feel
+   hihat bars via catch-up ticks). swing<->MPC mapping: MPC% = 50 +
+   swing/6; swing 100 ~ 66.66% (one sample short of true triplet).
+   Timing-only by construction: the substep SEQUENCE (and with it
+   every prng() draw) is identical at any swing value - swing moves
+   onsets, never note content. (swing_amount / next_fire statics live
+   with the clock statics near the top of the file; gen_init resets
+   them.) */
 void gen_step(void) {
-    if (sample_clock == next_step) {
+    /* Signed-difference compare, not ==: a live tempo SHRINK during
+       a swung gap can leave the freshly stored next_fire at or below
+       sample_clock (the tick then fires immediately with a bounded
+       catch-up burst instead of freezing forever). The signed idiom
+       also survives the ~24.8 h uint32 wrap, where a plain >= would
+       burst thousands of ticks. At swing 0, next_fire == next_step
+       is always stored strictly ahead, so this fires at exactly the
+       samples the old == guard did - byte-inert by construction. */
+    if ((int32_t)(sample_clock - next_fire) >= 0) {
         uint32_t substep_in_bar = substep_count % BAR_SUBSTEPS;
 
         if (substep_in_bar == 0) schedule_bar_boundary();
@@ -702,7 +737,18 @@ void gen_step(void) {
         schedule_melody(substep_in_bar, active_mask);
 
         substep_count++;
-        next_step += samples_per_substep;
+        /* One spss snapshot so the increment and the cap can't see
+           two different values if a tempo key lands mid-tick. */
+        uint32_t s = samples_per_substep;
+        next_step += s;
+        uint32_t sub = substep_count % BAR_SUBSTEPS;
+        uint32_t off = 0;
+        if (swing_amount != 0
+            && (sub % 3u) == 0u && ((sub / 3u) & 1u) != 0u) {
+            off = s * swing_amount / 100u;      /* fits uint32: 7600*100 */
+            if (off >= s) off = s - 1u;
+        }
+        next_fire = next_step + off;
     }
     sample_clock++;
 }
@@ -812,3 +858,15 @@ void gen_set_bar_ms(int ms) {
     if (s > 7600) s = 7600;
     samples_per_substep = (uint32_t)s;
 }
+
+/* --swing (069): store-only setter per the same no-PRNG contract as
+   gen_set_bar_ms above - output stays a pure function of (seed,
+   flags). 0 = straight (the byte-inert default); 100 ~ MPC 66.66%
+   triplet feel (mapping documented at the tick). */
+void gen_set_swing(int amount) {
+    if (amount < 0)   amount = 0;
+    if (amount > 100) amount = 100;
+    swing_amount = (uint32_t)amount;
+}
+
+uint8_t gen_get_swing(void) { return (uint8_t)swing_amount; }

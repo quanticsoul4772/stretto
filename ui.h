@@ -67,6 +67,7 @@ enum {
     UI_PARAM_DELAY,
     UI_PARAM_FEEDBACK,
     UI_PARAM_COMP_THRESHOLD,
+    UI_PARAM_SWING,          /* 069: first flag-only param (no live key) */
     UI_PARAM_COUNT
 };
 
