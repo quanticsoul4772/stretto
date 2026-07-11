@@ -111,6 +111,21 @@ jobs:
           cp stretto.1          dist/stretto.1
           cd dist && sha256sum * > sha256sums.txt && cat sha256sums.txt
 
+      - name: Installer drift gate
+        # Runs install.sh against the exact assembled dist (file://
+        # base) on BOTH tag and rehearsal builds: the script's
+        # asset-name construction is a contract with the Assemble step
+        # above, and renaming an asset must fail HERE, not on users'
+        # machines. Ends with a --version execution check on the
+        # installed real binary - strictly stronger than the offline
+        # fake-dist tests in tests/test_cli.sh (install.sh itself never
+        # executes what it installs).
+        run: |
+          idest=$(mktemp -d)
+          STRETTO_BASE_URL="file://$PWD/dist" STRETTO_INSTALL_DIR="$idest" sh install.sh
+          "$idest/stretto" --version | head -1
+          test -f "$idest/stretto.1"
+
       - name: Upload rehearsal artifacts
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4

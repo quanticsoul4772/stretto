@@ -66,8 +66,18 @@ void audio_play(void) {
     pa_context *ctx = pa_context_new(pa_threaded_mainloop_get_api(ml), "stretto");
     pa_context_set_state_callback(ctx, pa_state_cb, ml);
 
+    /* The two branches below are the ones an UNREACHABLE server hits
+       (sync connect failure, or the async FAILED state - the usual
+       path for a missing pipewire-pulse socket). Both print the
+       legible no-server message; the later stream-setup branches stay
+       terse (unreachable without a server). tests/test_cli.sh greps
+       the "pipewire-pulse" substring - keep it if rewording. */
     if (pa_context_connect(ctx, NULL, 0, NULL) < 0) {
-        fprintf(stderr, "pa: connect %s\n", pa_strerror(pa_context_errno(ctx)));
+        fprintf(stderr,
+            "stretto: cannot reach a PulseAudio/PipeWire server (%s)\n"
+            "  on PipeWire systems, make sure the pipewire-pulse service is running\n"
+            "  no audio server is needed to render: stretto --render 10 demo.wav --seed 42\n",
+            pa_strerror(pa_context_errno(ctx)));
         exit(1);
     }
     if (pa_threaded_mainloop_start(ml) < 0) {
@@ -80,8 +90,11 @@ void audio_play(void) {
         pa_context_state_t st = pa_context_get_state(ctx);
         if (st == PA_CONTEXT_READY) break;
         if (st == PA_CONTEXT_FAILED || st == PA_CONTEXT_TERMINATED) {
-            fprintf(stderr, "pa: context %s\n",
-                    pa_strerror(pa_context_errno(ctx)));
+            fprintf(stderr,
+                "stretto: cannot reach a PulseAudio/PipeWire server (%s)\n"
+                "  on PipeWire systems, make sure the pipewire-pulse service is running\n"
+                "  no audio server is needed to render: stretto --render 10 demo.wav --seed 42\n",
+                pa_strerror(pa_context_errno(ctx)));
             exit(1);
         }
         pa_threaded_mainloop_wait(ml);
