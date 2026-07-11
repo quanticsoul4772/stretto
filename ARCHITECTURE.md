@@ -665,7 +665,7 @@ Approximate line coverage:
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
 | `main.c` | — | excluded (process-level argv branches; see Makefile `COV_SRCS_INTERACTIVE`) |
-| `audio_midi.c` | 97.48% (gcov WSL Ubuntu per PR #112; CC dispatch + channel filter + ring buffer + opt-out; 23 unit tests in `tests/unit/test_midi.c` cover US1/US2/US3 + T034/T036 enumeration + wildcard-sentinel contracts) | ≥90% |
+| `audio_midi.c` | 97.75% (gcov, WSL Ubuntu; CC dispatch + bounds guard + channel filter + ring buffer + opt-out; 24 unit tests in `tests/unit/test_midi.c`) | ≥90% |
 | `ui.c`, `keys.c`, `audio_pulse.c`, `audio_midi_linux.c` | — | excluded (interactive; require TTY + audio device or snd-seq-dummy loopback to enumerate — listed in `Makefile` `COV_SRCS_INTERACTIVE`) |
 | `audio_midi_winmm.c` | — | platform-gated (Windows cross-compile only via `x86_64-w64-mingw32-gcc`; the Linux CI runner does not produce `audio_midi_winmm.o`, so it is implicitly excluded from `COV_SRCS_MEASURED` without needing an interactive-source listing) |
 
