@@ -114,7 +114,7 @@ if ! run_step 1 "Read-only bridge (Constitution<->Makefile KB alignment)" \
     overall_rc=1
     echo
     echo "==================================================================="
-    echo "  FAIL: Step 1/3 failed (exit code $?). Aborting."
+    echo "  FAIL: Step 1/3 failed. Aborting."
     echo "==================================================================="
     echo "  The 2 regression tests in steps 2-3 were NOT run because"
     echo "  the read-only bridge check failed first. Fix the Constitution"
@@ -135,7 +135,7 @@ if ! run_step 2 "Bridge regression test (5 scenarios / 9 sub-checks)" \
     overall_rc=1
     echo
     echo "==================================================================="
-    echo "  FAIL: Step 2/3 failed (exit code $?). Aborting."
+    echo "  FAIL: Step 2/3 failed. Aborting."
     echo "==================================================================="
     echo "  The amend regression test in step 3 was NOT run because"
     echo "  the bridge regression test failed first. See the FAIL:"
@@ -154,7 +154,7 @@ if ! run_step 3 "Amend helper regression test (6 scenarios / 21 sub-checks)" \
     overall_rc=1
     echo
     echo "==================================================================="
-    echo "  FAIL: Step 3/3 failed (exit code $?). Aborting."
+    echo "  FAIL: Step 3/3 failed. Aborting."
     echo "==================================================================="
     echo "  See the FAIL: line(s) above for the specific sub-check that"
     echo "  broke. Common causes:"

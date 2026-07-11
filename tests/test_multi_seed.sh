@@ -52,7 +52,10 @@ echo "=== audio characteristic bounds ==="
 #   - synth gone to drone (ZCR low)
 # Spectral centroid + ZCR catch character drift without forcing
 # golden regen on every algorithmic tweak (those bounds are wide).
-python3 - <<'PY' "$TMPDIR" "${SEEDS[@]}"
+# `if ! python3` (not a bare call + $? check): under set -e a bare
+# failing python3 kills the script HERE - the golden comparison below
+# never ran and the FAIL summary never printed.
+if ! python3 - <<'PY' "$TMPDIR" "${SEEDS[@]}"
 import sys, struct, os
 import numpy as np
 
@@ -111,8 +114,7 @@ for s in seeds:
 
 sys.exit(0 if ok else 1)
 PY
-audio_status=$?
-if [ $audio_status -ne 0 ]; then fail=1; fi
+then fail=1; fi
 
 GOLDEN=golden/regression_multiseed.sha256.txt
 echo "=== golden hash comparison ==="
@@ -121,7 +123,10 @@ if [ -f "$GOLDEN" ]; then
         expected=$(grep "^seed_${s}:" "$GOLDEN" | awk '{print $2}')
         actual=$(sha256sum "$TMPDIR/a_$s.wav" | awk '{print $1}')
         if [ -z "$expected" ]; then
-            echo "  seed $s: no entry in golden file"
+            # A missing entry is a FAILURE, not a note: a golden file
+            # that silently lost a seed row would stop guarding it.
+            echo "  seed $s: FAIL  no entry in golden file"
+            fail=1
         elif [ "$expected" != "$actual" ]; then
             echo "  seed $s: FAIL  expected $expected, got $actual"
             fail=1

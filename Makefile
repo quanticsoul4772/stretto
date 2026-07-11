@@ -230,9 +230,12 @@ clean:
 # `binary-sizes` artifact for any PR.
 size:
 	@$(MAKE) -s synth
-	@command -v $(UPX_BIN) >/dev/null 2>&1 && $(MAKE) -s synth.packed || echo "info: synth.packed: UPX ($(UPX_BIN)) not on PATH -- skipping"
-	@command -v $(WIN_CC) >/dev/null 2>&1 && $(MAKE) -s stretto.exe || echo "info: stretto.exe: Windows cross-compiler ($(WIN_CC)) not on PATH -- skipping"
-	@command -v $(UPX_BIN) >/dev/null 2>&1 && command -v $(WIN_CC) >/dev/null 2>&1 && $(MAKE) -s stretto.packed.exe || echo "info: stretto.packed.exe: UPX OR Windows toolchain missing -- skipping"
+# if/then/else, NOT `cmd && build || echo`: the && || form routed a
+# FAILED build into the harmless "skipping" message, so CI (which has
+# the full toolchain) could green-light a broken packed/cross build.
+	@if command -v $(UPX_BIN) >/dev/null 2>&1; then $(MAKE) -s synth.packed; else echo "info: synth.packed: UPX ($(UPX_BIN)) not on PATH -- skipping"; fi
+	@if command -v $(WIN_CC) >/dev/null 2>&1; then $(MAKE) -s stretto.exe; else echo "info: stretto.exe: Windows cross-compiler ($(WIN_CC)) not on PATH -- skipping"; fi
+	@if command -v $(UPX_BIN) >/dev/null 2>&1 && command -v $(WIN_CC) >/dev/null 2>&1; then $(MAKE) -s stretto.packed.exe; else echo "info: stretto.packed.exe: UPX OR Windows toolchain missing -- skipping"; fi
 	@printf '\n=== binary sizes (key=value; "missing" if not built locally) ===\n'
 	@printf 'linux_synth_stripped=%s\n' "$$(stat -c%s synth 2>/dev/null || echo missing)"
 	@printf 'linux_synth_packed=%s\n' "$$(stat -c%s synth.packed 2>/dev/null || echo missing)"
@@ -352,10 +355,11 @@ COV_FLAGS = -O0 -g -fprofile-arcs -ftest-coverage
 #                      (a) requires a TTY + a live audio device
 #                          (ui.c keys.c audio_pulse.c) - the live loop
 #                          + raw-mode terminal raw + key handler.
-#                      (b) platform-backend stub whose symbols are
-#                          gc-sections-eliminated (audio_midi_linux.c)
-#                          - the current stub returns -1 so no alsa
-#                          code path runs even when g_enabled=1.
+#                      (b) platform backend whose code paths need a
+#                          reachable ALSA sequencer + real controller
+#                          hardware (audio_midi_linux.c) - CI runners
+#                          have no /dev/snd/seq, so every path past
+#                          snd_seq_open() is untestable there.
 #                      (c) entry-point whose non-default argv branches
 #                          are only reachable via direct process
 #                          invocation that CI's `make coverage` render

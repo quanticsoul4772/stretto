@@ -51,8 +51,8 @@ static const char HELP_BODY[] =
     "                          flags, output is byte-identical per seed\n"
     "  --no-ui                 headless live mode (no TTY required)\n"
     "  --midi [N]              open MIDI input device N, or subscribe to\n"
-    "                          every input port if N is omitted; exits 1\n"
-    "                          if no device is available\n"
+    "                          every input port if N is omitted (Windows:\n"
+    "                          first device); exits 1 if none available\n"
     "  --midi-default          alias for --midi 0\n"
     "  --no-midi               explicit MIDI opt-out (same as no flag)\n"
     "  --midi-channel <1..16>  accept only this MIDI channel\n"
@@ -219,6 +219,17 @@ int main(int argc, char **argv) {
                 char *end;
                 unsigned long idx = strtoul(argv[i + 1], &end, 10);
                 if (*end == '\0') {
+                    /* Bound before the int cast: strtoul saturates
+                       overflow at ULONG_MAX, and an unchecked (int)
+                       cast wraps e.g. 4294967295 into the -1 wildcard
+                       sentinel silently. 65535 = max (client<<8)|port
+                       encoding on Linux; Windows ids are far smaller. */
+                    if (idx > 65535) {
+                        fprintf(stderr,
+                            "--midi: device index out of range: \"%s\" "
+                            "(see --midi-list-devices)\n", argv[i + 1]);
+                        exit(1);
+                    }
                     midi_explicit_idx = (int)idx;
                     i++;
                 } else {
@@ -317,7 +328,7 @@ int main(int argc, char **argv) {
         exit(1);
     }
     if (midi_list_devices) {
-        midi_input_device_t devs[32];
+        midi_input_device_t devs[MIDI_LIST_DEVICES_CAP];
         int32_t cnt = 0;
         audio_midi_list_devices(devs, &cnt);
         for (int32_t i = 0; i < cnt; i++) {

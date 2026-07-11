@@ -117,7 +117,7 @@ static int  resume_len[2] = { 0, 0 };
 static volatile sig_atomic_t resume_idx = 0;
 
 void ui_set_resume_line(const char *line) {
-    int next = 1 - (int)resume_idx;
+    int next = 1 - (int)__atomic_load_n(&resume_idx, __ATOMIC_ACQUIRE);
     int n = 0;
     while (line[n] != '\0' && n < (int)sizeof(resume_buf[0]) - 2) {
         resume_buf[next][n] = line[n];
@@ -126,11 +126,17 @@ void ui_set_resume_line(const char *line) {
     resume_buf[next][n++] = '\n';
     resume_buf[next][n]   = '\0';
     resume_len[next] = n;
-    resume_idx = (sig_atomic_t)next;
+    /* Release-store the flip: `volatile sig_atomic_t` alone only
+       covers a signal delivered to the SAME thread. Fatal signals can
+       be delivered to any thread (e.g. pulse's mainloop thread), and
+       without release/acquire that thread could observe the new index
+       before the buffer bytes (same pattern as audio_midi.c's ring
+       head). */
+    __atomic_store_n(&resume_idx, (sig_atomic_t)next, __ATOMIC_RELEASE);
 }
 
 const char *ui_get_resume_line(void) {
-    return resume_buf[resume_idx];
+    return resume_buf[__atomic_load_n(&resume_idx, __ATOMIC_ACQUIRE)];
 }
 
 /* --- platform-specific terminal primitives --- */
@@ -166,6 +172,17 @@ void ui_term_raw_mode(void) {
         fprintf(stderr, "tcgetattr: %s\n", strerror(errno));
         exit(1);
     }
+    int flags = fcntl(0, F_GETFL, 0);
+    if (flags < 0) {
+        fprintf(stderr, "fcntl: %s\n", strerror(errno));
+        exit(1);
+    }
+    /* Record BOTH saved states before flipping termios_saved: the
+       signal handler restores termios AND fcntl flags whenever
+       termios_saved is set, so setting it before saved_fcntl_flags
+       was recorded let a signal in that window stomp stdin's flags
+       with the BSS zero. Only then mutate the terminal. */
+    saved_fcntl_flags = flags;
     termios_saved = 1;
     struct termios raw = saved_termios;
     raw.c_lflag &= ~(ICANON | ECHO);
@@ -175,12 +192,10 @@ void ui_term_raw_mode(void) {
         fprintf(stderr, "tcsetattr: %s\n", strerror(errno));
         exit(1);
     }
-    int flags = fcntl(0, F_GETFL, 0);
-    if (flags < 0 || fcntl(0, F_SETFL, flags | O_NONBLOCK) < 0) {
+    if (fcntl(0, F_SETFL, flags | O_NONBLOCK) < 0) {
         fprintf(stderr, "fcntl: %s\n", strerror(errno));
         exit(1);
     }
-    saved_fcntl_flags = flags;
 }
 
 void ui_term_restore_mode(void) {
@@ -212,11 +227,11 @@ static void sig_restore_and_reraise(int sig) {
     }
     /* Resume line: UNCONDITIONAL (outside the termios_saved guard) -
        headless --no-ui sessions never enter raw mode but are a
-       primary capture target. Single read of the volatile index; the
+       primary capture target. Single acquire-load of the index; the
        double buffer guarantees a complete snapshot; write() is
        async-signal-safe. */
     {
-        int idx = (int)resume_idx;
+        int idx = (int)__atomic_load_n(&resume_idx, __ATOMIC_ACQUIRE);
         if (resume_len[idx] > 0)
             (void)!write(2, resume_buf[idx], (size_t)resume_len[idx]);
     }

@@ -2,14 +2,16 @@
 
 ## Overview
 
-`stretto` is a single-process audio synthesizer that mixes generated music to PulseAudio (Linux), Win32 `waveOut` (Windows), or a WAV file. All runtime allocations come from a single static 128 KB arena. The audio thread is the main thread; on Linux a `pa_threaded_mainloop` helper thread services the PulseAudio event loop, and on Windows the `waveOut` callback fires an event the main thread waits on — neither model requires cross-thread synchronization inside our code.
+`stretto` is a single-process audio synthesizer that mixes generated music to PulseAudio (Linux), Win32 `waveOut` (Windows), or a WAV file. All runtime allocations come from a single static 128 KB arena. The audio thread is the main thread; on Linux a `pa_threaded_mainloop` helper thread services the PulseAudio event loop, and on Windows the `waveOut` callback fires an event the main thread waits on. The audio path itself needs no cross-thread synchronization in our code; the one place we do synchronize is the `--midi` surface, where the platform MIDI producer (ALSA worker thread / winmm callback) hands events to the audio thread through the SPSC ring in `audio_midi.c` (C11 `__atomic` acquire/release).
 
 | Binary | Size |
 |---|---|
-| Linux `synth` (stripped, links libpulse) | 43 KB (43 880 B per `make synth` + `strip -s -R .comment`, measured against current `main` post-#113) |
-| Linux `synth.packed` (UPX) | 25 KB (25 460 B per PR #117 `binary-sizes` CI artifact on current `main` post-#113; UPX ratio 57.94 %; was ~16 KB pre-#109 hedge; PACK_TARGET = 30 720 B per post-#118 Makefile enforces Constitution v1.2.0 cap) |
-| Windows `stretto.exe` (stripped) | ~238 KB (243 712 B from `make win` on current `main`; stripped — `-s` in `WIN_LDFLAGS` strips at link and the `stretto.exe` rule additionally runs `$(WIN_STRIP) -s -R .comment`) |
-| Windows `stretto.packed.exe` (UPX) | ~38 KB (post-#117 per the `binary-sizes` CI artifact) |
+| Linux `synth` (stripped, links libpulse + libasound) | ~47 KB (48 584 B per `make synth` + `strip -s -R .comment`, measured 2026-07-11 on the 059 quality pass; STRIP_TARGET = 51 200 B) |
+| Linux `synth.packed` (UPX) | ~25 KB (25 460 B per the PR #117 `binary-sizes` CI artifact — historical; grows with the stripped binary); PACK_TARGET = 30 720 B per the Makefile enforces the Constitution v1.2.x cap |
+| Windows `stretto.exe` (stripped) | ~247 KB (252 928 B from `make win`, measured 2026-07-11; stripped — `-s` in `WIN_LDFLAGS` strips at link and the `stretto.exe` rule additionally runs `$(WIN_STRIP) -s -R .comment`) |
+| Windows `stretto.packed.exe` (UPX) | ~38 KB (per the PR #117 `binary-sizes` CI artifact — historical); WIN_PACK_BUDGET = 49 152 B |
+
+(Exact packed sizes vary per commit; the authoritative per-commit numbers are the `binary-sizes` artifact each CI run uploads, and the three budgets are gated on every push by `tools/size-budget-gate.sh`.)
 
 ## Spec-kit pipeline
 
@@ -140,7 +142,7 @@ voice.c -> {arena, effects (for sat16), build-time tables}
 
 No reverse calls; no extern declarations across module boundaries; no weak symbols (the old `main_set_reverb_wet_bias` weak-stub workaround was eliminated when the master-bus moved into `effects.c`).
 
-The `gen_*` programs run during `make` and emit C headers (`sin_table.h`, `env_table.h`, `note_table.h`, `euclid_table.h`) that are `#include`d by `voice.c` and `gen.c`. Tables end up in `.rodata` of the final binary; they do not consume arena space. A sixth generated header, `version.h` (`#define STRETTO_VERSION` from `git describe`, consumed only by `main.c` for `--version`), is written by a compare-and-swap Makefile rule: the recipe runs on every `make`, but the file's mtime only changes when the version does, so incremental builds stay no-ops and a version change rebuilds exactly `main.o`.
+The `gen_*` programs run during `make` and emit C headers (`sin_table.h`, `env_table.h`, `note_table.h`, `euclid_table.h`, `wavetable.h`) that are `#include`d by `voice.c` and `gen.c`. Tables end up in `.rodata` of the final binary; they do not consume arena space. A sixth generated header, `version.h` (`#define STRETTO_VERSION` from `git describe`, consumed only by `main.c` for `--version`), is written by a compare-and-swap Makefile rule: the recipe runs on every `make`, but the file's mtime only changes when the version does, so incremental builds stay no-ops and a version change rebuilds exactly `main.o`.
 
 ## Audio path
 
@@ -579,13 +581,13 @@ Without `--seed`, `gen_init` derives the seed from `time(NULL)` at startup, so e
 
 [`audio_midi.c`](./audio_midi.c) is the cross-platform SPSC ring + dispatch layer; the platform backends below produce into it, and the audio thread (sole consumer per FR-033) drains it at the top of every `mixer.c:render_chunk` call. With `--no-midi` (the default), `audio_midi_init(-1)` sets a file-scope `enabled = 0` flag so the entire MIDI stack is bypassed; `render_chunk` is byte-identical to baseline (the `golden/regression_16s.sha256` regression still matches; FR-050 / FR-053). The capability spec is [`specs/003-midi-input/spec.md`](./specs/003-midi-input/spec.md); the bench-validation runbook is [`scripts/midi-smoke.md`](./scripts/midi-smoke.md).
 
-**Producer (ALSA, Linux)** — `audio_midi_linux.c` opens a `SND_SEQ_OPEN_INPUT` handle with the client name `Stretto` and one generic application port `Stretto Input` (end-users subscribe their controller with `aconnect <controller> 129:0`). A single `pthread_create` worker blocks on `snd_seq_event_input` via a 100 ms `poll` / `snd_seq_poll_descriptors` cycle and writes through `audio_midi_enqueue`. Per event: `NOTEON` / `NOTEOFF` / `CONTROLLER` parse into a `midi_event_t` (ALSA channel 0..15 → MIDI 1..16, key / value from structured `ev->data.{note, control}` fields); `SND_SEQ_EVENT_PORT_EXIT` / `SND_SEQ_EVENT_CLIENT_EXIT` flip a cooperative-shutdown atomic (`g_run`) so the worker returns within one poll window (`pthread_join` then completes the close — FR-034 graceful disconnect, **no auto-reconnect**). Sysex / clock / pitch-bend / program-change / active-sensing fall through silently (queue slots are precious; 256 entries per FR-040). Enumeration (`audio_midi_linux_list_devices`) walks `snd_seq_query_next_client` + `snd_seq_query_get_port_info`, populating ports with `MIDI_GENERIC` or `MIDI_KEYBOARD` capability.
+**Producer (ALSA, Linux)** — `audio_midi_linux.c` opens a `SND_SEQ_OPEN_INPUT` handle with the client name `Stretto` and one generic application port `Stretto Input` (end-users subscribe their controller with `aconnect <controller> 129:0`). A single `pthread_create` worker blocks on `snd_seq_event_input` via a 100 ms `poll` / `snd_seq_poll_descriptors` cycle and writes through `audio_midi_enqueue`. Per event: `NOTEON` / `NOTEOFF` / `CONTROLLER` parse into a `midi_event_t` (ALSA channel 0..15 → MIDI 1..16, key / value from structured `ev->data.{note, control}` fields); `SND_SEQ_EVENT_PORT_EXIT` / `SND_SEQ_EVENT_CLIENT_EXIT` flip a cooperative-shutdown atomic (`g_run`) so the worker returns within one poll window (`pthread_join` then completes the close — FR-034 graceful disconnect, **no auto-reconnect**). Sysex / clock / pitch-bend / program-change / active-sensing fall through silently (queue slots are precious; 256 entries per FR-040). Enumeration (`audio_midi_linux_list_devices`) walks `snd_seq_query_next_client` + `snd_seq_query_next_port` with the same dual filter as the wildcard open path (`SND_SEQ_PORT_CAP_READ` + `SND_SEQ_PORT_TYPE_MIDI_GENERIC` — the once-documented `MIDI_KEYBOARD` constant does not exist in upstream alsa-lib), so the list shows exactly what `--midi` would subscribe to; each entry's index is the `(client<<8)|port` encoding that `audio_midi_linux_init` decodes.
 
 **Producer (winmm, Windows)** — Win32 manages the service thread. `audio_midi_winmm.c` opens the device via `midiInOpen(... CALLBACK_FUNCTION)`, prepares + adds a 4-buffer pool of 4096 B sysex headers (`MIDIHDR` re-prepared + re-added on each `MIM_LONGDATA` so the pool keeps delivering), then arms the input flow with `midiInStart`. Each `MIM_DATA` callback parses the short message (`status & 0xF0` selects Note On / Off / CC; channel `+1` from 0..15 to MIDI 1..16; data1 = key / CC#; data2 = velocity / value) into the same `midi_event_t` shape and writes via the same `audio_midi_enqueue`. `MIM_CLOSE` triggers the symmetric FR-034 path. Sysex payload contents are discarded in v1 (SysEx is out of scope). `MIM_ERROR` / `MIM_LONGERROR` are surfaced as drops counted by `audio_midi_drop_count`. Enumeration (`audio_midi_winmm_list_devices`) walks `midiInGetNumDevs` + `midiInGetDevCaps`, populating `midi_input_device_t { .index, .name = truncated_szPname }`.
 
-**Consumer (audio thread, both platforms)** — `audio_midi_drain` runs at the top of `render_chunk`. Atomic-claim of `q.head` (`__ATOMIC_ACQUIRE`), drain loop runs `while (q.tail != local_head)`, then plain-write `q.tail = local_head` (single-consumer invariant per FR-033 — the audio thread is never blocked on platform I/O; researchers P1 documented that `__atomic_*` is the C11 acquire/release model not `volatile`). Per event: if `q.channel_filter != 0 && ev.channel != q.channel_filter` → silent drop (FR-004 + preflight M1 fix — the filter lives in the audio thread, NOT in the producer callback, so a multi-thread callback race cannot leak disallowed events past the filter). Then dispatch by `type`:
+**Consumer (audio thread, both platforms)** — `audio_midi_drain` runs at the top of `render_chunk`. One acquire-load of `q.head` per chunk; the loop then acquire-loads `q.tail`, dispatches one event, and release-stores `tail + 1` — per event, not one bulk store at the end (single-consumer invariant per FR-033 — the audio thread is never blocked on platform I/O; researchers P1 documented that `__atomic_*` is the C11 acquire/release model not `volatile`). Per event: if `q.channel_filter != 0 && ev.channel != q.channel_filter` → silent drop (FR-004 + preflight M1 fix — the filter lives in the audio thread, NOT in the producer callback, so a multi-thread callback race cannot leak disallowed events past the filter). Then dispatch by `type`:
 
-- **Note On** (incl. velocity 0 ⇒ Note Off per FR-011) → `voice_pool_trigger_midi(scaled_note, velocity, channel)` where `scaled_note = SCALES[cur_scale][K%7] + clamp(K/7 - 5, -2, +4) * 12` (octave clamp + preflight H2 fix). Synth voice = `VOICE_FM` (mirroring the live-mode melody handler's per-step FM/KS alternation; fixed at FM for MIDI since external triggers are not on the 16-step Euclidean grid). Velocity scales peak amplitude `env_amp = velocity * 256`, clamped `[64, 32767]` so dynamics stay musical.
+- **Note On** (incl. velocity 0 ⇒ Note Off per FR-011) → `voice_pool_trigger_midi(scaled_note, velocity, channel)` where `scaled_note = SCALES[cur_scale][K%7] + clamp(K/7 - 5, -2, +4) * 12` (octave clamp + preflight H2 fix). Synth voice = `VOICE_FM` (mirroring the live-mode melody handler's per-step FM/KS alternation; fixed at FM for MIDI since external triggers are not on the 16-step Euclidean grid). Velocity carries into the output through the voice's peak-normalization `gain` (env_amp is overwritten every sample by `env_step`, so scaling it directly would be undone): `gain = velocity * 256 / 127`, clamped `[64, 1024]` (minimum-audible floor / `PEAK_GAIN_MAX` 4× ceiling per `voice.c:voice_pool_trigger_midi`).
 - **Note Off** → `voice_pool_release_midi(key, channel)` matching by the `trigger_key` + `trigger_channel` discriminator on each `Voice`. Sets `env_phase = ENV_R; env_time = 0;`; no-op if already `ENV_R` (FR-013) or no match (FR-012 unmatched-key no-op).
 - **CC** → lookup `CC_MAP[ev.key]`. If `target == CC_TARGET_NONE` → silent drop (CC#0, #10, #16, #17, #19, #64, #123 all unassigned per Principle VII). Else `delta = ((int)ev.value - 64) * entry.scale` and call the corresponding `adjust_*`. Multiple CCs targeting the same parameter sum additively per FR-022 (`adjust_*` composes over the prior call).
 
@@ -600,7 +602,7 @@ The 128-entry `CC_MAP` lives in `.rodata` of `audio_midi.c` (512 B total). Per C
 | 71         | per-voice filter resonance          | +1    | ±63 against [0, 180] base          |
 | 74         | per-voice filter cutoff             | +1    | sums with CC#1 per FR-022          |
 | 91         | master reverb wet                   | +1    | ±63 against [0, 256] base          |
-| 93         | master delay wet                    | +1    | sums with `l` / `L` key live-edit  |
+| 93         | master delay wet                    | +1    | sums with `d` / `D` key live-edit  |
 
 `CC_TARGET_NONE` slots (silently dropped, no `fprintf`, no callback overhead; all 7 zero-initialized via the C99 designated-initializer `[N]={}` form so the table footprint is exactly 512 B in `.rodata` regardless of populated slot count):
 
@@ -623,11 +625,11 @@ Four cycling buffers of 1024 frames each (~85 ms total latency). Opens via `wave
 
 ## Terminal UI
 
-Platform-abstracted by four helpers in `main.c`:
-- `term_get_size(&w, &h)` — Unix `ioctl(TIOCGWINSZ)` / Windows `GetConsoleScreenBufferInfo`
-- `term_read_key(&ch)` — Unix non-blocking `read(0,...)` / Windows `_kbhit()` + `_getch()`
-- `term_raw_mode()` — Unix `tcsetattr` / Windows `SetConsoleMode` with `ENABLE_VIRTUAL_TERMINAL_PROCESSING` for ANSI escapes
-- `term_restore_mode()` — restore on exit
+Platform-abstracted by four helpers in `ui.c`:
+- `ui_term_get_size(&w, &h)` — Unix `ioctl(TIOCGWINSZ)` / Windows `GetConsoleScreenBufferInfo`
+- `ui_term_read_key(&ch)` — Unix non-blocking `read(0,...)` / Windows `_kbhit()` + `_getch()`
+- `ui_term_raw_mode()` — Unix `tcsetattr` / Windows `SetConsoleMode` with `ENABLE_VIRTUAL_TERMINAL_PROCESSING` for ANSI escapes
+- `ui_term_restore_mode()` — restore on exit
 
 The oscilloscope draws each frame into a 24 KB static buffer (one `write()` syscall per frame to keep terminal I/O from blocking the audio loop) with ANSI 16-color escapes inline. Color escapes are RLE-emitted — only when intensity changes between cells — to keep per-frame byte count modest.
 
@@ -639,8 +641,8 @@ The oscilloscope draws each frame into a 24 KB static buffer (one `write()` sysc
 
 | Target | Scope |
 |---|---|
-| `make test` | Bit-exact regression: render 16 s at `--seed 0` twice, byte-compare, then sha256 against `golden/regression_16s.sha256`. |
-| `make test-unit` | 153 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
+| `make test` | CLI contract (`tests/test_cli.sh`: help/version/usage errors, stdout render, preset flags, no-server UX, offline install.sh, man page) + bit-exact regression (render 16 s at `--seed 0` twice, byte-compare, sha256 against `golden/regression_16s.sha256`) + the Constitution↔Makefile bridge and amend regression suites. |
+| `make test-unit` | 173 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
 | `make test-multiseed` | Renders 4 s at seeds 0 / 1 / 42 / 12345, asserts each is deterministic across runs, asserts all four produce distinct sha256s, asserts each render's peak / clip count / spectral centroid / zero-crossing rate land within sane bounds (RMS is reported but not gated, since the randomized INTRO palette varies loudness), then matches each hash against `golden/regression_multiseed.sha256.txt`. |
 | `make test-smoke` | Spawns `./synth --no-ui` under a 2 s timeout. Pass on exit 0 / 124 / 143; fail on segfault. Auto-skips if no PulseAudio. |
 | `make coverage` | Rebuilds instrumented (`-fprofile-arcs -ftest-coverage`), runs the regression + unit suites, prints per-file line coverage via `gcov`. |
@@ -675,7 +677,7 @@ CI also enforces a Windows packed binary size budget of 48 KB (current ~38 KB po
 
 CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `main`, plus the Windows cross-compile (`make winpack`). Per-file coverage gates apply to the twelve measured modules at 90–95% (see the coverage table above). The Windows binary and coverage log are uploaded as build artifacts. The runner image is pinned (`ubuntu-24.04`, not `-latest`) and kept identical to the release workflow's: the build-time table generators use host libm (`sinf`/`exp`), so a glibc bump can flip a table entry and change every render hash — releases must run on the exact image CI gates the goldens on.
 
-**Releases** (`.github/workflows/release.yml`): pushing an annotated `v*` tag builds on the same pinned image, runs the full gate set (`make test`, `test-unit`, `test-multiseed`, plus `tools/size-budget-gate.sh` — the same 3-key budget gate ci.yml runs, extracted to a script so published binaries are gated too), asserts `./synth --version` equals `stretto <tag>` and that the tree stayed clean through all builds, then publishes `stretto-<tag>-{linux-x86_64,linux-x86_64-upx,windows-x86_64.exe,windows-x86_64-upx.exe}` + `stretto.1` + `sha256sums.txt` via an idempotent `gh release` sequence (draft → upload → publish, re-run-safe). `workflow_dispatch` rehearses the whole pipeline without publishing.
+**Releases** (`.github/workflows/release.yml`): pushing an annotated `v*` tag builds on the same pinned image, runs the full gate set (`make test`, `test-unit`, `test-multiseed`, plus `tools/size-budget-gate.sh` — the same 3-key budget gate ci.yml runs, extracted to a script so published binaries are gated too), asserts `./synth --version` equals `stretto <tag>` and that the tree stayed clean through all builds, then assembles `stretto-<tag>-{linux-x86_64,linux-x86_64-upx,windows-x86_64.exe,windows-x86_64-upx.exe}` + `stretto.1` + `sha256sums.txt` into a dist directory, runs the **installer drift gate** (executes the repo's `install.sh` against that dist via `STRETTO_BASE_URL=file://…` and asserts the installed binary's `--version` — so an asset rename fails the release, not the user), and publishes via an idempotent `gh release` sequence (draft → upload → publish, re-run-safe). `workflow_dispatch` rehearses the whole pipeline — including the drift gate — without publishing.
 
 ### Size budget amendment workflow (Constitution ↔ Makefile bridge)
 
@@ -733,6 +735,6 @@ The 18 explicit steps render as UI rows 2–19 (row 1 is the auto-prepended `Set
 
 ## Build details
 
-Linux flags (`-Os -flto -ffunction-sections -fdata-sections -Wl,--gc-sections`) and `strip -s -R .comment` are standard. `make pack` runs UPX `--ultra-brute` on top for a final ~42% reduction (per PR #117 `binary-sizes` artifact: synth 43 944 B → synth.packed 25 460 B = 57.94 % retained = 42.06 % reduction; the prior ~33 % pre-#109 hedge reflected the smaller pre-003-chain baseline where 24 576 × 0.67 ≈ 16 384).
+Linux flags (`-Os -flto -ffunction-sections -fdata-sections -Wl,--gc-sections`) and `strip -s -R .comment` are standard. `make pack` runs UPX `--ultra-brute` on top for a final ~42% reduction (historical example, per the PR #117 `binary-sizes` artifact: synth 43 944 B → synth.packed 25 460 B = 57.94 % retained = 42.06 % reduction; the prior ~33 % pre-#109 hedge reflected the smaller pre-003-chain baseline where 24 576 × 0.67 ≈ 16 384).
 
 Windows cross-compile uses `x86_64-w64-mingw32-gcc` with the same size flags. `make winpack` adds UPX. The packed Windows binary is ~38 KB — well under the 64 KB target from the original PLAN.md and the demoscene "tiny generative synth" tradition.

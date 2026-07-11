@@ -4,8 +4,8 @@ A generative music synthesizer. Plays live on Linux (PulseAudio) or Windows (wav
 
 | Binary | Size |
 |---|---|
-| Linux `synth` (stripped, links libpulse) | ~43 KB (43 944 B post-#117) |
-| Windows `stretto.exe` (stripped + UPX) | ~38 KB (post-#117) |
+| Linux `synth` (stripped, links libpulse + libasound) | ~47 KB (48 584 B, 2026-07-11; budget 50 KB) |
+| Windows `stretto.exe` (stripped + UPX) | ~38 KB (post-#117; budget 48 KB) |
 
 ## Build
 
@@ -20,7 +20,7 @@ Produces `./synth`. Needs `gcc`, `make`, `libpulse-dev`.
 ### Windows (cross-compile from Linux / WSL)
 
 ```
-make win        # produces stretto.exe (~238 KB, stripped)
+make win        # produces stretto.exe (~247 KB, stripped)
 make winpack    # additionally produces stretto.packed.exe (~38 KB, UPX-packed)
 ```
 
@@ -32,7 +32,7 @@ Needs `gcc-mingw-w64-x86-64` and `upx`. The packed `.exe` is a single-file nativ
 make pack
 ```
 
-Produces `synth.packed` (~25 KB; 25 460 B post-#117, within the 30 KB Constitution v1.2.0 cap).
+Produces `synth.packed` (~25 KB post-#117 — grows with the stripped binary; within the 30 KB Constitution cap, gated in CI).
 
 ## Install
 
@@ -216,12 +216,11 @@ When the OS disconnects the MIDI source (ALSA `PORT_EXIT` / `CLIENT_EXIT`, winmm
 
 ```
 ./synth --midi-list-devices
-14 0:0 System Timer
-32 14:0 MIDI Through Port-0
-128 20:0 USB MIDI Controller
+3584 Midi Through Port-0
+5120 MPK mini 3 MPK mini 3 MIDI 1
 ```
 
-The first column is the `<index>` you pass to `--midi <N>`. Capped at 32 devices per the enumerator contract.
+The first column is the `<index>` you pass to `--midi <N>`. On Linux it encodes the ALSA sequencer address as `(client<<8)|port` (3584 = client 14, port 0 — the same address `aconnect -l` shows as `14:0`); on Windows it is the plain 0-based device ordinal. `--midi 0` / `--midi-default` opens the first listed device on both platforms. Capped at 32 devices per the enumerator contract.
 
 ## Keyboard controls (live mode)
 
@@ -313,8 +312,9 @@ Architectural principles are encoded in `.specify/memory/constitution.md` (NON-N
 ## Tests
 
 ```
-make test            # bit-exact regression (renders 16 s at seed 0, sha256 check)
-make test-unit       # 130 unit tests across all pure-synth modules + keys
+make test            # CLI contract + bit-exact regression (16 s seed-0 sha256)
+                     # + Constitution<->Makefile bridge/amend regression suites
+make test-unit       # 173 unit tests across all pure-synth modules + keys + MIDI
 make test-multiseed  # renders 4 seeds, checks determinism + audio bounds + golden
 make test-smoke      # spawns ./synth for 2 s, expects clean exit / SIGTERM
 make coverage        # rebuilds with -fprofile-arcs -ftest-coverage and prints
@@ -392,10 +392,10 @@ At least one of `--win` / `--lin-upx` / `--lin-str` is required. Multiple flags 
 | 2 | Run actions/checkout@v4 | *(no `name:`; auto-renders)* |
 | 3 | Install build deps | apt: gcc, make, libpulse-dev, libasound2-dev, upx-ucl, gcc-mingw-w64-x86-64, python3, python3-numpy |
 | 4 | Build Linux synth | `make` |
-| 5 | Bit-exact regression test | `make test` (bitexact + bridge + amend + unit) |
+| 5 | Bit-exact regression test | `make test` (CLI contract + bitexact + bridge + amend) |
 | 6 | Bridge regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_check.sh` — 5 scenarios / 9 sub-checks. Pre-flight for the Binary size budget gate (step 15). |
 | 7 | Amend helper regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_amend.sh` — 6 scenarios / 21 sub-checks |
-| 8 | Unit tests | `make test-unit` (153 tests across 13 modules) |
+| 8 | Unit tests | `make test-unit` (173 tests across 13 modules) |
 | 9 | Multi-seed integration test | `make test-multiseed` |
 | 10 | Live-mode smoke test (skips if no PA) | `make test-smoke` |
 | 11 | Cross-compile Windows .exe | `make win` |
@@ -425,8 +425,9 @@ Approximate line coverage (unit + integration combined; CI enforces these as per
 | `motif.c` | 100% | ≥95% |
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
+| `audio_midi.c` | 98% | ≥90% |
 | `main.c` | — | excluded (process-level argv branches; see Makefile `COV_SRCS_INTERACTIVE`) |
-| `ui.c`, `keys.c`, `audio_pulse.c` | — | excluded (require TTY + audio device) |
+| `ui.c`, `keys.c`, `audio_pulse.c`, `audio_midi_linux.c` | — | excluded (require TTY / audio device / ALSA sequencer) |
 
 Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `make coverage` can be alternated without `make clean`. Windows binary size budget (48 KB packed) is also gated in CI.
 
@@ -451,6 +452,9 @@ Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `
 | `audio_pulse.c` | Linux live-audio backend (PulseAudio `pa_threaded_mainloop` + `pa_stream`) |
 | `audio_winmm.c` | Windows live-audio backend (Win32 `waveOut`, 4-buffer cycle) |
 | `audio.h` | One-function API (`audio_play()`); selects backend at link time |
+| `audio_midi.c` / `.h` | Cross-platform MIDI core: SPSC event ring, scale-degree note mapper, CC→parameter dispatch (`CC_MAP`) |
+| `audio_midi_linux.c` | ALSA sequencer MIDI input backend (wildcard subscribe + device enumeration, reader thread) |
+| `audio_midi_winmm.c` | Windows MIDI input backend (`midiIn*` callback API) |
 | `arena.c` / `.h` | Static 128 KB pool with bump allocator |
 | `gen_*_table.c` | Build-time generators for sine / envelope / MIDI note / Bjorklund / wavetable tables |
 | `version.h` (generated) | `#define STRETTO_VERSION` from `git describe`, written by a compare-and-swap Makefile rule so it only changes (and only `main.o` rebuilds) when the version does |
@@ -458,15 +462,15 @@ Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `
 | `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
 | `tests/test_multi_seed.sh` | Renders 4 seeds; determinism + audio bounds + golden hashes |
 | `tests/test_smoke_live.sh` | Spawns `./synth --no-ui` for 2 s; expects clean exit / SIGTERM |
-| `tests/unit/test_*.c` | 130 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys |
+| `tests/unit/test_*.c` | 173 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys, midi |
 | `golden/regression_16s.sha256` | Reference hash for the 16-second seed-0 render |
 | `golden/regression_multiseed.sha256.txt` | Reference hashes for the four multi-seed renders |
 | `.github/workflows/ci.yml` | CI: build, all tests, Windows cross-compile, coverage gates, size gate |
 | `.github/workflows/release.yml` | Tag-triggered release: full gates + version/cleanliness assertions, publishes checksummed binaries + `stretto.1` (rehearsable via `workflow_dispatch`) |
 | `stretto.1` | Man page (hand-written roff; linted + help↔man drift-gated by `tests/test_cli.sh`) |
 | `install.sh` | curl\|sh installer: sha256-verified release download, `~/.local`/root-aware install (offline-tested in `test_cli.sh`; drift-gated against every assembled dist by release.yml) |
-| `Formula/stretto.rb` | Homebrew formula (repo doubles as its own tap; Linux-only; publication gated on repo visibility) |
-| `packaging/aur/` | AUR `PKGBUILD` + `.SRCINFO`, ready to push to AUR once the repo is public |
+| `Formula/stretto.rb` | Homebrew formula (repo doubles as its own tap; Linux-only; live — `brew install quanticsoul4772/stretto/stretto` works against the public repo) |
+| `packaging/aur/` | AUR `PKGBUILD` + `.SRCINFO`, prepared but unpublished (no AUR account; kept for a future maintainer) |
 | `tools/size-budget-gate.sh` | The 3-key binary size budget gate (shared by ci.yml and release.yml) |
 | `PLAN.md` | Original design document (historical) |
 

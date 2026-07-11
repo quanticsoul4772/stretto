@@ -12,7 +12,7 @@ Everything below is grounded in the code as of branch `010-tasks-checklist-sync`
 
 ---
 
-## Status (updated 2026-07-08, post-#137)
+## Status (updated 2026-07-11, post-059 quality pass)
 
 The analysis below is the original snapshot; several items have since shipped.
 This table is the live index — the body is kept for the reasoning (especially
@@ -34,6 +34,7 @@ This table is the live index — the body is kept for the reasoning (especially
 | P2 exit-code polish | **Won't-do** (closed 2026-07-09) — 0/1 plus shell-reported signal deaths is the documented contract (man page EXIT STATUS, 003/004 contract tables, test assertions). Switching usage errors to 2 or adopting sysexits would break scripts checking `== 1` and churn every one of those surfaces for no consumer: nothing programmatically distinguishes usage-vs-runtime failures today, and nobody has asked to. This report rated it borderline cargo-culting from the start (§2). |
 | N1 key record/replay | Open — deferred until someone wants exact session replay |
 | §7 D2 (live help overlay missing `l`/`L` keys) · D9 (positional arg cap silently drops) | **Shipped** — 051 (overlay line added; overflow is now a loud usage error) |
+| *2026-07-11 follow-up: quality deep-pass over the 041–058 arcs* | **Shipped** — 059 (adversarial review of the accumulated surface: implemented the still-stub `--midi-list-devices` enumerators on both platforms, fixed the WinMM wildcard `WAVE_MAPPER` misuse and the Linux `--midi 0`→System-Timer decode, CC_MAP OOB guard, three ui.c signal-delivery races, `make size` failure-masking, set -e holes and fixed-/tmp names across the test scripts, installer version-string validation, CI pipefail on tee'd steps, and a ~25-item doc-drift sweep across README/ARCHITECTURE/contracts) |
 
 ---
 

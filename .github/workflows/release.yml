@@ -73,7 +73,9 @@ jobs:
           make winpack
 
       - name: Size budget gate
+        # pipefail so a failing `make size` cannot hide behind tee's 0.
         run: |
+          set -o pipefail
           make size | tee binary-sizes.txt
           bash tools/size-budget-gate.sh binary-sizes.txt
 

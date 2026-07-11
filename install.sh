@@ -104,7 +104,13 @@ main() {
     if [ -n "$base" ]; then
         sums_url="$base/sha256sums.txt"
     elif [ -n "${STRETTO_VERSION:-}" ]; then
+        # Two-stage validation: the value is spliced into a URL path,
+        # so beyond the vX shape, reject ANY character outside the
+        # tag-safe set (a bare v[0-9]* glob accepted slashes -
+        # "v1/../../evil" would have redirected every download).
         case "$STRETTO_VERSION" in
+            *[!A-Za-z0-9._-]*)
+                die "STRETTO_VERSION contains unsafe characters (got \"$STRETTO_VERSION\")" ;;
             v[0-9]*) ;;
             *) die "STRETTO_VERSION must look like vX.Y.Z (got \"$STRETTO_VERSION\")" ;;
         esac
@@ -141,8 +147,16 @@ main() {
 
     # --- install ----------------------------------------------------
     if [ -n "${STRETTO_INSTALL_DIR:-}" ]; then
-        bin_dir=$STRETTO_INSTALL_DIR
-        man_dir=$STRETTO_INSTALL_DIR
+        # Strip trailing slashes ("DIR/" is common muscle memory):
+        # the PATH containment check below compares path strings, and
+        # "$HOME/.local/bin/" never string-matches the PATH entry
+        # "$HOME/.local/bin", producing a bogus not-on-PATH warning.
+        idir=$STRETTO_INSTALL_DIR
+        while [ "$idir" != "/" ] && [ "${idir%/}" != "$idir" ]; do
+            idir=${idir%/}
+        done
+        bin_dir=$idir
+        man_dir=$idir
     elif [ "$(id -u)" = 0 ]; then
         bin_dir=/usr/local/bin
         man_dir=/usr/local/share/man/man1

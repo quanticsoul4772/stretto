@@ -22,6 +22,12 @@
 set -e
 cd "$(dirname "$0")/.."
 
+# All probe scripts + captured stderr live under one mktemp dir:
+# fixed /tmp/stretto_* names collide across concurrent checkouts and
+# are plantable by other users on shared machines.
+ST=$(mktemp -d)
+trap 'rm -rf "$ST"' EXIT
+
 # Probe PA availability. If pactl can't reach a server within
 # 1 second, skip the test rather than fail it.
 if ! timeout 1 pactl info >/dev/null 2>&1; then
@@ -75,7 +81,7 @@ esac
 if ! command -v script >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
     echo "SKIP: script(1) or python3 unavailable; terminal-restore sub-checks skipped"
 else
-    cat > /tmp/stretto_term_probe.py <<'PYEOF'
+    cat > "$ST"/term_probe.py <<'PYEOF'
 import termios, fcntl, os, sys
 lf = termios.tcgetattr(0)[3]
 echo   = bool(lf & termios.ECHO)
@@ -85,7 +91,7 @@ print("PROBE echo=%d icanon=%d nonblock=%d" % (echo, icanon, nonblk))
 sys.exit(0 if (echo and icanon and not nonblk) else 1)
 PYEOF
 
-    cat > /tmp/stretto_sigterm_check.sh <<EOF
+    cat > "$ST"/sigterm_check.sh <<EOF
 #!/bin/bash
 cd "$PWD"
 ./synth </dev/tty >/dev/null 2>&1 &
@@ -95,13 +101,13 @@ kill -TERM "\$pid" 2>/dev/null
 for _ in \$(seq 1 20); do kill -0 "\$pid" 2>/dev/null || break; sleep 0.5; done
 if kill -0 "\$pid" 2>/dev/null; then kill -9 "\$pid"; echo "TERMCHECK-HANG"; exit 1; fi
 wait "\$pid"; rc=\$?
-python3 /tmp/stretto_term_probe.py || { echo "TERMCHECK-CORRUPT"; exit 1; }
+python3 "$ST"/term_probe.py || { echo "TERMCHECK-CORRUPT"; exit 1; }
 echo "TERMCHECK-OK rc=\$rc"
 EOF
-    chmod +x /tmp/stretto_sigterm_check.sh
+    chmod +x "$ST"/sigterm_check.sh
 
     echo "=== terminal-restore A: SIGTERM during live mode (PTY) ==="
-    out_a=$(timeout 30 script -qec /tmp/stretto_sigterm_check.sh /dev/null | tr -d '\r')
+    out_a=$(timeout 30 script -qec "$ST"/sigterm_check.sh /dev/null | tr -d '\r')
     echo "$out_a"
     case "$out_a" in
         *"TERMCHECK-OK rc=143"*)
@@ -116,20 +122,20 @@ EOF
 
     # synth stderr goes to a file: script(1) merges the PTY streams,
     # so the resume line can't be fished out of the transcript.
-    cat > /tmp/stretto_q_check.sh <<EOF
+    cat > "$ST"/q_check.sh <<EOF
 #!/bin/bash
 cd "$PWD"
-./synth >/dev/null 2>/tmp/stretto_q_stderr
+./synth >/dev/null 2>"$ST"/q_stderr
 rc=\$?
-python3 /tmp/stretto_term_probe.py || { echo "QCHECK-CORRUPT"; exit 1; }
+python3 "$ST"/term_probe.py || { echo "QCHECK-CORRUPT"; exit 1; }
 echo "QCHECK-OK rc=\$rc"
 EOF
-    chmod +x /tmp/stretto_q_check.sh
+    chmod +x "$ST"/q_check.sh
 
     echo "=== terminal-restore B: clean 'q' quit clears O_NONBLOCK (PTY) ==="
     # Feed 's' (cycle scale -> lydian) before 'q' so the resume line
     # must capture the touched parameter, not just the seed.
-    out_b=$( (sleep 2; printf s; sleep 1; printf q; sleep 1) | timeout 30 script -qec /tmp/stretto_q_check.sh /dev/null | tr -d '\r')
+    out_b=$( (sleep 2; printf s; sleep 1; printf q; sleep 1) | timeout 30 script -qec "$ST"/q_check.sh /dev/null | tr -d '\r')
     echo "$out_b"
     case "$out_b" in
         *"QCHECK-OK rc=0"*)
@@ -145,15 +151,15 @@ EOF
     # Preset capture (specs/004-preset-capture): the quit path must
     # print a pasteable resume line with the seed and the parameter
     # touched by the 's' keypress above.
-    if grep -qE '^resume with: --seed [0-9]+ --scale lydian$' /tmp/stretto_q_stderr; then
+    if grep -qE '^resume with: --seed [0-9]+ --scale lydian$' "$ST"/q_stderr; then
         echo "PASS: clean-q resume line captures seed + touched scale"
     else
         echo "FAIL: resume line missing or wrong; synth stderr was:"
-        cat /tmp/stretto_q_stderr
+        cat "$ST"/q_stderr
         exit 1
     fi
-    rm -f /tmp/stretto_term_probe.py /tmp/stretto_sigterm_check.sh \
-          /tmp/stretto_q_check.sh /tmp/stretto_q_stderr
+    rm -f "$ST"/term_probe.py "$ST"/sigterm_check.sh \
+          "$ST"/q_check.sh "$ST"/q_stderr
 fi
 
 # ----- MIDI smoke sub-check (specs/003-midi-input/T039) -----
