@@ -733,6 +733,40 @@ TEST(midi_sustain_pedal_is_per_channel) {
     audio_midi_init(-1);
 }
 
+/* Channel-range guard (067): the drain is the trust boundary and
+ * ev.channel is a raw uint8_t; the backends' 1..16 contract must be
+ * enforced there. Pre-guard, channel 0 made the CC#64 dispatch shift
+ * by -1 (UB), >16 NOTE_ONs parked voices forever under the 065 gate
+ * semantics, and 129..144 aliased the SUSTAIN_HELD_BIT tag. Every
+ * malformed channel must be a complete no-op: no parameter movement,
+ * no voice activity. */
+TEST(midi_malformed_channels_are_dropped) {
+    test_init_synth();
+    voice_pool_init();
+    reset_cc_targets_to_interior();
+    audio_midi_init(0);
+    cc_snapshot_t before = snapshot_cc_params();
+    uint8_t bad[] = { 0, 17, 32, 33, 128, 129, 200, 255 };
+    for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        pedal_enqueue(MIDI_EVENT_NOTE_ON,  bad[i], 60, 100);
+        pedal_enqueue(MIDI_EVENT_CC,       bad[i], 64, 127);  /* pre-guard: UB shift for ch 0 */
+        pedal_enqueue(MIDI_EVENT_CC,       bad[i],  1, 127);
+        pedal_enqueue(MIDI_EVENT_NOTE_OFF, bad[i], 60,   0);
+    }
+    audio_midi_drain();
+    cc_snapshot_t after = snapshot_cc_params();
+    ASSERT_EQ(after.cutoff,               before.cutoff);
+    ASSERT_EQ(after.resonance,            before.resonance);
+    ASSERT_EQ(after.delay_wet,            before.delay_wet);
+    ASSERT_EQ(after.delay_feedback,       before.delay_feedback);
+    ASSERT_EQ(after.reverb_wet,           before.reverb_wet);
+    ASSERT_EQ(after.compressor_threshold, before.compressor_threshold);
+    /* No voice was triggered (a pre-guard >16 NOTE_ON would park one
+       forever - the mask would never clear). */
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+    audio_midi_init(-1);
+}
+
 /* T032 (US3): audio_midi_list_devices NULL-pointer guard. NULL
  * out or NULL count each return -1 (audio_midi.c:audio_midi_list_devices
  * "if (out == 0 || count == 0) return -1;" paranoia guard). Valid
