@@ -158,8 +158,123 @@ EOF
         cat "$ST"/q_stderr
         exit 1
     fi
+
+    # C: SIGTSTP (Ctrl-Z) must restore the terminal BEFORE stopping,
+    #    and re-enter raw mode on `fg`. This needs a REAL interactive
+    #    shell with job control: in script(1)'s harness the synth sits
+    #    in an ORPHANED process group, where POSIX makes the kernel
+    #    discard stop signals entirely - the handler's stop is a no-op
+    #    and nothing suspends. The driver below forks interactive bash
+    #    on a fresh PTY (job control on, synth gets its own foreground
+    #    pgrp), types the actual Ctrl-Z byte, and probes the SLAVE
+    #    termios directly from outside the session at each phase:
+    #    raw while running -> sane + state T while stopped -> raw
+    #    again after fg -> sane after clean q.
+    cat > "$ST"/tstp_pty.py <<PYEOF
+import os, pty, sys, termios, time, subprocess, signal
+
+# Probe notes:
+# - Slave termios is only meaningful while the SYNTH owns the
+#   foreground: whenever bash is at its prompt, readline installs its
+#   own raw-ish modes, masking whatever the synth left behind.
+# - O_NONBLOCK lives on the OPEN FILE DESCRIPTION shared by bash and
+#   the synth (inherited fd 0) and readline never touches it, so
+#   /proc/<pid>/fdinfo/0 is the unambiguous restore/re-raw signal in
+#   every phase. Pre-fix, a stopped synth left it set - the exact
+#   historical leak the fcntl restore exists for.
+
+def probe_raw(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOCTTY)
+    try:
+        lf = termios.tcgetattr(fd)[3]
+        return not (lf & termios.ECHO) and not (lf & termios.ICANON)
+    finally:
+        os.close(fd)
+
+def fd0_nonblock(pid):
+    with open("/proc/%d/fdinfo/0" % pid) as f:
+        for line in f:
+            if line.startswith("flags:"):
+                return bool(int(line.split()[1], 8) & 0o4000)
+    return False
+
+def synth_state():
+    p = subprocess.run(["pgrep", "-nx", "synth"], capture_output=True, text=True)
+    if p.returncode != 0:
+        return None, ""
+    pid = int(p.stdout.strip())
+    with open("/proc/%d/stat" % pid) as f:
+        return pid, f.read().split(") ", 1)[1].split()[0]
+
+def die(marker, child):
+    print(marker)
+    subprocess.run(["pkill", "-9", "-x", "synth"], capture_output=True)
+    os.kill(child, signal.SIGKILL)
+    sys.exit(1)
+
+child, master = pty.fork()
+if child == 0:
+    os.execvp("bash", ["bash", "--norc", "-i"])
+slave = os.readlink("/proc/%d/fd/0" % child)
+
+def drain():
+    # keep the PTY's output buffer from filling and blocking the shell
+    import select
+    while select.select([master], [], [], 0)[0]:
+        try:
+            if not os.read(master, 65536): break
+        except OSError:
+            break
+
+time.sleep(1); drain()
+os.write(master, b"cd " + os.environ["SYNTH_DIR"].encode() + b" && ./synth\n")
+time.sleep(2); drain()
+pid, st = synth_state()
+if pid is None: die("TSTP-PTY-NO-SYNTH", child)
+if not probe_raw(slave): die("TSTP-PTY-NOT-RAW-AT-START", child)
+if not fd0_nonblock(pid): die("TSTP-PTY-NO-NONBLOCK-AT-START", child)
+
+os.write(master, b"\x1a")          # the actual Ctrl-Z byte
+time.sleep(1.5); drain()
+pid, st = synth_state()
+if st != "T": die("TSTP-PTY-NOSTOP st=%s" % st, child)
+if fd0_nonblock(pid): die("TSTP-PTY-NONBLOCK-WHILE-STOPPED", child)
+
+os.write(master, b"fg\n")
+time.sleep(1.5); drain()
+pid, st = synth_state()
+if st not in ("R", "S"): die("TSTP-PTY-NO-RESUME st=%s" % st, child)
+if not probe_raw(slave): die("TSTP-PTY-NOT-RERAW-AFTER-FG", child)
+if not fd0_nonblock(pid): die("TSTP-PTY-NO-NONBLOCK-AFTER-FG", child)
+
+os.write(master, b"q")             # clean quit from the resumed session
+time.sleep(1.5); drain()
+pid, st = synth_state()
+if pid is not None: die("TSTP-PTY-STILL-RUNNING-AFTER-Q", child)
+if fd0_nonblock(child): die("TSTP-PTY-NONBLOCK-LEAKED-TO-SHELL", child)
+
+os.write(master, b"exit\n")
+time.sleep(0.5); drain()
+os.waitpid(child, 0)
+print("TSTP-PTY-OK")
+PYEOF
+
+    echo "=== terminal-restore C: Ctrl-Z restores, fg re-raws (interactive PTY) ==="
+    out_c=$(SYNTH_DIR="$PWD" timeout 60 python3 "$ST"/tstp_pty.py | tr -d '\r')
+    echo "$out_c"
+    case "$out_c" in
+        *"TSTP-PTY-OK"*)
+            echo "PASS: SIGTSTP suspend/resume terminal handling"
+            ;;
+        *)
+            pkill -x synth 2>/dev/null || true
+            echo "FAIL: SIGTSTP suspend/resume terminal handling (marker above)"
+            exit 1
+            ;;
+    esac
+
     rm -f "$ST"/term_probe.py "$ST"/sigterm_check.sh \
-          "$ST"/q_check.sh "$ST"/q_stderr
+          "$ST"/q_check.sh "$ST"/q_stderr "$ST"/tstp_pty.py
 fi
 
 # ----- MIDI smoke sub-check (specs/003-midi-input/T039) -----

@@ -16,6 +16,8 @@
 #include <termios.h>
 #define TIOCGWINSZ_VAL 0x5413
 static struct termios saved_termios;
+static struct termios raw_termios;   /* the raw state we applied; replayed
+                                        by the SIGTSTP handler's resume path */
 static int saved_fcntl_flags = 0;
 static int termios_saved = 0;
 #else
@@ -188,6 +190,7 @@ void ui_term_raw_mode(void) {
     raw.c_lflag &= ~(ICANON | ECHO);
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 0;
+    raw_termios = raw;   /* keep a copy for the SIGTSTP resume replay */
     if (tcsetattr(0, TCSANOW, &raw) < 0) {
         fprintf(stderr, "tcsetattr: %s\n", strerror(errno));
         exit(1);
@@ -198,16 +201,14 @@ void ui_term_raw_mode(void) {
     }
 }
 
+static void sig_term_restore(void);
+
 void ui_term_restore_mode(void) {
-    if (termios_saved) {
-        tcsetattr(0, TCSANOW, &saved_termios);
-        /* O_NONBLOCK lives on the open file description shared with
-           the parent shell; without this F_SETFL every live session
-           handed the shell back a nonblocking stdin. */
-        fcntl(0, F_SETFL, saved_fcntl_flags);
-        (void)!write(1, "\x1b[?25h\n", 7);
-        termios_saved = 0;
-    }
+    /* O_NONBLOCK lives on the open file description shared with the
+       parent shell; without the F_SETFL inside sig_term_restore every
+       live session handed the shell back a nonblocking stdin. */
+    sig_term_restore();
+    termios_saved = 0;
 }
 
 /* Restore the terminal from signal context, then die by the signal.
@@ -219,12 +220,18 @@ void ui_term_restore_mode(void) {
    terminates the process with an honest killed-by-signal wait status
    (130 / 143 / ...), and a second Ctrl-C hard-kills even if the
    restore itself were to wedge. */
-static void sig_restore_and_reraise(int sig) {
+/* Shared by the fatal-signal and SIGTSTP handlers; async-signal-safe
+   (tcsetattr, fcntl, write). */
+static void sig_term_restore(void) {
     if (termios_saved) {
         tcsetattr(0, TCSANOW, &saved_termios);
         fcntl(0, F_SETFL, saved_fcntl_flags);
         (void)!write(1, "\x1b[?25h\n", 7);
     }
+}
+
+static void sig_restore_and_reraise(int sig) {
+    sig_term_restore();
     /* Resume line: UNCONDITIONAL (outside the termios_saved guard) -
        headless --no-ui sessions never enter raw mode but are a
        primary capture target. Single acquire-load of the index; the
@@ -238,6 +245,41 @@ static void sig_restore_and_reraise(int sig) {
     raise(sig);
 }
 
+/* SIGTSTP (Ctrl-Z): restore the terminal, honestly stop, and re-enter
+   raw mode when resumed. The stop happens INSIDE the handler: the
+   default disposition is restored, SIGTSTP is unblocked (it is
+   blocked during its own delivery), and raise() stops the process on
+   the spot - so when `fg` sends SIGCONT, execution resumes right
+   after raise() and the lines below re-arm the handler and replay the
+   saved raw termios + O_NONBLOCK. Everything used here is on the
+   POSIX.1-2008 async-signal-safe list (tcsetattr, fcntl, write,
+   signal, sigprocmask, raise; sigemptyset/sigaddset are pure local
+   bit ops). signal() rather than sigaction keeps the handler and
+   install code small - Principle I pays per byte here (this handler
+   sat exactly on a 4 KB text-segment page cliff).
+
+   `bg` caveat (standard TUI behavior, same as less/vim): resuming in
+   the background makes the re-entry tcsetattr raise SIGTTOU, which
+   stops the process again until it is foregrounded. */
+static void sig_suspend_and_resume(int sig) {
+    (void)sig;
+    sig_term_restore();
+    signal(SIGTSTP, SIG_DFL);
+    sigset_t tstp;
+    sigemptyset(&tstp);
+    sigaddset(&tstp, SIGTSTP);
+    sigprocmask(SIG_UNBLOCK, &tstp, NULL);
+    raise(SIGTSTP);
+    /* ---- stopped here; SIGCONT (fg) resumes below ---- */
+    signal(SIGTSTP, sig_suspend_and_resume);
+    if (termios_saved) {
+        tcsetattr(0, TCSANOW, &raw_termios);
+        fcntl(0, F_SETFL, saved_fcntl_flags | O_NONBLOCK);
+    }
+    /* No redraw needed: the UI loop repaints every frame. The kernel
+       re-blocks SIGTSTP on handler return per the entry mask. */
+}
+
 void ui_install_signal_handlers(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -248,6 +290,7 @@ void ui_install_signal_handlers(void) {
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGHUP,  &sa, NULL);
     sigaction(SIGQUIT, &sa, NULL);
+    signal(SIGTSTP, sig_suspend_and_resume);
 }
 
 #else  /* _WIN32 */

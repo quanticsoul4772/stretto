@@ -1,5 +1,11 @@
 # Changelog
 
+## Recent: Ctrl-Z suspend/resume (063)
+
+The last "Known issue" line is gone: SIGTSTP used to suspend live mode with the terminal still raw (and stdin still nonblocking) until `fg`. A dedicated handler now restores the terminal, stops the process *inside the handler* (default disposition + explicit unblock + `raise`), and - because SIGCONT resumes execution right after the `raise` - re-arms itself and replays the saved raw termios + `O_NONBLOCK` on `fg`. All handler work is async-signal-safe; the two `sigaction` structs are prepared at install time. `bg`-resume re-stops on the re-entry `tcsetattr`'s SIGTTOU, the standard TUI behavior (use `fg`).
+
+Regression-tested end to end under a REAL interactive bash on a Python-forked PTY - `script(1)` cannot host this test: its child shell sits in an orphaned process group, where POSIX discards stop signals, so the process never actually suspends there. The sub-check types a literal Ctrl-Z byte and probes, from outside the session, the synth's process state (`T`), the shared file description's `O_NONBLOCK` via `/proc/<pid>/fdinfo/0` (slave termios is masked by readline whenever bash holds the prompt), raw-mode re-entry after `fg`, and a clean `q` quit after the whole cycle. Verified to fail against the pre-fix binary.
+
 ## Recent: quality deep-pass over the 041-058 arcs (059)
 
 Adversarial review of the ~25 PRs of accumulated work; every finding verified against the code before fixing. Four commits:
