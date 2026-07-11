@@ -39,7 +39,9 @@ stretto --render 10 demo.wav --seed 42    # render 10 s; no audio server needed
 man stretto
 ```
 
-If `~/.local/bin` wasn't on your PATH before, restart your shell — Debian/Ubuntu's `~/.profile` adds it only when it exists at login, and `man stretto` resolves through PATH too.
+Or hear it before installing: releases from v1.5.0 on attach [`stretto-demo.wav`](https://github.com/quanticsoul4772/stretto/releases/latest/download/stretto-demo.wav) — the exact output of the render command above.
+
+If `~/.local/bin` wasn't on your PATH before, restart your shell — Debian/Ubuntu's `~/.profile` adds it only when it exists at login, and `man stretto` resolves through PATH too. The installer also installs bash and zsh completions (bash needs the `bash-completion` package; user-mode zsh needs `fpath=(~/.local/share/zsh/site-functions $fpath)` before `compinit` — the installer prints this when it applies).
 
 ### Homebrew (Linuxbrew)
 
@@ -351,7 +353,8 @@ The spec-kit artifacts (spec, plan, research, tasks, quickstart) live under `spe
 | `gen_*_table.c` | Build-time generators for sine / envelope / MIDI note / Bjorklund / wavetable tables |
 | `version.h` (generated) | `#define STRETTO_VERSION` from `git describe` |
 | `Makefile` | `make`, `make win`, `make winpack`, `make pack`, the `test*` targets, `make coverage`, `make debug`, `make golden*`, `make install`, `make verify` |
-| `tests/test_cli.sh` | CLI contract: help/version, usage errors, stdout render, preset flags, no-server UX, offline install.sh checks, man-page lint + help↔man drift gate |
+| `tests/test_cli.sh` | CLI contract: help/version, usage errors, stdout render, preset flags, no-server UX, offline install.sh checks (incl. pre-completions layouts), man-page lint + help↔man and help↔completions drift gates |
+| `completions/` | Hand-written bash (`stretto.bash`) + zsh (`_stretto`) completions; drift-gated bidirectionally against `--help`; installed by `make install` and `install.sh`, shipped as release assets |
 | `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
 | `tests/test_multi_seed.sh` | Renders 4 seeds; determinism + audio bounds + golden hashes |
 | `tests/test_smoke_live.sh` | Live-mode smoke + PTY terminal-restore checks + MIDI wildcard smoke |

@@ -1,5 +1,13 @@
 # Changelog
 
+## Recent: demo WAV on releases + bash/zsh completions (068)
+
+Both remaining zero-binary-cost distribution items, planned first with a design-review round:
+
+- **`stretto-demo.wav` release asset**: every release ships a fresh 10 s `--seed 42` render - exactly what the canonical "hear it now" command produces - so people can hear the synth before installing. Unversioned name for a stable `releases/latest/download/` URL; rendered per release rather than golden-pinned (the libm-generated tables make WAV bytes runner-image-dependent). README links it; the release notes explain it.
+- **Shell completions** (`completions/stretto.bash`, `completions/_stretto`): hand-written, drift-gated BIDIRECTIONALLY against `--help` in test_cli.sh (forward: every help flag completable; reverse: no removed flag lingers), installed by `make install` (bash under the BARE name `stretto` - the suffixed lookup needs bash-completion >= 2.12), shipped as release assets, and installed by install.sh CONDITIONALLY on presence in sha256sums.txt - releases before v1.5.0 lack the assets and the installer's works-against-every-published-release promise holds (pinned by a new offline test; presence-then-404 still dies loudly, also pinned). Flat/test mode keeps asset names (the canonical bash name would clobber the binary). User-mode zsh installs print the fpath activation hint (no default fpath covers ~/.local/share/zsh/site-functions).
+- Follow-up recorded: `Formula/stretto.rb` installs manually and pins the v1.4.0 tarball - `bash_completion.install` / `zsh_completion.install` lines belong to the next formula version bump. Non-goal: fish completions.
+
 ## Recent: robustness pass - channel guard, CC#123, MIDI fuzz, warning flags (067)
 
 Planned first, one design-review round - which changed the design materially and found a pre-existing bug:
