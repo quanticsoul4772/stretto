@@ -206,8 +206,9 @@ The first column is the `<index>` you pass to `--midi <N>`. On Linux it encodes 
 | 74 | Brightness | Filter cutoff | +1 |
 | 91 | Reverb Send | Reverb wet | +1 |
 | 93 | Chorus / Delay | Delay wet | +1 |
+| 123 | All Notes Off | Releases the channel's notes (pedal-held survive until pedal-up) | value-independent |
 
-Delta = `(V - 64) * scale`, summing additively across multiple CCs targeting the same parameter. CC#64 is the exception: it uses the raw value (pedal down/up), moves no parameters, and holds notes past their Note Off piano-style — all released together on pedal-up. All other CCs (All Notes Off, the General Purpose slots) are silently ignored.
+Delta = `(V - 64) * scale`, summing additively across multiple CCs targeting the same parameter. Two exceptions use the raw value and move no parameters: CC#64 (pedal down/up — holds notes past their Note Off piano-style, all released together on pedal-up) and CC#123 (All Notes Off — a Note Off for every sounding note on the channel; with the pedal down they convert to held, per MIDI 1.0, so a full panic is pedal-up then CC#123). All other CCs (the General Purpose slots) are silently ignored.
 
 ### Disconnect
 
@@ -294,7 +295,7 @@ See `ARCHITECTURE.md` for the detailed walkthrough.
 make test            # CLI contract + bit-exact regression (16 s seed-0 sha256)
                      # + Constitution<->Makefile bridge/amend + size-gate
                      # fixture regression suites
-make test-unit       # 178 unit tests across all pure-synth modules + keys + MIDI
+make test-unit       # 182 unit tests across all pure-synth modules + keys + MIDI
 make test-multiseed  # renders 4 seeds, checks determinism + audio bounds + golden
 make test-smoke      # spawns ./synth for 2 s, expects clean exit / SIGTERM
 make coverage        # rebuilds with -fprofile-arcs -ftest-coverage and prints
@@ -354,7 +355,7 @@ The spec-kit artifacts (spec, plan, research, tasks, quickstart) live under `spe
 | `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
 | `tests/test_multi_seed.sh` | Renders 4 seeds; determinism + audio bounds + golden hashes |
 | `tests/test_smoke_live.sh` | Live-mode smoke + PTY terminal-restore checks + MIDI wildcard smoke |
-| `tests/unit/test_*.c` | 178 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys, midi |
+| `tests/unit/test_*.c` | 182 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys, midi |
 | `golden/` | Reference hashes for the bit-exact regressions |
 | `.github/workflows/ci.yml` | CI: build, all tests, Windows cross-compile, coverage gates, size gate |
 | `.github/workflows/release.yml` | Tag-triggered release: full gates, installer drift gate, publishes checksummed binaries + `stretto.1` |

@@ -158,7 +158,7 @@ static const cc_map_entry_t CC_MAP[128] = {
     [74] = { .target = CC_TARGET_CUTOFF,           .scale = +1  },  /* Brightness / Cutoff */
     [91] = { .target = CC_TARGET_REVERB_WET,       .scale = +1  },  /* Reverb Send */
     [93] = { .target = CC_TARGET_DELAY_WET,        .scale = +1  },  /* Chorus / Delay Send (often used for delay) */
-    [123]= { .target = CC_TARGET_NONE },                   /* All Notes Off */
+    [123]= { .target = CC_TARGET_ALL_NOTES_OFF },          /* All Notes Off (067): Note Off per sounding note; pedal-held survive. CC_TARGET_ALL_NOTES_OFF is appended LAST in cc_target_t per the no-renumbering contract. */
     /* ... all other indices: { .target = CC_TARGET_NONE } ... */
 };
 ```

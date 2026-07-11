@@ -77,7 +77,7 @@ static const cc_map_entry_t CC_MAP[128] = {
     [74]  = { .target = CC_TARGET_CUTOFF,           .scale = +1  },  /* Brightness / Cutoff */
     [91]  = { .target = CC_TARGET_REVERB_WET,       .scale = +1  },  /* Reverb Send */
     [93]  = { .target = CC_TARGET_DELAY_WET,        .scale = +1  },  /* Delay / Chorus Send */
-    [123] = { .target = CC_TARGET_NONE }                             /* All Notes Off - silently dropped per Principle VII */
+    [123] = { .target = CC_TARGET_ALL_NOTES_OFF }                    /* All Notes Off (067): Note Off per sounding note; pedal-held survive per MIDI 1.0 */
 };
 
 /* FR-010 scale-degree + octave-clamp mapper. Computes the absolute
@@ -214,6 +214,16 @@ void audio_midi_drain(void) {
     while ((tail = __atomic_load_n(&q.tail, __ATOMIC_ACQUIRE)) != local_head) {
         midi_event_t ev = q.events[tail & MIDI_QUEUE_MASK];
         __atomic_store_n(&q.tail, tail + 1u, __ATOMIC_RELEASE);
+        /* Channel-range guard (067): both backends emit only 1..16
+         * per the audio_midi.h contract, but the drain is the trust
+         * boundary and ev.channel is a raw uint8_t. Out-of-range
+         * values were live hazards: channel 0 made the CC#64
+         * dispatch's `1u << (ev.channel - 1)` a negative-count shift
+         * (UB), >=33 a too-wide shift (UB), 17..32 a silently-zero
+         * bit, 129..144 aliased the SUSTAIN_HELD_BIT tag, and any
+         * >16 NOTE_ON parked a voice forever under the 065 gate
+         * semantics (unreachable by CC#64/CC#123 on real channels). */
+        if (ev.channel < 1 || ev.channel > 16) continue;
         /* Per FR-004 + M1 fix: channel filter BEFORE dispatch. */
         if (g_channel_filter != 0 && ev.channel != g_channel_filter) continue;
 
@@ -278,6 +288,19 @@ void audio_midi_drain(void) {
                             g_sustain_mask &= (uint16_t)~bit;
                             voice_pool_flush_sustained(ev.channel);
                         }
+                        break;
+                    }
+                    case CC_TARGET_ALL_NOTES_OFF: {
+                        /* CC#123 (067), strict MIDI 1.0: a Note Off
+                         * per sounding note on the channel. With the
+                         * damper pedal down, Note Off = hold, so
+                         * sounding notes convert to held and ring
+                         * until pedal-up. Value byte ignored (spec
+                         * defines it as 0; liberal acceptance). A
+                         * full panic = CC#64 value 0, then CC#123. */
+                        int pedal_down =
+                            (g_sustain_mask >> (ev.channel - 1)) & 1;
+                        voice_pool_release_all_midi(ev.channel, pedal_down);
                         break;
                     }
                     case CC_TARGET_CUTOFF:            voice_adjust_cutoff(delta);            break;

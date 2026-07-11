@@ -581,13 +581,11 @@ TEST(midi_cc64_moves_no_parameters) {
     ASSERT_EQ(after.compressor_threshold, before.compressor_threshold);
 }
 
-/* T025j: CC#123 (All Notes Off, MIDI 1.0 standard message) is
- * CC_TARGET_NONE per spec. v1 does NOT auto-release held
- * MIDI-triggered notes on CC#123 -- the synth continues from
- * internal generative state per FR-034 (disconnect-handling
- * contract applies to CC values too). The dispatch must produce
- * zero state changes. */
-TEST(midi_cc123_all_notes_off_noop) {
+/* T025j (rewritten in 067): CC#123 (All Notes Off) is implemented as
+ * CC_TARGET_ALL_NOTES_OFF - it changes VOICE state only. Like the
+ * CC#64 rename precedent, this test pins what is still true: the
+ * dispatch must move zero synth PARAMETERS. */
+TEST(midi_cc123_moves_no_parameters) {
     test_init_synth();
     reset_cc_targets_to_interior();
     cc_snapshot_t before = snapshot_cc_params();
@@ -727,6 +725,169 @@ TEST(midi_sustain_pedal_is_per_channel) {
     pedal_mix(40000);
     ASSERT_TRUE(voice_pool_active_mask() != 0u);
     pedal_enqueue(MIDI_EVENT_CC, 1, 64, 63);   /* < 64 boundary = up */
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+    audio_midi_init(-1);
+}
+
+/* ============================================================
+ * CC#123 All Notes Off (067) - strict MIDI 1.0 semantics: a Note Off
+ * per sounding note on the channel; with the damper pedal down a
+ * Note Off means HOLD, so sounding notes convert to held and survive
+ * until pedal-up. Value byte is ignored.
+ * ============================================================ */
+TEST(midi_cc123_releases_channel_notes_only) {
+    test_init_synth();
+    voice_pool_init();
+    audio_midi_init(0);
+    /* Two notes on channel 1, one on channel 2. */
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 1, 60, 100);
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 1, 64, 100);
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 2, 67, 100);
+    audio_midi_drain();
+    pedal_enqueue(MIDI_EVENT_CC, 1, 123, 0);   /* value 0: the spec's byte */
+    audio_midi_drain();
+    pedal_mix(40000);
+    /* Channel 1's notes are gone; channel 2's still rings (parked at
+       sustain under gate semantics). */
+    ASSERT_TRUE(voice_pool_active_mask() != 0u);
+    pedal_enqueue(MIDI_EVENT_CC, 2, 123, 127); /* value-independence */
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+    audio_midi_init(-1);
+}
+
+TEST(midi_cc123_pedal_down_converts_to_held) {
+    test_init_synth();
+    voice_pool_init();
+    audio_midi_init(0);
+    /* Pedal down, then a STILL-SOUNDING note (no Note Off), then
+       CC#123: strict MIDI says the note converts to held, not
+       released - it must survive until pedal-up. */
+    pedal_enqueue(MIDI_EVENT_CC, 1, 64, 127);
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 1, 62, 100);
+    audio_midi_drain();
+    pedal_enqueue(MIDI_EVENT_CC, 1, 123, 0);
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_TRUE(voice_pool_active_mask() != 0u);   /* held, still ringing */
+    /* And a voice ALREADY held (Note Off arrived under the pedal)
+       must equally survive CC#123. */
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 1, 65, 100);
+    audio_midi_drain();
+    pedal_enqueue(MIDI_EVENT_NOTE_OFF, 1, 65, 0);  /* held via pedal */
+    pedal_enqueue(MIDI_EVENT_CC, 1, 123, 0);
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_TRUE(voice_pool_active_mask() != 0u);
+    /* Pedal-up: everything held flushes; full silence follows. */
+    pedal_enqueue(MIDI_EVENT_CC, 1, 64, 0);
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+    audio_midi_init(-1);
+}
+
+/* Channel-range guard (067): the drain is the trust boundary and
+ * ev.channel is a raw uint8_t; the backends' 1..16 contract must be
+ * enforced there. Pre-guard, channel 0 made the CC#64 dispatch shift
+ * by -1 (UB), >16 NOTE_ONs parked voices forever under the 065 gate
+ * semantics, and 129..144 aliased the SUSTAIN_HELD_BIT tag. Every
+ * malformed channel must be a complete no-op: no parameter movement,
+ * no voice activity. */
+TEST(midi_malformed_channels_are_dropped) {
+    test_init_synth();
+    voice_pool_init();
+    reset_cc_targets_to_interior();
+    audio_midi_init(0);
+    cc_snapshot_t before = snapshot_cc_params();
+    uint8_t bad[] = { 0, 17, 32, 33, 128, 129, 200, 255 };
+    for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        pedal_enqueue(MIDI_EVENT_NOTE_ON,  bad[i], 60, 100);
+        pedal_enqueue(MIDI_EVENT_CC,       bad[i], 64, 127);  /* pre-guard: UB shift for ch 0 */
+        pedal_enqueue(MIDI_EVENT_CC,       bad[i],  1, 127);
+        pedal_enqueue(MIDI_EVENT_NOTE_OFF, bad[i], 60,   0);
+    }
+    audio_midi_drain();
+    cc_snapshot_t after = snapshot_cc_params();
+    ASSERT_EQ(after.cutoff,               before.cutoff);
+    ASSERT_EQ(after.resonance,            before.resonance);
+    ASSERT_EQ(after.delay_wet,            before.delay_wet);
+    ASSERT_EQ(after.delay_feedback,       before.delay_feedback);
+    ASSERT_EQ(after.reverb_wet,           before.reverb_wet);
+    ASSERT_EQ(after.compressor_threshold, before.compressor_threshold);
+    /* No voice was triggered (a pre-guard >16 NOTE_ON would park one
+       forever - the mask would never clear). */
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+    audio_midi_init(-1);
+}
+
+/* ============================================================
+ * Deterministic MIDI event-stream fuzz (067). The drain is the trust
+ * boundary; this drives ~50k pseudo-random events - invalid types,
+ * out-of-contract channels, 8-bit keys/values - through the real
+ * enqueue/drain path and asserts the engine's clamp + hygiene
+ * invariants after every batch. Runs under the CI sanitizers job
+ * like every unit test, so ASan/UBSan sweep the same hostile stream
+ * on every PR (the channel-0 CC#64 shift UB fixed earlier in 067 is
+ * exactly the class this catches). Fixed-seed xorshift32: identical
+ * stream every run, no flakes.
+ * ============================================================ */
+static uint32_t fuzz_rng_state = 0x2E787331u;   /* fixed seed */
+static uint32_t fuzz_rng(void) {
+    uint32_t x = fuzz_rng_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    fuzz_rng_state = x;
+    return x;
+}
+
+TEST(midi_event_stream_fuzz) {
+    test_init_synth();
+    voice_pool_init();
+    audio_midi_init(0);
+    /* The untouched cutoff default (200) sits ABOVE its [30,180]
+       clamp - reset to interior values first or the range invariant
+       trips before the first cutoff CC arrives. */
+    reset_cc_targets_to_interior();
+
+    const int TOTAL = 50000, BATCH = 200;
+    for (int done = 0; done < TOTAL; done += BATCH) {
+        for (int i = 0; i < BATCH; i++) {
+            uint32_t r = fuzz_rng();
+            midi_event_t ev = {
+                .type    = (uint8_t)(r % 6u),          /* incl. NONE + invalid 4/5 */
+                .channel = (uint8_t)(r >> 8),          /* raw byte: 0..255 */
+                .key     = (uint8_t)(r >> 16),         /* raw byte */
+                .value   = (uint8_t)(r >> 24)          /* raw byte */
+            };
+            audio_midi_enqueue(&ev);
+        }
+        audio_midi_drain();
+        if ((done / BATCH) % 3 == 0) pedal_mix(256);
+        /* Clamp invariants: every parameter getter must stay inside
+           its documented range no matter what the stream contained. */
+        ASSERT_BETWEEN(voice_get_cutoff(),          30,   180);
+        ASSERT_BETWEEN(voice_get_resonance(),        0,   180);
+        ASSERT_BETWEEN(reverb_get_wet(),             0,   256);
+        ASSERT_BETWEEN(delay_get_wet(),              0,   256);
+        ASSERT_BETWEEN(delay_get_feedback(),         0,   200);
+        ASSERT_BETWEEN(compressor_get_threshold(), 8000, 30000);
+        /* Batches are < the 256-entry queue capacity: nothing may drop. */
+        ASSERT_EQ(audio_midi_drop_count(), 0u);
+    }
+
+    /* End-state: pedal-up then All Notes Off on every channel must
+       silence the pool completely - no stuck voices, whatever the
+       stream left behind. 40000 mixes > the 28800-sample melody
+       release. */
+    for (uint8_t ch = 1; ch <= 16; ch++) {
+        pedal_enqueue(MIDI_EVENT_CC, ch, 64, 0);
+        pedal_enqueue(MIDI_EVENT_CC, ch, 123, 0);
+    }
     audio_midi_drain();
     pedal_mix(40000);
     ASSERT_EQ(voice_pool_active_mask(), 0u);

@@ -992,6 +992,32 @@ void voice_pool_hold_midi(uint8_t key, uint8_t channel) {
     }
 }
 
+void voice_pool_release_all_midi(uint8_t channel, int hold) {
+    /* CC#123 All Notes Off (067), strict MIDI 1.0 semantics: acts as
+       a Note Off per sounding note on the channel. With the damper
+       pedal down (hold != 0) a Note Off means HOLD, so sounding notes
+       convert to held instead of releasing - they ring until
+       pedal-up flushes them. Held-tagged voices (channel | 0x80)
+       don't match the plain-tag walk, which is exactly right: they
+       already received their Note Off. Range guard: a channel-only
+       walk with an out-of-contract value must never run - unlike the
+       (key, channel) walks there is no second discriminator, and
+       channel 0 would match every generative voice. */
+    if (channel < 1 || channel > 16) return;
+    int i;
+    for (i = 0; i < N_VOICES; i++) {
+        Voice *v = &pool[i];
+        if (v->trigger_channel != channel) continue;
+        if (v->env_phase == ENV_OFF || v->env_phase == ENV_R) continue;
+        if (hold) {
+            v->trigger_channel = (uint8_t)(channel | SUSTAIN_HELD_BIT);
+        } else {
+            v->env_phase = ENV_R;
+            v->env_time  = 0;
+        }
+    }
+}
+
 void voice_pool_flush_sustained(uint8_t channel) {
     /* Pedal-up: release every voice held on this channel. Restore the
        plain channel tag first so post-release matching (FR-013 skip

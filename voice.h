@@ -139,6 +139,10 @@ void voice_pool_release_midi(uint8_t key, uint8_t channel);
    channel. Driven by audio_midi.c's drain on the audio thread. */
 void voice_pool_hold_midi(uint8_t key, uint8_t channel);
 void voice_pool_flush_sustained(uint8_t channel);
+/* CC#123 All Notes Off (067): a Note Off for every sounding voice on
+   the channel - hold != 0 (pedal down) converts them to held instead
+   of releasing, per strict MIDI 1.0 damper semantics. */
+void voice_pool_release_all_midi(uint8_t channel, int hold);
 
 void     voice_set_mod_depth(uint16_t d);
 uint16_t voice_get_mod_depth(void);

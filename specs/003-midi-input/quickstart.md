@@ -68,7 +68,8 @@ The existing `t` key cycles the captured motif (the most recent triggered note).
 | **74** | Brightness / Cutoff | per-voice filter cutoff | additive ±20 units (sums with CC#1) |
 | **91** | Reverb Send | master reverb wet mix | additive ±32 units |
 | **93** | Chorus / Delay Send | master delay wet mix | additive ±32 units |
-| 16, 17, 19, 123 | (All Notes Off, GP1-4) | unassigned | ignored |
+| 16, 17, 19 | (GP1-4) | unassigned | ignored |
+| **123** | All Notes Off | releases the channel's notes (pedal-held survive until pedal-up) | value-independent |
 | (any other) | (unassigned) | unassigned | ignored |
 
 The mapping is intentionally hard-coded in v1 (per Constitution Principle VII — no partial features). A future spec may add user-configurable mappings (e.g., a `~/.stretto/midi-map.conf`).

@@ -589,7 +589,7 @@ Without `--seed`, `gen_init` derives the seed from `time(NULL)` at startup, so e
 
 - **Note On** (incl. velocity 0 ⇒ Note Off per FR-011) → `voice_pool_trigger_midi(scaled_note, velocity, channel)` where `scaled_note = SCALES[cur_scale][K%7] + clamp(K/7 - 5, -2, +4) * 12` (octave clamp + preflight H2 fix). Synth voice = `VOICE_FM` (mirroring the live-mode melody handler's per-step FM/KS alternation; fixed at FM for MIDI since external triggers are not on the 16-step Euclidean grid). Velocity carries into the output through the voice's peak-normalization `gain` (env_amp is overwritten every sample by `env_step`, so scaling it directly would be undone): `gain = velocity * 256 / 127`, clamped `[64, 1024]` (minimum-audible floor / `PEAK_GAIN_MAX` 4× ceiling per `voice.c:voice_pool_trigger_midi`).
 - **Note Off** → `voice_pool_release_midi(key, channel)` matching by the `trigger_key` + `trigger_channel` discriminator on each `Voice`. Sets `env_phase = ENV_R; env_time = 0;`; no-op if already `ENV_R` (FR-013) or no match (FR-012 unmatched-key no-op).
-- **CC** → lookup `CC_MAP[ev.key]`. If `target == CC_TARGET_NONE` → silent drop (CC#0, #10, #16, #17, #19, #64, #123 all unassigned per Principle VII). Else `delta = ((int)ev.value - 64) * entry.scale` and call the corresponding `adjust_*`. Multiple CCs targeting the same parameter sum additively per FR-022 (`adjust_*` composes over the prior call).
+- **CC** → lookup `CC_MAP[ev.key]`. If `target == CC_TARGET_NONE` → silent drop (CC#0, #10, #16, #17, #19 unassigned per Principle VII). CC#64 (sustain, 065) and CC#123 (All Notes Off, 067) use raw value semantics and change voice hold/release state only. Everything else: `delta = ((int)ev.value - 64) * entry.scale` and call the corresponding `adjust_*`. Multiple CCs targeting the same parameter sum additively per FR-022 (`adjust_*` composes over the prior call).
 
 ### CC mapping table (FR-020)
 
@@ -604,6 +604,7 @@ The 128-entry `CC_MAP` lives in `.rodata` of `audio_midi.c` (512 B total). Per C
 | 74         | per-voice filter cutoff             | +1    | sums with CC#1 per FR-022          |
 | 91         | master reverb wet                   | +1    | ±63 against [0, 256] base          |
 | 93         | master delay wet                    | +1    | sums with `d` / `D` key live-edit  |
+| 123        | All Notes Off (FR-023, 067)         | n/a   | value-independent: Note Off per sounding note on the channel; pedal-held survive until pedal-up |
 
 **CC#64 sustain (065, FR-023).** MIDI-tagged voices use gate semantics: after decay they PARK at the sustain level until Note Off (a held key rings — the generative scheduler's voices keep the fire-and-forget auto-release, so goldens are untouched). With the pedal down on a channel (`g_sustain_mask` in audio_midi.c, one bit per channel), Note Off marks the voice held instead of releasing it — high bit of `trigger_channel`, zero struct growth — and pedal-up flushes every voice held on that channel (`voice_pool_hold_midi` / `voice_pool_flush_sustained`). Voice-stealing ignores the held tag under pool pressure, the standard pedal compromise.
 
@@ -611,7 +612,7 @@ The 128-entry `CC_MAP` lives in `.rodata` of `audio_midi.c` (512 B total). Per C
 
 - **CC#0** / **CC#10** (Bank Select MSB / Pan) — common wheel/encoder assignments on hardware controllers; explicitly out of scope for v1.
 - **CC#16 / CC#17 / CC#18 / CC#19** (General Purpose Controllers 1–4) — controller-specific use; deliberately unassigned so explicit CC routing stays in the table above.
-- **CC#123** (All Notes Off) — v1 relies on the MIDI 1.0 standard's NOTE_ON V=0 mechanism (FR-011) for release propagation; CC#123 as a parallel "panic" command is not routed.
+- **CC#123** (All Notes Off) — routed since 067 (`CC_TARGET_ALL_NOTES_OFF` → `voice_pool_release_all_midi`): a Note Off for every sounding voice on the channel, with strict MIDI 1.0 damper interaction — pedal down converts them to held instead of releasing (a full panic = CC#64 value 0, then CC#123). Value byte ignored (the spec defines it as 0; liberal acceptance). Listed here for history; it is no longer a `CC_TARGET_NONE` slot.
 
 Voice synthesis methods consumed by MIDI and the generative scheduler are documented in [Synthesis details](#synthesis-details): `VOICE_KS` (Karplus-Strong plucked-string for melody slot 5–7 alternation), `VOICE_FM` (2-op FM with shared sine LUT — the direct voice for MIDI Note On), `VOICE_SUB` (super-saw bass + glide portamento for legato re-triggers, role BASS slots 0–1), plus `VOICE_WT` / `VOICE_ADD` (wavetable / additive chord voices, section-selected) and `VOICE_DRUM` (kick / snare / hihat kit). The MIDI dispatch uses the same `Voice` struct as the generative engine — only the slot-selection paths differ (see [Voice pool](#voice-pool-11-slots-4-roles)).
 
@@ -644,7 +645,7 @@ The oscilloscope draws each frame into a 24 KB static buffer (one `write()` sysc
 | Target | Scope |
 |---|---|
 | `make test` | CLI contract (`tests/test_cli.sh`: help/version/usage errors, stdout render, preset flags, no-server UX, offline install.sh, man page) + bit-exact regression (render 16 s at `--seed 0` twice, byte-compare, sha256 against `golden/regression_16s.sha256`) + the Constitution↔Makefile bridge and amend regression suites + the size-budget-gate fixture suite (`tests/test_size_budget_gate.sh`). |
-| `make test-unit` | 178 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
+| `make test-unit` | 182 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
 | `make test-multiseed` | Renders 4 s at seeds 0 / 1 / 42 / 12345, asserts each is deterministic across runs, asserts all four produce distinct sha256s, asserts each render's peak / clip count / spectral centroid / zero-crossing rate land within sane bounds (RMS is reported but not gated, since the randomized INTRO palette varies loudness), then matches each hash against `golden/regression_multiseed.sha256.txt`. |
 | `make test-smoke` | Spawns `./synth --no-ui` under a 2 s timeout. Pass on exit 0 / 124 / 143; fail on segfault. Auto-skips if no PulseAudio. |
 | `make coverage` | Rebuilds instrumented (`-fprofile-arcs -ftest-coverage`), runs the regression + unit suites, prints per-file line coverage via `gcov`. |
@@ -668,11 +669,11 @@ Approximate line coverage:
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
 | `main.c` | — | excluded (process-level argv branches; see Makefile `COV_SRCS_INTERACTIVE`) |
-| `audio_midi.c` | 97.75% (gcov, WSL Ubuntu; CC dispatch + bounds guard + channel filter + ring buffer + opt-out; 24 unit tests in `tests/unit/test_midi.c`) | ≥90% |
+| `audio_midi.c` | ~98% (gcov, WSL Ubuntu; CC dispatch + bounds/channel guards + sustain/All-Notes-Off + ring buffer + opt-out + the 50k-event fuzz; 30 unit tests in `tests/unit/test_midi.c`) | ≥90% |
 | `ui.c`, `keys.c`, `audio_pulse.c`, `audio_midi_linux.c` | — | excluded (interactive; require TTY + audio device or snd-seq-dummy loopback to enumerate — listed in `Makefile` `COV_SRCS_INTERACTIVE`) |
 | `audio_midi_winmm.c` | — | platform-gated (Windows cross-compile only via `x86_64-w64-mingw32-gcc`; the Linux CI runner does not produce `audio_midi_winmm.o`, so it is implicitly excluded from `COV_SRCS_MEASURED` without needing an interactive-source listing) |
 
-Total: 153 unit tests across 13 modules (the 23 new MIDI tests in `tests/unit/test_midi.c` per FR-051 / SC-005: US1 scale-degree + octave clamp + velocity + voice-stealing + no-midi byte-identity, US2 CC dispatcher + multi-CC additive composition + reserved-CC no-op slots, US3 channel filter + enum nulate contract + wildcard sentinel).
+Total: 182 unit tests across 13 modules (the MIDI suite covers: US1 scale-degree + octave clamp + velocity + voice-stealing + no-midi byte-identity, US2 CC dispatcher + multi-CC additive composition + reserved-CC no-op slots + sustain pedal + All Notes Off, US3 channel filter + enumeration + wildcard sentinel, plus the malformed-channel guard and the deterministic 50k-event fuzz).
 
 The coverage build (`make coverage`) writes every artifact (instrumented `.o`, `.gcno`, `.gcda`, `synth_cov`, `.cov` test binaries) into `build_cov/` so it does not clobber the normal build. `make coverage` and `make test-unit` can be alternated freely without `make clean`. CI's "Coverage gates" step parses the per-file numbers and fails if any drop below the gate.
 
