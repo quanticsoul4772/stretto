@@ -1,5 +1,14 @@
 # Changelog
 
+## Recent: robustness pass - channel guard, CC#123, MIDI fuzz, warning flags (067)
+
+Planned first, one design-review round - which changed the design materially and found a pre-existing bug:
+
+- **Channel-range guard in the drain** (pre-existing UB, found by the review while designing the fuzz test that would have tripped it): ev.channel is a raw uint8_t at the trust boundary, and channel 0 made the CC#64 dispatch shift by -1 (undefined behavior, fatal under the new sanitizers CI job); channels >16 parked voices forever under the 065 gate semantics; 129..144 aliased the held-voice tag. One `continue` next to the existing channel filter; behavior-neutral for real producers, goldens untouched.
+- **CC#123 All Notes Off** (FR-023 amendment), strict MIDI 1.0 damper semantics per the review's correction: a Note Off for every sounding voice on the channel - with the pedal down they convert to HELD (the naive release-walk would have dropped still-keyed notes), surviving until pedal-up. Value byte ignored per liberal acceptance. A full panic = CC#64 value 0 then CC#123. The last documented CC gap is closed.
+- **Deterministic 50k-event MIDI fuzz test**: fixed-seed xorshift32 stream of hostile events (invalid types, out-of-contract channels, raw 8-bit bytes) through the real enqueue/drain path; per-batch clamp + no-drop invariants; end-state "pedal-up + All Notes Off on all 16 channels leaves total silence". Runs under the CI sanitizers job on every PR by construction.
+- **-Wall -Wextra on every build line** (the tree was verified already clean - pure prevention); **-Werror in SAN_FLAGS only**, making the sanitizers CI job the warning gate while release/source builds stay permissive (the -Werror packaging hazard). Zero warnings across the Linux, sanitized, and mingw builds.
+
 ## Recent: sanitizer CI job + page-cliff visibility (066)
 
 Two safety nets, planned and twice-reviewed before implementation (the round-1 reviewer caught a merge-blocking fresh-checkout defect a passing local run had masked):
