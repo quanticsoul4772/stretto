@@ -292,12 +292,15 @@ See `ARCHITECTURE.md` for the detailed walkthrough.
 
 ```
 make test            # CLI contract + bit-exact regression (16 s seed-0 sha256)
-                     # + Constitution<->Makefile bridge/amend regression suites
+                     # + Constitution<->Makefile bridge/amend + size-gate
+                     # fixture regression suites
 make test-unit       # 178 unit tests across all pure-synth modules + keys + MIDI
 make test-multiseed  # renders 4 seeds, checks determinism + audio bounds + golden
 make test-smoke      # spawns ./synth for 2 s, expects clean exit / SIGTERM
 make coverage        # rebuilds with -fprofile-arcs -ftest-coverage and prints
                      # per-file line coverage via gcov (output to build_cov/)
+make test-asan       # ASan + UBSan (fatal) over the unit suite + a render
+                     # (separate build_san/ tree; never touches the release binary)
 make verify          # Constitution<->Makefile bridge check + its regression suites
 make test-crossplatform  # ./synth vs ./stretto.exe byte-compare (dev box with
                          # WSL interop or Windows; auto-skips elsewhere)

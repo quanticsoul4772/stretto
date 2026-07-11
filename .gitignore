@@ -32,6 +32,7 @@ version.h.tmp
 
 # Coverage build
 build_cov/
+build_san/
 synth_cov
 *.gcda
 *.gcno

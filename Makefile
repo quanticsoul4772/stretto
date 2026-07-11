@@ -219,7 +219,7 @@ pack: synth.packed
 
 clean:
 	rm -rf synth synth.packed synth_debug stretto.exe stretto.packed.exe \
-	       $(BUILD_COV) *.d *.dbg.o *.dbg.d \
+	       $(BUILD_COV) $(BUILD_SAN) *.d *.dbg.o *.dbg.d \
 	       tests/unit/test_arena tests/unit/test_effects \
 	       tests/unit/test_voice tests/unit/test_gen \
 	       tests/unit/test_lsystem tests/unit/test_chord_progression \
@@ -258,6 +258,27 @@ size:
 	@printf 'budget_linux_synth_stripped=%s\n' '$(STRIP_TARGET)'
 	@printf 'budget_linux_synth_packed=%s\n' '$(PACK_TARGET)'
 	@printf 'budget_windows_stretto_exe_packed=%s\n' '$(WIN_PACK_BUDGET)'
+# Page-cliff visibility (066): the code segment pays file size in
+# whole 4 KB pages, so the number that predicts a size jump is not
+# the byte count but the distance to the next page boundary - the 063
+# arc lost a CI round-trip to a cliff no local measurement showed.
+# The gate script prints an advisory when headroom runs low.
+# The [ -n "$seg" ] guard must run BEFORE the $((seg)) conversion:
+# dash evaluates $((empty)) as 0, which would report a maximal false
+# headroom=0 advisory instead of an honest "missing" on any readelf/
+# awk parse failure.
+	@seg=""; \
+	if [ -f synth ]; then \
+		seg=$$(readelf -lW synth 2>/dev/null | awk '$$1 == "LOAD" && $$7 == "R" && $$8 == "E" { print $$5; exit }'); \
+	fi; \
+	if [ -n "$$seg" ]; then \
+		seg=$$((seg)); pad=$$(( (4096 - seg % 4096) % 4096 )); \
+		printf 'linux_synth_code_segment=%s\n' "$$seg"; \
+		printf 'linux_synth_page_cliff_headroom=%s\n' "$$pad"; \
+	else \
+		printf 'linux_synth_code_segment=missing\n'; \
+		printf 'linux_synth_page_cliff_headroom=missing\n'; \
+	fi
 	@echo
 	@echo "Constitution Principle I targets:"
 	@printf '  STRIP_TARGET  (Linux synth stripped)   : %s bytes\n' '$(STRIP_TARGET)'
@@ -293,6 +314,7 @@ test: synth
 	./tests/test_bitexact.sh
 	./tests/test_spec_budget_check.sh
 	./tests/test_spec_budget_amend.sh
+	./tests/test_size_budget_gate.sh
 
 # Unit tests. Each tests/unit/test_*.c links against OBJS_NO_MAIN
 # (all modules except main.o) and runs as a standalone binary.
@@ -411,12 +433,15 @@ COV_TEST_OBJS        = $(addprefix $(BUILD_COV)/,$(OBJS_NO_MAIN))
 $(BUILD_COV):
 	@mkdir -p $(BUILD_COV) $(BUILD_COV)/tests/unit
 
-# Coverage main.o needs version.h to exist on first build (the
-# coverage pattern rule has no $(HEADERS) prereq; see the version.h
-# rule near the top of this file).
+# Coverage main.o needs version.h to exist on first build (version.h
+# is deliberately NOT in $(HEADERS); see the version.h rule near the
+# top of this file).
 $(BUILD_COV)/main.o: version.h
 
-$(BUILD_COV)/%.o: %.c | $(BUILD_COV)
+# $(HEADERS) prereq (066): generates the table headers on a fresh
+# checkout and rebuilds instrumented objects when a header changes -
+# previously masked by CI job ordering (`make` ran first).
+$(BUILD_COV)/%.o: %.c $(HEADERS) | $(BUILD_COV)
 	gcc $(COV_FLAGS) -c $< -o $@
 
 coverage: $(COV_OBJS)
@@ -426,7 +451,7 @@ coverage: $(COV_OBJS)
 	# and TENSION (48+) so section-gated branches in gen.c - chord
 	# arpeggio, TENSION kick pattern, density swings - all execute under
 	# the render binary's coverage measurement.
-	./$(BUILD_COV)/synth_cov --render 110 /tmp/cov_render.wav --seed 0 >/dev/null
+	@f=$$(mktemp) && ./$(BUILD_COV)/synth_cov --render 110 "$$f" --seed 0 >/dev/null && rm -f "$$f"
 	# 1-second stdout render exercises wav.c's to_stdout branch
 	# (added with `--render N -`) so the file stays over its >=90%
 	# coverage gate; WAV bytes discarded, diagnostics are stderr-only.
@@ -445,6 +470,51 @@ coverage: $(COV_OBJS)
 		     /^Lines/ {sub(/Lines executed:/,""); print f": "$$0}' | \
 		grep "\.c"
 	@echo "(interactive modules ui.c keys.c audio_pulse.c audio_midi_linux.c main.c excluded - require TTY/audio device or process invocation)"
+
+# --- Sanitizer run (066): ASan + UBSan over the unit suite + a render
+# regression. Separate object tree (like coverage) so it alternates
+# with the normal build without `make clean`. UB is made FATAL via
+# -fno-sanitize-recover: UBSan's default is report-and-continue with
+# exit 0, which would green-light CI. LSan is disabled at run time:
+# the synth has no malloc (static arena), and alsa-lib's global config
+# cache is a known LSan false positive - the target classes here are
+# OOB / use-after-free / UB, not leaks. Never touches the release
+# binary: zero size-budget risk.
+BUILD_SAN = build_san
+# -ffast-math is DELIBERATELY absent from SAN_FLAGS: UBSan's float
+# checks misfire under fast-math's relaxed semantics.
+SAN_FLAGS = -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -fno-omit-frame-pointer -pthread
+
+SAN_OBJS      = $(addprefix $(BUILD_SAN)/,$(COV_SRCS:.c=.o))
+SAN_TEST_OBJS = $(addprefix $(BUILD_SAN)/,$(OBJS_NO_MAIN))
+
+$(BUILD_SAN):
+	@mkdir -p $(BUILD_SAN) $(BUILD_SAN)/tests/unit
+
+$(BUILD_SAN)/main.o: version.h
+
+# $(HEADERS) prereq is LOAD-BEARING for the sanitizers CI job: it runs
+# `make test-asan` on a fresh checkout with no prior `make`, so the
+# generated tables (sin_table.h etc.) must be built by this chain.
+$(BUILD_SAN)/%.o: %.c $(HEADERS) | $(BUILD_SAN)
+	gcc $(SAN_FLAGS) -c $< -o $@
+
+test-asan: $(SAN_OBJS)
+	gcc $(SAN_FLAGS) $(SAN_OBJS) -lpulse $(LIBASOUND) -latomic -o $(BUILD_SAN)/synth_asan
+	@echo "=== sanitized render regression (30 s, seed 0) ==="
+	@f=$$(mktemp) && ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 \
+		./$(BUILD_SAN)/synth_asan --render 30 "$$f" --seed 0 >/dev/null \
+		&& rm -f "$$f"
+	@echo "=== sanitized unit suite ==="
+	@fail=0; for t in $(UNIT_TEST_SRCS); do \
+		base=$${t%.c}; \
+		out=$(BUILD_SAN)/$$base.san; \
+		gcc $(SAN_FLAGS) -no-pie -Itests/unit $$t $(SAN_TEST_OBJS) \
+		    -o $$out -lm $(LIBASOUND) -latomic || exit 1; \
+		echo; echo "[$$out]"; \
+		ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 ./$$out || fail=1; \
+	done; exit $$fail
 
 golden: synth
 	@mkdir -p golden
@@ -497,7 +567,8 @@ debug: synth_debug
 	@file synth_debug
 
 .PHONY: all clean size pack test test-unit test-multiseed test-smoke \
-        verify coverage golden golden-multiseed play win winpack debug \
+        verify coverage test-asan test-crossplatform \
+        golden golden-multiseed play win winpack debug \
         install uninstall
 
 # Pick up the auto-generated header dependencies. The leading '-'
