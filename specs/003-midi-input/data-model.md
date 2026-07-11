@@ -153,7 +153,7 @@ static const cc_map_entry_t CC_MAP[128] = {
     [16] = { .target = CC_TARGET_NONE },                   /* General Purpose 1 - "all notes off" alias */
     [17] = { .target = CC_TARGET_NONE },                   /* General Purpose 2 */
     [19] = { .target = CC_TARGET_NONE },                   /* General Purpose 4 */
-    [64] = { .target = CC_TARGET_NONE },                   /* Sustain Pedal (out of scope v1) */
+    [64] = { .target = CC_TARGET_SUSTAIN },                /* Sustain Pedal (065 amendment: raw VALUE semantics - >= 64 holds Note Offs per channel, < 64 flushes; not the (V-64)*scale delta) */
     [71] = { .target = CC_TARGET_RESONANCE,        .scale = +1  },  /* Resonance / Timbre */
     [74] = { .target = CC_TARGET_CUTOFF,           .scale = +1  },  /* Brightness / Cutoff */
     [91] = { .target = CC_TARGET_REVERB_WET,       .scale = +1  },  /* Reverb Send */
@@ -226,14 +226,24 @@ void voice_pool_release_midi(uint8_t key, uint8_t channel);
 3. If `env_phase` is already `ENV_R`, no-op (per FR-013).
 4. If no matching voice, no-op (per the spec's "Note Off for an unmatched key" edge case).
 
-**State transitions** for a MIDI voice:
+**State transitions** for a MIDI voice (amended 2026-07-11, 065 — gate semantics + CC#64):
 ```
 [OFF (idle)]  --voice_pool_trigger_midi()--> [ENV_A (attack)]
 [ENV_A]        --env_time >= attack_n-->      [ENV_D (decay)]  (non-drum)
-[ENV_D]        --env_time >= decay_n-->       [ENV_R (sustain → release)]
+[ENV_D]        --env_time >= decay_n-->       [ENV_D PARKED at sustain level]
+                                              (MIDI-tagged voices HOLD here -
+                                               a held key rings until Note Off;
+                                               generative voices, trigger tags 0,
+                                               keep the original auto-release
+                                               into ENV_R)
+[parked/any]   --voice_pool_release_midi()--> [ENV_R] (Note Off; pedal up)
+[parked]       --voice_pool_hold_midi()-->    [parked, trigger_channel |= 0x80]
+                                              (Note Off with CC#64 down: held)
+[held]         --voice_pool_flush_sustained--> [ENV_R] (pedal up)
 [ENV_R]        --env_time >= release_n-->     [OFF] (voice free)
-[any]          --voice_pool_release_midi()--> [ENV_R] (immediate release, no-op if already ENV_R or OFF)
 ```
+
+CC#64 pedal state lives in `audio_midi.c` (`g_sustain_mask`, one bit per channel, audio-thread-only). Held voices are tagged with the high bit of `trigger_channel` (channels are 1..16, bit 7 free — zero struct growth, same trick as the D4 discriminator). Voice-stealing ignores the held tag (standard pedal behavior under pool pressure); a re-trigger by the generative scheduler resets the tags.
 
 ---
 

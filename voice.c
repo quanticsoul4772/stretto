@@ -394,8 +394,21 @@ static uint16_t env_step(Voice *v) {
             amp = ENV_SUSTAIN_LEVEL + ((uint32_t)(ENV_PEAK - ENV_SUSTAIN_LEVEL) * curve) / 255u;
             v->env_time++;
             if (v->env_time >= ENV_DECAY_SAMPLES) {
-                v->env_phase = ENV_R;
-                v->env_time = 0;
+                /* Gate semantics (065): MIDI-tagged voices
+                   (trigger_channel != 0) PARK at the sustain level -
+                   a held key rings until its Note Off (or, with the
+                   CC#64 pedal down, until pedal-up) enters ENV_R via
+                   voice_pool_release_midi / _flush_sustained. The
+                   generative scheduler's voices keep the original
+                   fire-and-forget auto-release (trigger tags are 0).
+                   MIDI is never active in --render, so goldens are
+                   untouched. */
+                if (v->trigger_channel != 0) {
+                    v->env_time = ENV_DECAY_SAMPLES;   /* hold here */
+                } else {
+                    v->env_phase = ENV_R;
+                    v->env_time = 0;
+                }
                 amp = ENV_SUSTAIN_LEVEL;
             }
             break;
@@ -950,5 +963,47 @@ void voice_pool_release_midi(uint8_t key, uint8_t channel) {
         v->env_phase = ENV_R;
         v->env_time  = 0;
         return;
+    }
+}
+
+/* CC#64 sustain pedal (065). Held voices are tagged by setting the
+   high bit of trigger_channel (channels are 1..16, so bit 7 is free -
+   zero struct growth, same trick as the D4 discriminator itself). A
+   held voice no longer matches plain (key, channel) lookups, which is
+   correct: it is logically released-but-ringing, so a repeated Note
+   On/Off pair on the same key addresses a NEW voice, and pedal-up is
+   the only event that can release a held one (or voice-stealing under
+   pool pressure, which ignores the tag - standard pedal behavior). */
+#define SUSTAIN_HELD_BIT 0x80u
+
+void voice_pool_hold_midi(uint8_t key, uint8_t channel) {
+    /* Same matching walk as voice_pool_release_midi, but mark held
+       instead of entering ENV_R: the envelope stays wherever it is
+       (A/D/S), so the note rings at sustain level until pedal-up. */
+    int i;
+    for (i = 0; i < N_VOICES; i++) {
+        Voice *v = &pool[i];
+        if (v->env_phase == ENV_OFF) continue;
+        if (v->trigger_channel != channel) continue;
+        if (v->trigger_key     != key)     continue;
+        if (v->env_phase == ENV_R) continue;
+        v->trigger_channel = (uint8_t)(channel | SUSTAIN_HELD_BIT);
+        return;
+    }
+}
+
+void voice_pool_flush_sustained(uint8_t channel) {
+    /* Pedal-up: release every voice held on this channel. Restore the
+       plain channel tag first so post-release matching (FR-013 skip
+       of already-releasing voices) sees a normal MIDI voice. */
+    uint8_t held = (uint8_t)(channel | SUSTAIN_HELD_BIT);
+    int i;
+    for (i = 0; i < N_VOICES; i++) {
+        Voice *v = &pool[i];
+        if (v->trigger_channel != held) continue;
+        v->trigger_channel = channel;
+        if (v->env_phase == ENV_OFF || v->env_phase == ENV_R) continue;
+        v->env_phase = ENV_R;
+        v->env_time  = 0;
     }
 }

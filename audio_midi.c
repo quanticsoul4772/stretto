@@ -36,6 +36,9 @@
 static uint8_t  g_channel_filter = 0;  /* 0 = all, 1..16 = single channel */
 static uint8_t  g_enabled        = 0;  /* 0 until audio_midi_init(non-negative) */
 static uint32_t g_drops          = 0;  /* events dropped due to ring overflow */
+static uint16_t g_sustain_mask   = 0;  /* CC#64 pedal state, one bit per MIDI
+                                          channel (bit N = channel N+1);
+                                          audio-thread-only, like q.tail */
 
 typedef struct {
     midi_event_t events[MIDI_QUEUE_CAPACITY];  /* 256 x 4 B = 1024 B */
@@ -69,7 +72,7 @@ static const cc_map_entry_t CC_MAP[128] = {
     [16]  = { .target = CC_TARGET_NONE },                            /* General Purpose 1 - silently dropped per Principle VII */
     [17]  = { .target = CC_TARGET_NONE },                            /* General Purpose 2 */
     [19]  = { .target = CC_TARGET_NONE },                            /* General Purpose 4 */
-    [64]  = { .target = CC_TARGET_NONE },                            /* Sustain Pedal - silently dropped per Principle VII (Phase 2 reserved) */
+    [64]  = { .target = CC_TARGET_SUSTAIN },                         /* Sustain Pedal (065): value >= 64 holds Note Offs, < 64 flushes */
     [71]  = { .target = CC_TARGET_RESONANCE,        .scale = +1  },  /* Resonance / Timbre */
     [74]  = { .target = CC_TARGET_CUTOFF,           .scale = +1  },  /* Brightness / Cutoff */
     [91]  = { .target = CC_TARGET_REVERB_WET,       .scale = +1  },  /* Reverb Send */
@@ -100,11 +103,25 @@ static uint8_t map_midi_note(uint8_t key) {
     return (uint8_t)mapped;
 }
 
+/* NOTE_OFF routing with CC#64 awareness (065): pedal down on the
+   event's channel converts the release into a hold; pedal-up (the
+   CC_TARGET_SUSTAIN dispatch below) flushes the held voices. Audio
+   thread only, like everything else in the drain. */
+static void midi_release_or_hold(uint8_t mapped_key, uint8_t channel) {
+    if (channel >= 1 && channel <= 16
+        && (g_sustain_mask & (uint16_t)(1u << (channel - 1)))) {
+        voice_pool_hold_midi(mapped_key, channel);
+    } else {
+        voice_pool_release_midi(mapped_key, channel);
+    }
+}
+
 void audio_midi_init(int channel_filter) {
     /* Reset to zero so the opt-out path leaves BSS unchanged. */
     g_enabled         = 0;
     g_channel_filter  = 0;
     g_drops           = 0;
+    g_sustain_mask    = 0;
     q.head            = 0;
     q.tail            = 0;
 
@@ -214,14 +231,15 @@ void audio_midi_drain(void) {
         switch (ev.type) {
             case MIDI_EVENT_NOTE_ON:
                 if (ev.value == 0) {
-                    /* Per FR-011: Note On with velocity 0 = Note Off. */
-                    voice_pool_release_midi(mapped_key, ev.channel);
+                    /* Per FR-011: Note On with velocity 0 = Note Off
+                       (routed through the same pedal check below). */
+                    midi_release_or_hold(mapped_key, ev.channel);
                 } else {
                     voice_pool_trigger_midi(mapped_key, ev.value, ev.channel);
                 }
                 break;
             case MIDI_EVENT_NOTE_OFF:
-                voice_pool_release_midi(mapped_key, ev.channel);
+                midi_release_or_hold(mapped_key, ev.channel);
                 break;
             case MIDI_EVENT_CC: {
                 /* US2 (spec 003 + tasks.md T030): CC dispatch via
@@ -242,6 +260,26 @@ void audio_midi_drain(void) {
                 if (entry->target == CC_TARGET_NONE) break;
                 int delta = ((int)ev.value - 64) * (int)entry->scale;
                 switch (entry->target) {
+                    case CC_TARGET_SUSTAIN: {
+                        /* CC#64 (065): raw VALUE semantics per MIDI 1.0
+                         * (>= 64 pedal down, < 64 up), per channel. Down
+                         * arms the hold; up flushes every voice held on
+                         * that channel. delta is meaningless here. */
+                        uint16_t bit = (uint16_t)(1u << (ev.channel - 1));
+                        if (ev.value >= 64) {
+                            g_sustain_mask |= bit;
+                        } else {
+                            /* Flush UNCONDITIONALLY on pedal-up, not
+                             * only when the bit is set: audio_midi_init
+                             * resets the mask but not the pool's held
+                             * tags, so a re-init between opens could
+                             * otherwise strand held voices. No-op walk
+                             * when nothing is held. */
+                            g_sustain_mask &= (uint16_t)~bit;
+                            voice_pool_flush_sustained(ev.channel);
+                        }
+                        break;
+                    }
                     case CC_TARGET_CUTOFF:            voice_adjust_cutoff(delta);            break;
                     case CC_TARGET_RESONANCE:         voice_adjust_resonance(delta);         break;
                     case CC_TARGET_REVERB_WET:        reverb_adjust_wet(delta);              break;
