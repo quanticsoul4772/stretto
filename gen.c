@@ -741,10 +741,11 @@ void gen_step(void) {
            two different values if a tempo key lands mid-tick. */
         uint32_t s = samples_per_substep;
         next_step += s;
-        uint32_t sub = substep_count % BAR_SUBSTEPS;
+        /* Odd 16th-substeps {3,9,...,45} are exactly sub % 6 == 3
+           (16th = 3 substeps; odd multiples of 3 mod 6). */
         uint32_t off = 0;
         if (swing_amount != 0
-            && (sub % 3u) == 0u && ((sub / 3u) & 1u) != 0u) {
+            && (substep_count % BAR_SUBSTEPS) % 6u == 3u) {
             off = s * swing_amount / 100u;      /* fits uint32: 7600*100 */
             if (off >= s) off = s - 1u;
         }

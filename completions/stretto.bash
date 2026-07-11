@@ -25,7 +25,7 @@ _stretto_complete() {
             COMPREPLY=($(compgen -W "lp hp bp notch" -- "$cur"))
             return
             ;;
-        --seed|--midi-channel|--bar-ms|--gate|--mod-depth|--cutoff|--resonance|--lfo-depth|--reverb|--delay|--feedback|--comp-threshold|--render)
+        --seed|--midi-channel|--bar-ms|--gate|--mod-depth|--cutoff|--resonance|--lfo-depth|--reverb|--delay|--feedback|--comp-threshold|--swing|--render)
             # numeric argument (for --render: the seconds; the output
             # path that follows falls through to -o default filenames)
             return
@@ -38,7 +38,7 @@ _stretto_complete() {
             --midi --midi-default --no-midi --midi-channel --midi-list-devices
             --scale --bar-ms --gate --mod-depth --cutoff --resonance
             --lfo-depth --filter-mode --reverb --delay --feedback
-            --comp-threshold
+            --comp-threshold --swing
             -h --help --version
         " -- "$cur"))
     fi

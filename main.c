@@ -36,7 +36,7 @@ static const char USAGE[] =
     "               [--scale S] [--bar-ms N] [--gate N] [--mod-depth N]\n"
     "               [--cutoff N] [--resonance N] [--lfo-depth N]\n"
     "               [--filter-mode M] [--reverb N] [--delay N]\n"
-    "               [--feedback N] [--comp-threshold N]\n"
+    "               [--feedback N] [--comp-threshold N] [--swing N]\n"
     "               [-h | --help] [--version]\n";
 
 static const char HELP_BODY[] =
@@ -76,6 +76,7 @@ static const char HELP_BODY[] =
     "  --delay <0-256>         delay wet mix\n"
     "  --feedback <0-200>      delay feedback\n"
     "  --comp-threshold <8000-30000>  compressor threshold\n"
+    "  --swing <0-100>         shuffle (0 straight, 100 ~triplet)\n"
     "\n"
     "On quit (q, Ctrl-C, SIGTERM), live mode prints a pasteable\n"
     "'resume with: --seed N ...' line with the parameters you set -\n"

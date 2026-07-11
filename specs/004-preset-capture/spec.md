@@ -21,15 +21,17 @@ shell history is the preset store; no config parser, no hidden state
 ## Functional requirements
 
 ### Initial-state flags
-- **FR-101**: System MUST accept the 12 initial-state flags with these
-  inclusive ranges, rejecting out-of-range or malformed values as usage
-  errors (stderr + exit 1; never silent clamps):
+- **FR-101** (amended 2026-07-11, 069): System MUST accept the 13
+  initial-state flags with these inclusive ranges, rejecting
+  out-of-range or malformed values as usage errors (stderr + exit 1;
+  never silent clamps):
   `--scale <name|0-5>`, `--bar-ms <760-7600>`, `--gate <32-255>`,
   `--mod-depth <100-8000>`, `--cutoff <30-180>`, `--resonance <0-180>`,
   `--lfo-depth <0-255>`, `--filter-mode <lp|hp|bp|notch|0-3>`,
   `--reverb <0-256>`, `--delay <0-256>`, `--feedback <0-200>`,
-  `--comp-threshold <8000-30000>`. Ranges mirror the live-key adjusters'
-  clamps exactly.
+  `--comp-threshold <8000-30000>`, `--swing <0-100>`. Ranges mirror the
+  live-key adjusters' clamps exactly (`--swing` has no live key - the
+  first flag-only parameter; see FR-105).
 - **FR-102**: Scale names are `dorian lydian phrygian locrian harmminor
   mixolydian` (0..5); filter-mode names `lp hp bp notch` (0..3). Numeric
   forms are always accepted.
@@ -40,6 +42,19 @@ shell history is the preset store; no config parser, no hidden state
 - **FR-104**: The cutoff dial range [30,180] deliberately excludes the
   compile-time default (200). Omitting `--cutoff` keeps the default; the
   flag cannot express it.
+- **FR-105** (added 2026-07-11, 069): `--swing <0-100>` delays every
+  second 16th-note (the odd 16th-substeps of the 48-substep bar) by
+  `min(spss * swing/100, spss-1)` samples, spss = samples per substep.
+  0 = straight and is the byte-inert default; the scale is delay-only
+  (not MPC's 50-centered - the model cannot pull a note earlier than
+  the grid); the MPC mapping is `MPC% = 50 + swing/6`, so 100 is one
+  sample short of true triplet (66.7%). The spss-1 cap guarantees a
+  swung tick never reaches the next grid slot. Swing is TIMING-ONLY
+  and composition-invariant: the substep sequence, and with it every
+  PRNG draw, MUST be identical at any swing value - swing moves
+  onsets, never note content. Bar boundaries, the CA advance, bass,
+  chord and kick sit on even 16ths and MUST stay straight. `--swing`
+  has no live key and no status-row field.
 
 ### Resume line
 - **FR-110**: On clean quit (`q`) and on SIGINT/SIGTERM/SIGHUP/SIGQUIT

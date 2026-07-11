@@ -31,6 +31,7 @@ _stretto() {
         '--delay[delay wet mix]:delay (0-256):' \
         '--feedback[delay feedback]:feedback (0-200):' \
         '--comp-threshold[compressor threshold]:threshold (8000-30000):' \
+        '--swing[shuffle: delays every 2nd 16th-note, 0=straight 100=~triplet]:swing (0-100):' \
         '(- *)'{-h,--help}'[print help and exit]' \
         '(- *)--version[print version information and exit]' \
         '*:output file (or -):_files -g "*.wav"'

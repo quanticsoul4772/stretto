@@ -22,6 +22,7 @@ strings, ranges, and exit codes.
 | `--delay` | 0–256 | — | `delay_set_wet` |
 | `--feedback` | 0–200 | — | `delay_set_feedback` |
 | `--comp-threshold` | 8000–30000 | — | `compressor_set_threshold` |
+| `--swing` | 0–100 | — | `gen_set_swing` (069; timing-only shuffle per FR-105 — no live key) |
 
 All ranges mirror the live-key adjusters' clamps. Flags are position-
 independent (pre-scan), work in live and render modes, and apply after
@@ -39,7 +40,7 @@ engine init, before the first sample. Setters consume no PRNG draws.
 ## 3. Resume line (exact format)
 
 ```
-resume with: --seed <raw-seed>[ --scale <name>][ --bar-ms <n>][ --gate <n>][ --mod-depth <n>][ --cutoff <n>][ --resonance <n>][ --lfo-depth <n>][ --filter-mode <name>][ --reverb <n>][ --delay <n>][ --feedback <n>][ --comp-threshold <n>]
+resume with: --seed <raw-seed>[ --scale <name>][ --bar-ms <n>][ --gate <n>][ --mod-depth <n>][ --cutoff <n>][ --resonance <n>][ --lfo-depth <n>][ --filter-mode <name>][ --reverb <n>][ --delay <n>][ --feedback <n>][ --comp-threshold <n>][ --swing <n>]
 ```
 
 - One line, stderr, trailing newline. Fixed parameter order (table order

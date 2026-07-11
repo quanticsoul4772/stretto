@@ -160,6 +160,7 @@ resume with: --seed 3735928559 --scale lydian --bar-ms 1500 --reverb 120
 | `--reverb <0-256>` | | reverb wet mix |
 | `--delay <0-256>` / `--feedback <0-200>` | | delay wet / feedback |
 | `--comp-threshold <8000-30000>` | | compressor threshold |
+| `--swing <0-100>` | 0 = straight, 100 ≈ triplet | shuffle (delays every 2nd 16th-note; timing-only — same composition at any value; no live key) |
 
 Ranges mirror the live-key clamps; out-of-range values are hard errors, never silent clamps. Output is a pure function of (`--seed`, flags) — a flagged render is byte-reproducible, and flags at their defaults are byte-inert.
 
@@ -297,7 +298,7 @@ See `ARCHITECTURE.md` for the detailed walkthrough.
 make test            # CLI contract + bit-exact regression (16 s seed-0 sha256)
                      # + Constitution<->Makefile bridge/amend + size-gate
                      # fixture regression suites
-make test-unit       # 182 unit tests across all pure-synth modules + keys + MIDI
+make test-unit       # 185 unit tests across all pure-synth modules + keys + MIDI
 make test-multiseed  # renders 4 seeds, checks determinism + audio bounds + golden
 make test-smoke      # spawns ./synth for 2 s, expects clean exit / SIGTERM
 make coverage        # rebuilds with -fprofile-arcs -ftest-coverage and prints
@@ -358,7 +359,7 @@ The spec-kit artifacts (spec, plan, research, tasks, quickstart) live under `spe
 | `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
 | `tests/test_multi_seed.sh` | Renders 4 seeds; determinism + audio bounds + golden hashes |
 | `tests/test_smoke_live.sh` | Live-mode smoke + PTY terminal-restore checks + MIDI wildcard smoke |
-| `tests/unit/test_*.c` | 182 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys, midi |
+| `tests/unit/test_*.c` | 185 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys, midi |
 | `golden/` | Reference hashes for the bit-exact regressions |
 | `.github/workflows/ci.yml` | CI: build, all tests, Windows cross-compile, coverage gates, size gate |
 | `.github/workflows/release.yml` | Tag-triggered release: full gates, installer drift gate, publishes checksummed binaries + `stretto.1` |
