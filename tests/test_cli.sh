@@ -2,9 +2,11 @@
 # CLI contract test for --help / -h / --version (GNU Coding Standards
 # 4.8.1 / 4.8.2): both flags print to STDOUT, exit 0, keep stderr
 # clean, and take precedence over every other option and argument -
-# including side-effecting ones like --render. Needs no TTY, no
-# PulseAudio, no audio device, so it runs unconditionally everywhere
-# (unlike the smoke test's PA-gated sub-checks).
+# including side-effecting ones like --render. The core checks need no
+# TTY, no PulseAudio, no audio device. Some later blocks are guarded:
+# groff (man page), curl (offline install.sh tests), uname=Linux (the
+# no-server UX check, which links libpulse behavior) - each skips
+# cleanly where its tool is absent.
 
 set -e
 cd "$(dirname "$0")/.."
@@ -199,6 +201,107 @@ case "$rc" in
     124) echo "FAIL: broken-pipe render hung (timeout)"; fail=1 ;;
     *) echo "FAIL: broken-pipe render exited $rc (expected 141 or 1)"; fail=1 ;;
 esac
+
+# --- no-audio-server UX (058): the error must be legible ---
+# An explicit PULSE_SERVER disables libpulse's autospawn/fallback
+# chain, so pointing it at a nonexistent socket fails deterministically
+# (async PA_CONTEXT_FAILED -> exit 1) even on machines WITH a working
+# server. Linux-gated: ./synth is a Linux ELF and the check exercises
+# libpulse behavior.
+if [ "$(uname -s)" = "Linux" ]; then
+    set +e
+    PULSE_SERVER=unix:/nonexistent/socket timeout --preserve-status 10 \
+        ./synth --no-ui >/tmp/cli_stdout 2>/tmp/cli_stderr
+    rc=$?
+    set -e
+    if [ "$rc" -ne 1 ]; then
+        echo "FAIL: no-server run exited $rc (expected 1)"; fail=1
+    fi
+    if ! grep -q "pipewire-pulse" /tmp/cli_stderr; then
+        echo "FAIL: no-server error does not mention pipewire-pulse; stderr was:"
+        cat /tmp/cli_stderr
+        fail=1
+    fi
+else
+    echo "SKIP: no-server UX check (non-Linux dev box)"
+fi
+
+# --- install.sh (058): offline checksum-handling tests ---
+# The deep-research rationale for a self-written installer was "test
+# your own checksum handling" - these run it for real, offline, via a
+# file:// base URL (needs curl; wget cannot fetch file://). A fake
+# dist dir stands in for a release; install.sh never EXECUTES the
+# binary, which is what makes fake binaries valid here. Everything
+# under mktemp -d; STRETTO_INSTALL_DIR is ALWAYS set so no fake
+# artifact can ever land in a real ~/.local/bin.
+if ! sh -n install.sh; then
+    echo "FAIL: install.sh does not parse under sh -n"; fail=1
+fi
+if ! command -v curl >/dev/null 2>&1; then
+    echo "SKIP: curl unavailable; offline install.sh tests skipped"
+else
+    idist=$(mktemp -d)
+    idest=$(mktemp -d)
+    trap 'rm -rf "$idist" "$idest"' EXIT
+    printf 'fake stretto binary\n' > "$idist/stretto-vTEST-linux-x86_64"
+    printf 'fake upx binary\n'     > "$idist/stretto-vTEST-linux-x86_64-upx"
+    printf '.TH STRETTO 1\n'       > "$idist/stretto.1"
+    (cd "$idist" && sha256sum -- * > sha256sums.txt)
+
+    # (1) happy path: installs both files, prints the epilogue.
+    # $idist is absolute (mktemp -d), so file://$idist is file:///abs.
+    if ! out=$(STRETTO_BASE_URL="file://$idist" STRETTO_INSTALL_DIR="$idest" sh install.sh 2>&1); then
+        echo "FAIL: offline install.sh happy path exited non-zero:"
+        printf '%s\n' "$out"
+        fail=1
+    fi
+    case "$out" in
+        *"hear it now"*) ;;
+        *) echo "FAIL: install.sh epilogue missing"; fail=1 ;;
+    esac
+    if [ ! -x "$idest/stretto" ] || [ ! -f "$idest/stretto.1" ]; then
+        echo "FAIL: install.sh did not install binary + man page"; fail=1
+    fi
+
+    # (2) tampered binary: loud mismatch, nothing installed.
+    printf 'tampered\n' >> "$idist/stretto-vTEST-linux-x86_64"
+    idest2=$(mktemp -d)
+    set +e
+    out=$(STRETTO_BASE_URL="file://$idist" STRETTO_INSTALL_DIR="$idest2" sh install.sh 2>&1)
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then
+        echo "FAIL: install.sh accepted a tampered binary"; fail=1
+    fi
+    case "$out" in
+        *"MISMATCH"*) ;;
+        *) echo "FAIL: tampered install missing the MISMATCH message"; fail=1 ;;
+    esac
+    if [ -e "$idest2/stretto" ]; then
+        echo "FAIL: tampered install left a binary behind"; fail=1
+    fi
+
+    # (3) asset missing from the sums file: refuse. Regenerate sums
+    # first so the (still-tampered) binary matches again - otherwise
+    # this test would die at the binary MISMATCH before reaching the
+    # missing-entry path for stretto.1.
+    (cd "$idist" && sha256sum stretto-vTEST-linux-x86_64 \
+        stretto-vTEST-linux-x86_64-upx stretto.1 > sha256sums.txt)
+    grep -v "stretto\.1" "$idist/sha256sums.txt" > "$idist/sums.tmp" \
+        && mv "$idist/sums.tmp" "$idist/sha256sums.txt"
+    set +e
+    out=$(STRETTO_BASE_URL="file://$idist" STRETTO_INSTALL_DIR="$idest2" sh install.sh 2>&1)
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then
+        echo "FAIL: install.sh accepted an asset absent from sha256sums.txt"; fail=1
+    fi
+    case "$out" in
+        *"no entry for"*) ;;
+        *) echo "FAIL: missing-entry install lacked the refusal message"; fail=1 ;;
+    esac
+    rm -rf "$idist" "$idest" "$idest2"
+fi
 
 # --- man page (048-packaging) ---
 # Skipped where groff is unavailable (e.g. Git Bash on Windows dev
