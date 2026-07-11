@@ -446,7 +446,24 @@ TEST(midi_cc1_mod_wheel_to_cutoff) {
     ASSERT_EQ(voice_get_cutoff(), baseline + 36);
 }
 
-/* T025b: CC#7 (channel volume per MIDI 1.0 standard name) -> 
+/* CC bounds guard (059 quality pass): CC_MAP has exactly 128 entries
+ * but midi_event_t.key is uint8_t (0..255). A malformed producer
+ * value > 127 must be dropped by the drain's bounds guard, not index
+ * .rodata out of bounds. Asserts no parameter moved (and, under
+ * ASan/valgrind, no OOB read). */
+TEST(midi_cc_key_out_of_bounds_dropped) {
+    test_init_synth();
+    reset_cc_targets_to_interior();
+    uint16_t base_cutoff = voice_get_cutoff();
+    uint16_t base_thresh = compressor_get_threshold();
+    dispatch_one_cc(1, 128, 100);  /* first OOB index */
+    dispatch_one_cc(1, 200, 100);
+    dispatch_one_cc(1, 255, 100);
+    ASSERT_EQ(voice_get_cutoff(), base_cutoff);
+    ASSERT_EQ(compressor_get_threshold(), base_thresh);
+}
+
+/* T025b: CC#7 (channel volume per MIDI 1.0 standard name) ->
  * CC_TARGET_COMPRESSOR_THRESH scale=+60 per data-model.md Entity 4.
  * Note: spec routes CC#7 to the master-bus COMPRESSOR threshold, not
  * a literal per-channel volume knob -- the "channel volume" name is
@@ -753,7 +770,7 @@ TEST(midi_note_on_off_live_dispatch) {
 }
 
 /* ============================================================
-/* T034: audio_midi_open / audio_midi_close round-trip. Closes the
+ * T034: audio_midi_open / audio_midi_close round-trip. Closes the
  * last coverage gap in audio_midi.c: no test exercises the platform
  * backend #if-branch in audio_midi_open() or the g_enabled reset in
  * audio_midi_close(). The real platform backends return -1 in a

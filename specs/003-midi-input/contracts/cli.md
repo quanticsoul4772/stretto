@@ -12,9 +12,9 @@ This document is the **executable contract** for the new MIDI input CLI surface.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--midi [N]` | optional int | wildcard if N absent | Open MIDI input device at index N (0-based, from `--midi-list-devices` output). Omitting N subscribes to every readable input port (ALSA `MIDI_GENERIC` / `MIDI_KEYBOARD` enumerate walk; `WAVE_MAPPER` on WinMM). |
+| `--midi [N]` | optional int | wildcard if N absent | Open MIDI input device at index N (from `--midi-list-devices` output; ALSA `(client<<8)\|port` encoding on Linux, 0-based ordinal on Windows; N=0 = first listed device on both). Omitting N subscribes to every readable input port (ALSA `CAP_READ` + `MIDI_GENERIC` enumerate walk); on WinMM the wildcard opens the first device — Win32 has no MIDI *input* mapper, so one handle = one device. |
 | `--no-midi` | flag | (default behavior) | Explicit no-MIDI; same as omitting `--midi`. Exists for symmetry with `--no-ui`. Takes precedence over `--midi*` open flags if both are present. |
-| `--midi-default` | flag | (alias) | Alias for `--midi 0` (explicit index 0). |
+| `--midi-default` | flag | (alias) | Alias for `--midi 0` (first listed device; on Linux raw index 0 would decode to the System Timer port, so the backend remaps 0 to the first enumerated device). |
 | `--midi-list-devices` | flag | n/a | List available MIDI input devices and exit 0. Short-circuits every other flag (including `--render`): the list is printed and the process exits before any audio path runs. |
 | `--midi-channel N` | int | (absent = all channels) | Filter Note On/Off/CC to channel N (1..16, per FR-004). Omit the flag to accept all channels; N=0 is a usage error. Requires `--midi` or `--midi-default`. |
 
@@ -77,13 +77,12 @@ The `main.c` argv pre-scan (existing pattern) strips `--seed N` and the `--midi*
 
 When at least one device is found (stdout):
 ```
-0 <name 0>
-1 <name 1>
+<index 0> <name 0>
+<index 1> <name 1>
 ...
-N-1 <name N-1>
 ```
 
-`<index>` and `<name>` are separated by a single space (no colon). When zero devices are found, stdout is **empty** (so `wc -l` on stdout equals the device count for scripts) and the one-line notice `no MIDI input devices found` goes to stderr. Capped at 32 devices (`MIDI_LIST_DEVICES_CAP`). `name` is the human-readable device name from `snd_seq_get_port_info` (Linux) or `midiInGetDevCaps.szPname` (Windows), truncated to 63 chars + NUL. Each line is one record. No header row. Trailing newline.
+`<index>` and `<name>` are separated by a single space (no colon). `<index>` is the value `--midi N` accepts: dense 0-based ordinals on Windows, the ALSA `(client<<8)|port` encoding on Linux (e.g. `3584 Midi Through Port-0` for client 14, port 0) — Linux indexes are therefore NOT consecutive. When zero devices are found, stdout is **empty** (so `wc -l` on stdout equals the device count for scripts) and the one-line notice `no MIDI input devices found` goes to stderr. Capped at 32 devices (`MIDI_LIST_DEVICES_CAP`). `name` is the human-readable "client port" pair from the ALSA client/port info (Linux) or `midiInGetDevCaps.szPname` (Windows), truncated to 63 chars + NUL. Each line is one record. No header row. Trailing newline.
 
 ---
 
@@ -105,7 +104,7 @@ The following cases are testable via `tests/unit/test_midi.c` (the cross-platfor
 
 | ID | Test |
 |----|------|
-| CT-1 | `--midi-list-devices` with ≥1 device outputs one line per device in the format `0 <name>` ... `N-1 <name>` (space-separated); exits 0. |
+| CT-1 | `--midi-list-devices` with ≥1 device outputs one line per device in the format `<index> <name>` (space-separated; ordinal on Windows, `(client<<8)\|port` on Linux); exits 0. |
 | CT-2 | `--midi-list-devices` with 0 devices outputs nothing on stdout, the line `no MIDI input devices found` on stderr; exits 0. |
 | CT-3 | `--midi 0` connects to device index 0; a Note On (programmatically enqueued) triggers a synth voice within one render_chunk. |
 | CT-4 | `--midi 99` with only 3 devices prints `MIDI: device index 99 unavailable (see --midi-list-devices)` and exits 1. |
