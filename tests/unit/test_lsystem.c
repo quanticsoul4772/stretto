@@ -86,6 +86,43 @@ TEST(lsystem_mutate_with_active_mask_changes) {
     }
 }
 
+/* ---- coverage ratchet (064) ---- */
+
+TEST(lsystem_zero_mask_falls_back_to_degree_0) {
+    /* snap_to_mask's outward search finds nothing when the active
+       mask is 0, hitting its documented fallback: return degree 0
+       (gen.c normally forces a 0x01 mask before calling, so this is
+       the one defensive path a caller can actually reach). Every
+       pitched result must be 0; rests still pass through. */
+    lsystem_reset();
+    for (int i = 0; i < 300; i++) {
+        uint8_t d = lsystem_next(0x00u);
+        if (d != LSYSTEM_REST) ASSERT_EQ(d, 0);
+    }
+}
+
+TEST(lsystem_mutate_never_emits_unknown_symbols) {
+    /* The expansion loop and lsystem_next both carry unknown-symbol
+       guards (copy-verbatim / no-move). This test pins the invariant
+       that keeps those guards unreachable: mutation writes only
+       SYM_UP..SYM_REST into rules and axiom, so every value the
+       walker returns is a valid degree or the rest sentinel - never
+       garbage passed through a guard. Deliberately hostile rng
+       patterns (all-ones, alternating, single-bit sweeps). */
+    lsystem_reset();
+    uint32_t rngs[] = { 0xFFFFFFFFu, 0xAAAAAAAAu, 0x55555555u, 0x00000001u,
+                        0x80000000u, 0xC0000003u, 0x7FFFFFFFu, 0xDEADBEEFu };
+    for (unsigned r = 0; r < sizeof(rngs) / sizeof(rngs[0]); r++) {
+        for (int shift = 0; shift < 8; shift++) {
+            lsystem_mutate(rngs[r] >> shift);
+            for (int j = 0; j < 120; j++) {
+                uint8_t d = lsystem_next(0x7Fu);
+                ASSERT_TRUE(d == LSYSTEM_REST || d <= 6);
+            }
+        }
+    }
+}
+
 int main(void) {
     return RUN_ALL();
 }

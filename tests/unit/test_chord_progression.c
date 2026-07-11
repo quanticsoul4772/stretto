@@ -79,6 +79,31 @@ TEST(chord_progression_tracks_prev_root) {
     ASSERT_EQ(chord_progression_get_prev_root(), after_first);
 }
 
+/* ---- coverage ratchet (064) ---- */
+
+TEST(chord_progression_exhaustive_rows_and_rng_extremes) {
+    /* Drive every row of both tables from every reachable root with
+       boundary rng values (0, max, and values that land pick exactly
+       on weight-bucket edges). Pins the invariant that makes the
+       degenerate-row guard (sum == 0 -> reset to root 0) unreachable:
+       every row of both shipped tables has a positive sum, so the
+       weighted pick always terminates inside the row walk and the
+       root stays in [0, 6]. */
+    uint32_t rngs[] = { 0u, 1u, 6u, 7u, 0xFFFFFFFFu, 0x7FFFFFFFu,
+                        100u, 101u, 0xDEADBEEFu };
+    for (uint8_t scale = 0; scale < 6; scale++) {
+        chord_progression_init();
+        /* long walk so every root (= every table row) gets visited
+           as the step's starting row */
+        for (uint32_t i = 0; i < 300; i++) {
+            for (unsigned r = 0; r < sizeof(rngs) / sizeof(rngs[0]); r++) {
+                chord_progression_step(rngs[r] + i, scale);
+                ASSERT_TRUE(chord_progression_get_root() < 7);
+            }
+        }
+    }
+}
+
 int main(void) {
     return RUN_ALL();
 }

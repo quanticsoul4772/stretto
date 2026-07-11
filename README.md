@@ -291,7 +291,7 @@ See `ARCHITECTURE.md` for the detailed walkthrough.
 ```
 make test            # CLI contract + bit-exact regression (16 s seed-0 sha256)
                      # + Constitution<->Makefile bridge/amend regression suites
-make test-unit       # 173 unit tests across all pure-synth modules + keys + MIDI
+make test-unit       # 176 unit tests across all pure-synth modules + keys + MIDI
 make test-multiseed  # renders 4 seeds, checks determinism + audio bounds + golden
 make test-smoke      # spawns ./synth for 2 s, expects clean exit / SIGTERM
 make coverage        # rebuilds with -fprofile-arcs -ftest-coverage and prints
@@ -349,7 +349,7 @@ The spec-kit artifacts (spec, plan, research, tasks, quickstart) live under `spe
 | `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
 | `tests/test_multi_seed.sh` | Renders 4 seeds; determinism + audio bounds + golden hashes |
 | `tests/test_smoke_live.sh` | Live-mode smoke + PTY terminal-restore checks + MIDI wildcard smoke |
-| `tests/unit/test_*.c` | 173 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys, midi |
+| `tests/unit/test_*.c` | 176 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys, midi |
 | `golden/` | Reference hashes for the bit-exact regressions |
 | `.github/workflows/ci.yml` | CI: build, all tests, Windows cross-compile, coverage gates, size gate |
 | `.github/workflows/release.yml` | Tag-triggered release: full gates, installer drift gate, publishes checksummed binaries + `stretto.1` |
