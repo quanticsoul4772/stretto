@@ -2,17 +2,17 @@
 #   brew tap quanticsoul4772/stretto https://github.com/quanticsoul4772/stretto
 #   brew install stretto
 #
-# sha256 pinned against the public archive URL (repo made public
-# 2026-07-09; the tarball was verified to build and report
-# `stretto 1.3.0` with the STRETTO_VERSION override below).
+# sha256 pinned against the public archive URL; the tarball is
+# verified on each bump to build and report `stretto <version>` with
+# the STRETTO_VERSION override below.
 # `brew audit --strict quanticsoul4772/stretto/stretto` passes clean
-# (run 2026-07-09 via Linuxbrew in WSL). Re-run it when this file
+# (last run 2026-07-11 via Linuxbrew in WSL). Re-run it when this file
 # changes.
 class Stretto < Formula
   desc "Tiny deterministic generative music synthesizer"
   homepage "https://github.com/quanticsoul4772/stretto"
-  url "https://github.com/quanticsoul4772/stretto/archive/refs/tags/v1.3.0.tar.gz"
-  sha256 "26a50398d9d15a56733aee36f585dd2a72d2df0c75fafd8d151c0e6d2dd85c0f"
+  url "https://github.com/quanticsoul4772/stretto/archive/refs/tags/v1.4.0.tar.gz"
+  sha256 "dd6925bbf8dc76bb8618be050512af43dcab4b3351ca01d59a7d4368210a419b"
   license "MIT"
 
   # No macOS audio backend exists: live audio is PulseAudio (Linux) /
