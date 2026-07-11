@@ -599,16 +599,18 @@ The 128-entry `CC_MAP` lives in `.rodata` of `audio_midi.c` (512 B total). Per C
 |------------|-------------------------------------|-------|------------------------------------|
 | 1          | per-voice filter cutoff             | +1    | ±63 against [30, 180] base         |
 | 7          | master compressor threshold         | +60   | ±3780 against [8000, 30000] base   |
+| 64         | sustain pedal (hold state, FR-023)  | n/a   | raw VALUE semantics: ≥64 pedal down, <64 up — per channel; moves no parameters |
 | 71         | per-voice filter resonance          | +1    | ±63 against [0, 180] base          |
 | 74         | per-voice filter cutoff             | +1    | sums with CC#1 per FR-022          |
 | 91         | master reverb wet                   | +1    | ±63 against [0, 256] base          |
 | 93         | master delay wet                    | +1    | sums with `d` / `D` key live-edit  |
 
-`CC_TARGET_NONE` slots (silently dropped, no `fprintf`, no callback overhead; all 7 zero-initialized via the C99 designated-initializer `[N]={}` form so the table footprint is exactly 512 B in `.rodata` regardless of populated slot count):
+**CC#64 sustain (065, FR-023).** MIDI-tagged voices use gate semantics: after decay they PARK at the sustain level until Note Off (a held key rings — the generative scheduler's voices keep the fire-and-forget auto-release, so goldens are untouched). With the pedal down on a channel (`g_sustain_mask` in audio_midi.c, one bit per channel), Note Off marks the voice held instead of releasing it — high bit of `trigger_channel`, zero struct growth — and pedal-up flushes every voice held on that channel (`voice_pool_hold_midi` / `voice_pool_flush_sustained`). Voice-stealing ignores the held tag under pool pressure, the standard pedal compromise.
+
+`CC_TARGET_NONE` slots (silently dropped, no `fprintf`, no callback overhead; zero-initialized via the C99 designated-initializer `[N]={}` form so the table footprint is exactly 512 B in `.rodata` regardless of populated slot count):
 
 - **CC#0** / **CC#10** (Bank Select MSB / Pan) — common wheel/encoder assignments on hardware controllers; explicitly out of scope for v1.
-- **CC#16 / CC#17 / CC#18 / CC#19** (General Purpose Controllers 1–4) — controller-specific use; deliberately unassigned so explicit CC routing stays in the 6-way table above.
-- **CC#64** (Sustain Pedal) — **unassigned in v1 per Principle VII; sustained key-release will release immediately (no pedal-aware hold state implemented — gap, not a design choice)**. Hardware pedals are ignored; the voice pool releases on the matching Note Off per FR-012 regardless of pedal position. A future spec can wire sustain semantics without breaking CC table compatibility.
+- **CC#16 / CC#17 / CC#18 / CC#19** (General Purpose Controllers 1–4) — controller-specific use; deliberately unassigned so explicit CC routing stays in the table above.
 - **CC#123** (All Notes Off) — v1 relies on the MIDI 1.0 standard's NOTE_ON V=0 mechanism (FR-011) for release propagation; CC#123 as a parallel "panic" command is not routed.
 
 Voice synthesis methods consumed by MIDI and the generative scheduler are documented in [Synthesis details](#synthesis-details): `VOICE_KS` (Karplus-Strong plucked-string for melody slot 5–7 alternation), `VOICE_FM` (2-op FM with shared sine LUT — the direct voice for MIDI Note On), `VOICE_SUB` (super-saw bass + glide portamento for legato re-triggers, role BASS slots 0–1), plus `VOICE_WT` / `VOICE_ADD` (wavetable / additive chord voices, section-selected) and `VOICE_DRUM` (kick / snare / hihat kit). The MIDI dispatch uses the same `Voice` struct as the generative engine — only the slot-selection paths differ (see [Voice pool](#voice-pool-11-slots-4-roles)).
@@ -642,7 +644,7 @@ The oscilloscope draws each frame into a 24 KB static buffer (one `write()` sysc
 | Target | Scope |
 |---|---|
 | `make test` | CLI contract (`tests/test_cli.sh`: help/version/usage errors, stdout render, preset flags, no-server UX, offline install.sh, man page) + bit-exact regression (render 16 s at `--seed 0` twice, byte-compare, sha256 against `golden/regression_16s.sha256`) + the Constitution↔Makefile bridge and amend regression suites. |
-| `make test-unit` | 176 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
+| `make test-unit` | 178 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
 | `make test-multiseed` | Renders 4 s at seeds 0 / 1 / 42 / 12345, asserts each is deterministic across runs, asserts all four produce distinct sha256s, asserts each render's peak / clip count / spectral centroid / zero-crossing rate land within sane bounds (RMS is reported but not gated, since the randomized INTRO palette varies loudness), then matches each hash against `golden/regression_multiseed.sha256.txt`. |
 | `make test-smoke` | Spawns `./synth --no-ui` under a 2 s timeout. Pass on exit 0 / 124 / 143; fail on segfault. Auto-skips if no PulseAudio. |
 | `make coverage` | Rebuilds instrumented (`-fprofile-arcs -ftest-coverage`), runs the regression + unit suites, prints per-file line coverage via `gcov`. |

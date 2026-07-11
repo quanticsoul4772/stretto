@@ -9,7 +9,15 @@ CFLAGS = -Os -flto -fuse-linker-plugin -ffast-math \
          -fno-asynchronous-unwind-tables -fno-stack-protector \
          -fcf-protection=none -fno-pic -Qn \
          -pthread -latomic
+# -z noseparate-code: Ubuntu's ld page-aligns every LOAD segment
+# separately by default (W^X refinement), which is what created the
+# 4 KB per-segment page cliffs the 063 arc fought - a ~150 B feature
+# could cost a full page, and only on CI's compiler. Merging the
+# read-only segments (2 LOADs instead of 4) matches the existing
+# posture (norelro, no-pie) and leaves ~780 B of cliff headroom
+# instead of ~150.
 LDFLAGS = -Wl,--gc-sections -Wl,-z,norelro \
+          -Wl,-z,noseparate-code \
           -Wl,--hash-style=sysv -no-pie \
           -pthread -latomic
 

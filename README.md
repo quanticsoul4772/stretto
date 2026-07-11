@@ -191,6 +191,7 @@ The first column is the `<index>` you pass to `--midi <N>`. On Linux it encodes 
 ### Note mapping
 
 - Note On / Off maps through the active scale, the same way the generative melody does, so MIDI notes feel in-scale instead of chromatic. Velocity 0 on a Note On means Note Off.
+- A held key rings at its sustain level until you release it (gate semantics); the generative voices keep their own fire-and-forget envelopes.
 - Octave offset clamps to [-2, +4] so a MIDI note never strays out of the synth's audible range.
 - 11-voice pool with voice-stealing: idle first, in-release second, oldest third.
 
@@ -200,12 +201,13 @@ The first column is the `<index>` you pass to `--midi <N>`. On Linux it encodes 
 |---|---|---|---|
 | 1 | Mod Wheel | Filter cutoff | +1 |
 | 7 | Channel Volume | Compressor threshold | +60 |
+| 64 | Sustain Pedal | Holds Note Offs (≥64 down, <64 up; per channel) | value |
 | 71 | Resonance / Timbre | Filter resonance | +1 |
 | 74 | Brightness | Filter cutoff | +1 |
 | 91 | Reverb Send | Reverb wet | +1 |
 | 93 | Chorus / Delay | Delay wet | +1 |
 
-Delta = `(V - 64) * scale`, summing additively across multiple CCs targeting the same parameter. All other CCs (sustain pedal, All Notes Off, the General Purpose slots) are silently ignored.
+Delta = `(V - 64) * scale`, summing additively across multiple CCs targeting the same parameter. CC#64 is the exception: it uses the raw value (pedal down/up), moves no parameters, and holds notes past their Note Off piano-style — all released together on pedal-up. All other CCs (All Notes Off, the General Purpose slots) are silently ignored.
 
 ### Disconnect
 
@@ -291,7 +293,7 @@ See `ARCHITECTURE.md` for the detailed walkthrough.
 ```
 make test            # CLI contract + bit-exact regression (16 s seed-0 sha256)
                      # + Constitution<->Makefile bridge/amend regression suites
-make test-unit       # 176 unit tests across all pure-synth modules + keys + MIDI
+make test-unit       # 178 unit tests across all pure-synth modules + keys + MIDI
 make test-multiseed  # renders 4 seeds, checks determinism + audio bounds + golden
 make test-smoke      # spawns ./synth for 2 s, expects clean exit / SIGTERM
 make coverage        # rebuilds with -fprofile-arcs -ftest-coverage and prints
@@ -349,7 +351,7 @@ The spec-kit artifacts (spec, plan, research, tasks, quickstart) live under `spe
 | `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
 | `tests/test_multi_seed.sh` | Renders 4 seeds; determinism + audio bounds + golden hashes |
 | `tests/test_smoke_live.sh` | Live-mode smoke + PTY terminal-restore checks + MIDI wildcard smoke |
-| `tests/unit/test_*.c` | 176 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys, midi |
+| `tests/unit/test_*.c` | 178 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys, midi |
 | `golden/` | Reference hashes for the bit-exact regressions |
 | `.github/workflows/ci.yml` | CI: build, all tests, Windows cross-compile, coverage gates, size gate |
 | `.github/workflows/release.yml` | Tag-triggered release: full gates, installer drift gate, publishes checksummed binaries + `stretto.1` |

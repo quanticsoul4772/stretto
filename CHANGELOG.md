@@ -1,5 +1,14 @@
 # Changelog
 
+## Recent: CC#64 sustain pedal + MIDI gate semantics (065)
+
+Implementing the pedal surfaced a deeper gap: the amplitude envelope had NO sustain phase - every note auto-decayed A->D->R and died ~0.8 s after trigger even with the key still held, which made "pedal defers the release" nearly meaningless (the voice released itself 200 ms in). Amended as FR-023 in specs/003:
+
+- **Gate semantics for MIDI voices**: a MIDI-tagged voice now PARKS at the sustain level after decay until its Note Off - a held key rings, the standard keyboard model. Generative voices keep the fire-and-forget auto-release, and MIDI is never active in --render, so goldens are byte-identical.
+- **CC#64**: raw value semantics per MIDI 1.0 (>= 64 down, < 64 up), per channel. Pedal down converts Note Offs (including Note On velocity 0 per FR-011) into holds; pedal-up releases everything held on that channel. Held voices are tagged in the high bit of trigger_channel (channels are 1..16) - zero Voice struct growth, same trick as the D4 discriminator. The pedal moves no synth parameters (pinned by test).
+- Voice-stealing ignores the held tag under pool pressure (standard pedal compromise); pedal-up flushes unconditionally so a re-init between opens cannot strand held voices.
+- Also banked binary headroom first: `-z noseparate-code` merges the read-only LOAD segments (4 -> 2), moving the next 4 KB text page cliff ~780 B away instead of the ~150 B that made the 063 arc a CI gamble. The pedal's ~220 B fit inside existing padding - binary size unchanged.
+
 ## Recent: Ctrl-Z suspend/resume (063)
 
 The last "Known issue" line is gone: SIGTSTP used to suspend live mode with the terminal still raw (and stdin still nonblocking) until `fg`. A dedicated handler now restores the terminal, stops the process *inside the handler* (default disposition + explicit unblock + `raise`), and - because SIGCONT resumes execution right after the `raise` - re-arms itself and replays the saved raw termios + `O_NONBLOCK` on `fg`. All handler work is async-signal-safe; the two `sigaction` structs are prepared at install time. `bg`-resume re-stops on the re-entry `tcsetattr`'s SIGTTOU, the standard TUI behavior (use `fg`).

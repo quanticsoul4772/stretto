@@ -133,6 +133,12 @@ Stereo  voice_pool_mix(void);
    (key, channel) tuple (FR-012). */
 void voice_pool_trigger_midi(uint8_t note, uint8_t velocity, uint8_t channel);
 void voice_pool_release_midi(uint8_t key, uint8_t channel);
+/* CC#64 sustain pedal (065): hold marks the matching active voice as
+   pedal-held instead of releasing it (high bit of trigger_channel;
+   zero struct growth); flush releases every voice held on the
+   channel. Driven by audio_midi.c's drain on the audio thread. */
+void voice_pool_hold_midi(uint8_t key, uint8_t channel);
+void voice_pool_flush_sustained(uint8_t channel);
 
 void     voice_set_mod_depth(uint16_t d);
 uint16_t voice_get_mod_depth(void);

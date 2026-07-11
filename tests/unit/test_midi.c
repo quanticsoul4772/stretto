@@ -217,12 +217,19 @@ TEST(midi_voice_stealing) {
      * 0x07FF cleanly isolates the 11-slot claim. */
     ASSERT_EQ(mask & 0x07FFu, 0x07FFu);
 
-    /* Q1 second-pass: drive voice_step ~10000 times via voice_pool_mix
-     * so FM/ROLE_MELODY voices pass attack (240) + decay (9600) and
-     * enter ENV_R. Now the next Midi Note On will hit the second-pass
-     * steal (max env_time in ENV_R -- quietest, least audible to
-     * steal). */
+    /* Drive voice_step ~10000 times via voice_pool_mix so FM/
+     * ROLE_MELODY voices pass attack (240) + decay (9600). Post-065
+     * gate semantics: MIDI-tagged voices PARK at the sustain level
+     * instead of auto-releasing, so entering ENV_R now takes an
+     * explicit Note Off - release three keys, then mix a little more
+     * so they sit in ENV_R with a healthy env_time. The next Note On
+     * then exercises the Q1 second-pass steal (max env_time in ENV_R
+     * -- quietest, least audible to steal). */
     for (int n = 0; n < 10000; n++) voice_pool_mix();
+    voice_pool_release_midi(61, 1);
+    voice_pool_release_midi(62, 1);
+    voice_pool_release_midi(63, 1);
+    for (int n = 0; n < 2000; n++) voice_pool_mix();
 
     /* Q1 second-pass trigger. Pool stays >=10 active (one slot was
      * stolen and re-tagged, so the count is unchanged but the chosen
@@ -556,11 +563,11 @@ TEST(midi_cc11_expression_noop) {
 /* T025i: CC#64 (sustain pedal, MIDI 1.0 standard name) is
  * CC_TARGET_NONE per spec. The user's "sustain pedal gate" naming
  * refers to the standard MIDI 1.0 behavior (pedal holds notes past
- * Note Off), but v1 keeps CC#64 in NONE per data-model.md Entity 4
- * (Principle VII: unassigned CCs silently dropped, sustain-pedal
- * hold semantics reserved for future US-phase). The dispatch must
- * produce zero state changes. */
-TEST(midi_cc64_sustain_pedal_noop) {
+ * Note Off), implemented in 065 as CC_TARGET_SUSTAIN. The pedal
+ * changes VOICE hold state only - it must move zero synth
+ * PARAMETERS (cutoff/resonance/delay/reverb/compressor), which is
+ * what this test pins. */
+TEST(midi_cc64_moves_no_parameters) {
     test_init_synth();
     reset_cc_targets_to_interior();
     cc_snapshot_t before = snapshot_cc_params();
@@ -653,6 +660,76 @@ TEST(midi_channel_filter_drops_non_matching) {
     dispatch_one_cc_full(5, 6,  1, 100);
     ASSERT_EQ(voice_get_cutoff(), baseline + 36);
     /* Clean up: opt out of MIDI for the rest of the test cycle. */
+    audio_midi_init(-1);
+}
+
+/* ============================================================
+ * CC#64 sustain pedal (065)
+ *
+ * MIDI-role voices are ROLE_MELODY: attack 240 + decay 9600 samples,
+ * then ENV_S (indefinite), release 28800 samples. So 40000
+ * voice_pool_mix() calls after a release is comfortably past silence,
+ * while a HELD voice parks in ENV_S and survives any number of them.
+ * ============================================================ */
+static void pedal_enqueue(uint8_t type, uint8_t channel,
+                          uint8_t key, uint8_t value) {
+    midi_event_t ev = {
+        .type = type, .channel = channel, .key = key, .value = value
+    };
+    audio_midi_enqueue(&ev);
+}
+
+static void pedal_mix(int n) {
+    for (int i = 0; i < n; i++) (void)voice_pool_mix();
+}
+
+TEST(midi_sustain_pedal_holds_note_off) {
+    test_init_synth();
+    voice_pool_init();
+    audio_midi_init(0);
+    /* Pedal down, note on, note off - all channel 1. */
+    pedal_enqueue(MIDI_EVENT_CC, 1, 64, 127);
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 1, 60, 100);
+    audio_midi_drain();
+    pedal_enqueue(MIDI_EVENT_NOTE_OFF, 1, 60, 0);
+    audio_midi_drain();
+    /* A plain release would be silent after 40000 samples; the held
+       voice must still be ringing (parked in ENV_S). */
+    pedal_mix(40000);
+    ASSERT_TRUE(voice_pool_active_mask() != 0u);
+    /* Pedal up: the held voice releases and decays to OFF. */
+    pedal_enqueue(MIDI_EVENT_CC, 1, 64, 0);
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+    audio_midi_init(-1);
+}
+
+TEST(midi_sustain_pedal_is_per_channel) {
+    test_init_synth();
+    voice_pool_init();
+    audio_midi_init(0);
+    /* Pedal down on channel 2 must NOT hold a channel-1 note. */
+    pedal_enqueue(MIDI_EVENT_CC, 2, 64, 127);
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 1, 60, 100);
+    audio_midi_drain();
+    pedal_enqueue(MIDI_EVENT_NOTE_OFF, 1, 60, 0);
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+    /* And FR-011: Note On velocity 0 routes through the same pedal
+       check - held when the pedal IS down on the note's channel. */
+    pedal_enqueue(MIDI_EVENT_CC, 1, 64, 64);   /* >= 64 boundary = down */
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 1, 62, 100);
+    audio_midi_drain();
+    pedal_enqueue(MIDI_EVENT_NOTE_ON, 1, 62, 0);  /* vel 0 = Note Off */
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_TRUE(voice_pool_active_mask() != 0u);
+    pedal_enqueue(MIDI_EVENT_CC, 1, 64, 63);   /* < 64 boundary = up */
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
     audio_midi_init(-1);
 }
 
