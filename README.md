@@ -36,6 +36,37 @@ Produces `synth.packed` (~25 KB; 25 460 B post-#117, within the 30 KB Constituti
 
 ## Install
 
+Linux x86_64, no root needed — downloads the latest release binary + man page and verifies both against the release's `sha256sums.txt`:
+
+```
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/quanticsoul4772/stretto/main/install.sh | sh
+```
+
+Prefer to read it first (same script, same source):
+
+```
+curl -fsSLO https://raw.githubusercontent.com/quanticsoul4772/stretto/main/install.sh
+less install.sh && sh install.sh
+```
+
+Installs to `~/.local/bin` (or `/usr/local` when run as root); `STRETTO_VERSION=vX.Y.Z` picks a specific release. Or use [ubi](https://github.com/houseabsolute/ubi), which selects the unpacked binary automatically:
+
+```
+ubi --project quanticsoul4772/stretto --in ~/.local/bin
+```
+
+### Hear it now
+
+```
+stretto                                   # live synth (q quits, ? = key map)
+stretto --render 10 demo.wav --seed 42    # render 10 s; no audio server needed
+man stretto
+```
+
+If `~/.local/bin` wasn't on your PATH before, restart your shell — Debian/Ubuntu's `~/.profile` adds it only when it exists at login, and `man stretto` resolves through PATH too.
+
+### From source
+
 ```
 make && sudo make install     # installs /usr/local/bin/stretto + man page
 sudo make uninstall
@@ -433,6 +464,7 @@ Coverage build writes all artifacts under `build_cov/` so `make test-unit` and `
 | `.github/workflows/ci.yml` | CI: build, all tests, Windows cross-compile, coverage gates, size gate |
 | `.github/workflows/release.yml` | Tag-triggered release: full gates + version/cleanliness assertions, publishes checksummed binaries + `stretto.1` (rehearsable via `workflow_dispatch`) |
 | `stretto.1` | Man page (hand-written roff; linted + help↔man drift-gated by `tests/test_cli.sh`) |
+| `install.sh` | curl\|sh installer: sha256-verified release download, `~/.local`/root-aware install (offline-tested in `test_cli.sh`; drift-gated against every assembled dist by release.yml) |
 | `Formula/stretto.rb` | Homebrew formula (repo doubles as its own tap; Linux-only; publication gated on repo visibility) |
 | `packaging/aur/` | AUR `PKGBUILD` + `.SRCINFO`, ready to push to AUR once the repo is public |
 | `tools/size-budget-gate.sh` | The 3-key binary size budget gate (shared by ci.yml and release.yml) |
