@@ -112,7 +112,11 @@ jobs:
         # Report is uploaded so PR-time refreshes of ARCHITECTURE.md
         # binary-size row can be sourced from CI artifact instead of
         # needing local toolchain reinstallation.
-        run: make size | tee binary-sizes.txt
+        # pipefail: without it the step's status is tee's (always 0)
+        # and a failing `make size` would go green.
+        run: |
+          set -o pipefail
+          make size | tee binary-sizes.txt
 
       - name: Upload binary sizes artifact
         uses: actions/upload-artifact@v4
@@ -149,15 +153,20 @@ jobs:
         run: bash tools/size-budget-gate.sh binary-sizes.txt
 
       - name: Coverage report
+        # pipefail: same reason as the size step - tee must not mask
+        # a coverage build/run failure.
         run: |
+          set -o pipefail
           make coverage 2>&1 | tee coverage.log
 
       - name: Coverage gates
         # Per-file gates against the measured subset (interactive
-        # modules ui.c, keys.c, audio_pulse.c are excluded by
-        # COV_SRCS_INTERACTIVE in Makefile - they need a TTY + audio
-        # device that CI does not have). Tightening these forces
-        # the project's coverage discipline to ratchet up over time.
+        # modules ui.c, keys.c, audio_pulse.c, audio_midi_linux.c,
+        # main.c are excluded by COV_SRCS_INTERACTIVE in the Makefile
+        # - they need a TTY / audio device / ALSA sequencer / direct
+        # argv invocation that CI's render path does not provide).
+        # Tightening these forces the project's coverage discipline
+        # to ratchet up over time.
         run: |
           declare -A thresholds=(
             [audio_midi.c]=90

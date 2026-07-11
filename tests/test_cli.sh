@@ -16,17 +16,25 @@ if [ ! -x ./synth ]; then
     exit 1
 fi
 
+# Single mktemp workdir for EVERY temp file in this script (fixed
+# /tmp/cli_* names collide across concurrent checkouts and can be
+# pre-planted by another user on shared machines). One trap owns
+# cleanup - the install.sh block below nests its dirs under $CT so it
+# never needs a second (trap-clobbering) EXIT trap.
+CT=$(mktemp -d)
+trap 'rm -rf "$CT"' EXIT
+
 fail=0
 
 # --- --help: exit 0, stdout starts with "usage:", stderr empty ---
-if ! out=$(./synth --help 2>/tmp/cli_stderr); then
+if ! out=$(./synth --help 2>"$CT"/cli_stderr); then
     echo "FAIL: --help exited non-zero"; fail=1
 fi
 case "$out" in
     usage:*) ;;
     *) echo "FAIL: --help stdout does not start with 'usage:'"; fail=1 ;;
 esac
-if [ -s /tmp/cli_stderr ]; then
+if [ -s "$CT"/cli_stderr ]; then
     echo "FAIL: --help wrote to stderr"; fail=1
 fi
 
@@ -37,54 +45,54 @@ fi
 
 # --- --version: exit 0, first line "stretto <ver>" (version after the
 #     last space per GNU 4.8.1), stderr empty ---
-if ! out=$(./synth --version 2>/tmp/cli_stderr); then
+if ! out=$(./synth --version 2>"$CT"/cli_stderr); then
     echo "FAIL: --version exited non-zero"; fail=1
 fi
 case "$out" in
     "stretto "*) ;;
     *) echo "FAIL: --version first line does not start with 'stretto '"; fail=1 ;;
 esac
-if [ -s /tmp/cli_stderr ]; then
+if [ -s "$CT"/cli_stderr ]; then
     echo "FAIL: --version wrote to stderr"; fail=1
 fi
 
 # --- precedence + side-effect suppression: --help wins over --render
 #     (exit 0 AND no output file created - help must suppress the
 #     render itself, not just the exit code) ---
-rm -f /tmp/cli_help.wav
-if ! ./synth --help --render 60 /tmp/cli_help.wav >/dev/null 2>&1; then
+rm -f "$CT"/cli_help.wav
+if ! ./synth --help --render 60 "$CT"/cli_help.wav >/dev/null 2>&1; then
     echo "FAIL: '--help --render ...' exited non-zero"; fail=1
 fi
-if [ -e /tmp/cli_help.wav ]; then
+if [ -e "$CT"/cli_help.wav ]; then
     echo "FAIL: --help did not suppress the render (output file created)"
-    rm -f /tmp/cli_help.wav
+    rm -f "$CT"/cli_help.wav
     fail=1
 fi
 
 # --- usage errors still go to stderr with exit 1 (unchanged contract) ---
 set +e
-./synth --definitely-not-a-flag >/tmp/cli_stdout 2>/tmp/cli_stderr
+timeout 10 ./synth --definitely-not-a-flag >"$CT"/cli_stdout 2>"$CT"/cli_stderr
 rc=$?
 set -e
 if [ "$rc" -ne 1 ]; then
     echo "FAIL: unknown flag exited $rc (expected 1)"; fail=1
 fi
-if [ -s /tmp/cli_stdout ]; then
+if [ -s "$CT"/cli_stdout ]; then
     echo "FAIL: unknown-flag usage error wrote to stdout"; fail=1
 fi
-if ! grep -q '^usage:' /tmp/cli_stderr; then
+if ! grep -q '^usage:' "$CT"/cli_stderr; then
     echo "FAIL: unknown-flag usage error missing 'usage:' on stderr"; fail=1
 fi
 
 # --- stdout render ('-' path): byte-identical to a file render ---
-rm -f /tmp/cli_a.wav /tmp/cli_b.wav
-if ! ./synth --render 2 /tmp/cli_a.wav --seed 0 2>/dev/null; then
+rm -f "$CT"/cli_a.wav "$CT"/cli_b.wav
+if ! ./synth --render 2 "$CT"/cli_a.wav --seed 0 2>/dev/null; then
     echo "FAIL: file render exited non-zero"; fail=1
 fi
-if ! ./synth --render 2 - --seed 0 >/tmp/cli_b.wav 2>/dev/null; then
+if ! ./synth --render 2 - --seed 0 >"$CT"/cli_b.wav 2>/dev/null; then
     echo "FAIL: stdout render exited non-zero"; fail=1
 fi
-if ! cmp -s /tmp/cli_a.wav /tmp/cli_b.wav; then
+if ! cmp -s "$CT"/cli_a.wav "$CT"/cli_b.wav; then
     echo "FAIL: stdout render differs from file render (must be byte-identical)"
     fail=1
 fi
@@ -94,16 +102,16 @@ fi
 # everything after it - including a trailing recognized flag like
 # --seed. Overflow must now be a loud usage error.
 set +e
-./synth x1 x2 x3 x4 x5 x6 x7 x8 --seed 5 >/tmp/cli_stdout 2>/tmp/cli_stderr
+timeout 10 ./synth x1 x2 x3 x4 x5 x6 x7 x8 --seed 5 >"$CT"/cli_stdout 2>"$CT"/cli_stderr
 rc=$?
 set -e
 if [ "$rc" -ne 1 ]; then
     echo "FAIL: positional overflow exited $rc (expected 1)"; fail=1
 fi
-if ! grep -q '^too many arguments' /tmp/cli_stderr; then
+if ! grep -q '^too many arguments' "$CT"/cli_stderr; then
     echo "FAIL: positional overflow missing 'too many arguments' on stderr"; fail=1
 fi
-if [ -s /tmp/cli_stdout ]; then
+if [ -s "$CT"/cli_stdout ]; then
     echo "FAIL: positional overflow wrote to stdout"; fail=1
 fi
 
@@ -115,13 +123,13 @@ fi
 # kills it (124/143) or exits 1 later at PulseAudio connect on
 # PA-less machines - either way it got PAST terminal setup.
 set +e
-timeout --preserve-status 2 ./synth </dev/null >/tmp/cli_stdout 2>/tmp/cli_stderr
+timeout --preserve-status 2 ./synth </dev/null >"$CT"/cli_stdout 2>"$CT"/cli_stderr
 rc=$?
 set -e
-if grep -q "tcgetattr" /tmp/cli_stderr; then
+if grep -q "tcgetattr" "$CT"/cli_stderr; then
     echo "FAIL: non-TTY stdin still dies on tcgetattr"; fail=1
 fi
-if ! grep -q "running headless" /tmp/cli_stderr; then
+if ! grep -q "running headless" "$CT"/cli_stderr; then
     echo "FAIL: non-TTY run missing the headless notice"; fail=1
 fi
 case "$rc" in
@@ -137,29 +145,29 @@ esac
 DEFAULT_FLAGS="--scale dorian --bar-ms 2000 --gate 200 --mod-depth 1500 \
 --resonance 100 --lfo-depth 80 --filter-mode lp --reverb 60 --delay 100 \
 --feedback 140 --comp-threshold 20000"
-rm -f /tmp/cli_p0.wav /tmp/cli_p1.wav /tmp/cli_p2.wav /tmp/cli_p3.wav
-if ! ./synth --render 2 /tmp/cli_p0.wav --seed 0 2>/dev/null; then
+rm -f "$CT"/cli_p0.wav "$CT"/cli_p1.wav "$CT"/cli_p2.wav "$CT"/cli_p3.wav
+if ! ./synth --render 2 "$CT"/cli_p0.wav --seed 0 2>/dev/null; then
     echo "FAIL: flagless preset baseline render exited non-zero"; fail=1
 fi
-if ! ./synth --render 2 /tmp/cli_p1.wav --seed 0 $DEFAULT_FLAGS 2>/dev/null; then
+if ! ./synth --render 2 "$CT"/cli_p1.wav --seed 0 $DEFAULT_FLAGS 2>/dev/null; then
     echo "FAIL: explicit-defaults render exited non-zero"; fail=1
 fi
-if ! cmp -s /tmp/cli_p0.wav /tmp/cli_p1.wav; then
+if ! cmp -s "$CT"/cli_p0.wav "$CT"/cli_p1.wav; then
     echo "FAIL: explicit-default flags changed the output (setters must be inert at defaults)"
     fail=1
 fi
 # (b) A non-default flag must change the output...
-if ! ./synth --render 2 /tmp/cli_p2.wav --seed 0 --scale lydian --cutoff 180 2>/dev/null; then
+if ! ./synth --render 2 "$CT"/cli_p2.wav --seed 0 --scale lydian --cutoff 180 2>/dev/null; then
     echo "FAIL: flagged render exited non-zero"; fail=1
 fi
-if cmp -s /tmp/cli_p0.wav /tmp/cli_p2.wav; then
+if cmp -s "$CT"/cli_p0.wav "$CT"/cli_p2.wav; then
     echo "FAIL: --scale lydian --cutoff 180 did not change the output"; fail=1
 fi
 # (c) ...deterministically: same flags twice, byte-identical.
-if ! ./synth --render 2 /tmp/cli_p3.wav --seed 0 --scale lydian --cutoff 180 2>/dev/null; then
+if ! ./synth --render 2 "$CT"/cli_p3.wav --seed 0 --scale lydian --cutoff 180 2>/dev/null; then
     echo "FAIL: flagged render (repeat) exited non-zero"; fail=1
 fi
-if ! cmp -s /tmp/cli_p2.wav /tmp/cli_p3.wav; then
+if ! cmp -s "$CT"/cli_p2.wav "$CT"/cli_p3.wav; then
     echo "FAIL: flagged render is not reproducible"; fail=1
 fi
 # (d) Out-of-range and malformed values are usage errors (exit 1,
@@ -167,25 +175,25 @@ fi
 for bad in "--gate 999" "--gate abc" "--scale nope" "--bar-ms 100" \
            "--filter-mode xy" "--comp-threshold 7999"; do
     set +e
-    ./synth --render 1 /tmp/cli_bad.wav $bad >/tmp/cli_stdout 2>/tmp/cli_stderr
+    ./synth --render 1 "$CT"/cli_bad.wav $bad >"$CT"/cli_stdout 2>"$CT"/cli_stderr
     rc=$?
     set -e
     if [ "$rc" -ne 1 ]; then
         echo "FAIL: '$bad' exited $rc (expected 1)"; fail=1
     fi
-    if [ -s /tmp/cli_stdout ]; then
+    if [ -s "$CT"/cli_stdout ]; then
         echo "FAIL: '$bad' wrote to stdout"; fail=1
     fi
 done
-rm -f /tmp/cli_bad.wav
+rm -f "$CT"/cli_bad.wav
 # (e) Render mode prints the seed capture line on stderr.
-if ! ./synth --render 1 /tmp/cli_p0.wav --seed 42 2>/tmp/cli_stderr; then
+if ! ./synth --render 1 "$CT"/cli_p0.wav --seed 42 2>"$CT"/cli_stderr; then
     echo "FAIL: seed-line render exited non-zero"; fail=1
 fi
-if ! grep -q '^resume with: --seed 42$' /tmp/cli_stderr; then
+if ! grep -q '^resume with: --seed 42$' "$CT"/cli_stderr; then
     echo "FAIL: render did not print 'resume with: --seed 42' on stderr"; fail=1
 fi
-rm -f /tmp/cli_p0.wav /tmp/cli_p1.wav /tmp/cli_p2.wav /tmp/cli_p3.wav
+rm -f "$CT"/cli_p0.wav "$CT"/cli_p1.wav "$CT"/cli_p2.wav "$CT"/cli_p3.wav
 
 # --- broken pipe: downstream closing early must terminate the render
 #     promptly. 141 = died by SIGPIPE (default disposition, standard
@@ -211,15 +219,15 @@ esac
 if [ "$(uname -s)" = "Linux" ]; then
     set +e
     PULSE_SERVER=unix:/nonexistent/socket timeout --preserve-status 10 \
-        ./synth --no-ui >/tmp/cli_stdout 2>/tmp/cli_stderr
+        ./synth --no-ui >"$CT"/cli_stdout 2>"$CT"/cli_stderr
     rc=$?
     set -e
     if [ "$rc" -ne 1 ]; then
         echo "FAIL: no-server run exited $rc (expected 1)"; fail=1
     fi
-    if ! grep -q "pipewire-pulse" /tmp/cli_stderr; then
+    if ! grep -q "pipewire-pulse" "$CT"/cli_stderr; then
         echo "FAIL: no-server error does not mention pipewire-pulse; stderr was:"
-        cat /tmp/cli_stderr
+        cat "$CT"/cli_stderr
         fail=1
     fi
 else
@@ -237,12 +245,16 @@ fi
 if ! sh -n install.sh; then
     echo "FAIL: install.sh does not parse under sh -n"; fail=1
 fi
-if ! command -v curl >/dev/null 2>&1; then
+# Linux gate as well as curl: install.sh's platform check dies on any
+# other uname, so on a curl-equipped mac/Git-Bash box the happy path
+# below would "fail" for the wrong reason.
+if [ "$(uname -s)" != "Linux" ]; then
+    echo "SKIP: offline install.sh tests (install.sh is Linux-only; this is $(uname -s))"
+elif ! command -v curl >/dev/null 2>&1; then
     echo "SKIP: curl unavailable; offline install.sh tests skipped"
 else
-    idist=$(mktemp -d)
-    idest=$(mktemp -d)
-    trap 'rm -rf "$idist" "$idest"' EXIT
+    idist=$(mktemp -d -p "$CT")
+    idest=$(mktemp -d -p "$CT")
     printf 'fake stretto binary\n' > "$idist/stretto-vTEST-linux-x86_64"
     printf 'fake upx binary\n'     > "$idist/stretto-vTEST-linux-x86_64-upx"
     printf '.TH STRETTO 1\n'       > "$idist/stretto.1"
@@ -265,7 +277,7 @@ else
 
     # (2) tampered binary: loud mismatch, nothing installed.
     printf 'tampered\n' >> "$idist/stretto-vTEST-linux-x86_64"
-    idest2=$(mktemp -d)
+    idest2=$(mktemp -d -p "$CT")
     set +e
     out=$(STRETTO_BASE_URL="file://$idist" STRETTO_INSTALL_DIR="$idest2" sh install.sh 2>&1)
     rc=$?
@@ -300,7 +312,7 @@ else
         *"no entry for"*) ;;
         *) echo "FAIL: missing-entry install lacked the refusal message"; fail=1 ;;
     esac
-    rm -rf "$idist" "$idest" "$idest2"
+    rm -rf "$idist" "$idest" "$idest2"   # eager; $CT's trap is the backstop
 fi
 
 # --- man page (048-packaging) ---
@@ -312,8 +324,10 @@ else
     # (a) Lint, ENFORCING: groff exits 0 on warnings (stderr only),
     #     so the gate is "-ww (all warnings) + stderr must be empty".
     #     -t preprocesses the tbl key table.
-    err=$(groff -man -t -ww -Tutf8 -z stretto.1 2>&1)
-    if [ -n "$err" ]; then
+    # `if ! err=$(...)`: a bare err=$(groff ...) under set -e kills
+    # the whole script on a non-zero groff exit, skipping the FAIL
+    # report (and every check after it).
+    if ! err=$(groff -man -t -ww -Tutf8 -z stretto.1 2>&1) || [ -n "$err" ]; then
         echo "FAIL: groff reports man-page problems:"
         echo "$err"
         fail=1
@@ -324,15 +338,23 @@ else
     # Normalize the roff escapes (\- renders as -) before matching.
     man_flat=$(sed 's/\\-/-/g' stretto.1)
     help_flags=$(./synth --help | grep -oE -- '--[a-z][a-z-]+' | sort -u)
+    # Vacuity guard: an empty extraction would loop zero times and
+    # pass silently. --help documents 15+ flags; demand a sane floor.
+    if [ "$(printf '%s\n' $help_flags | wc -w)" -lt 10 ]; then
+        echo "FAIL: --help flag extraction looks broken (got: $help_flags)"
+        fail=1
+    fi
     for f in $help_flags; do
-        if ! printf '%s' "$man_flat" | grep -q -- "$f"; then
+        # Right-boundary match: a plain substring grep lets --midi
+        # ride on --midi-list-devices' entry.
+        if ! printf '%s' "$man_flat" | grep -qE -- "$f([^a-z-]|\$)"; then
             echo "FAIL: --help flag '$f' is missing from stretto.1"
             fail=1
         fi
     done
 fi
 
-rm -f /tmp/cli_stderr /tmp/cli_stdout /tmp/cli_a.wav /tmp/cli_b.wav
+rm -f "$CT"/cli_stderr "$CT"/cli_stdout "$CT"/cli_a.wav "$CT"/cli_b.wav
 
 if [ "$fail" -ne 0 ]; then
     echo "FAIL: CLI contract test"
