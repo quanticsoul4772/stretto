@@ -642,7 +642,7 @@ The oscilloscope draws each frame into a 24 KB static buffer (one `write()` sysc
 | Target | Scope |
 |---|---|
 | `make test` | CLI contract (`tests/test_cli.sh`: help/version/usage errors, stdout render, preset flags, no-server UX, offline install.sh, man page) + bit-exact regression (render 16 s at `--seed 0` twice, byte-compare, sha256 against `golden/regression_16s.sha256`) + the Constitution↔Makefile bridge and amend regression suites. |
-| `make test-unit` | 173 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
+| `make test-unit` | 176 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
 | `make test-multiseed` | Renders 4 s at seeds 0 / 1 / 42 / 12345, asserts each is deterministic across runs, asserts all four produce distinct sha256s, asserts each render's peak / clip count / spectral centroid / zero-crossing rate land within sane bounds (RMS is reported but not gated, since the randomized INTRO palette varies loudness), then matches each hash against `golden/regression_multiseed.sha256.txt`. |
 | `make test-smoke` | Spawns `./synth --no-ui` under a 2 s timeout. Pass on exit 0 / 124 / 143; fail on segfault. Auto-skips if no PulseAudio. |
 | `make coverage` | Rebuilds instrumented (`-fprofile-arcs -ftest-coverage`), runs the regression + unit suites, prints per-file line coverage via `gcov`. |
@@ -657,8 +657,8 @@ Approximate line coverage:
 | `effects.c` | 100% (test_effects + test_keys) | ≥95% |
 | `voice.c` | 98% | ≥95% |
 | `gen.c` | 99% | ≥90% |
-| `lsystem.c` | 94% | ≥90% |
-| `chord_progression.c` | 93% | ≥90% |
+| `lsystem.c` | 94.8% | ≥94% — proven ceiling: the only uncovered lines are unknown-symbol guards, and a unit test pins them unreachable (mutation writes only SYM_UP..SYM_REST) |
+| `chord_progression.c` | 92.6% | ≥92% — proven ceiling: the only uncovered lines are the degenerate-row guard, and a unit test pins it unreachable (every Markov row has a positive sum) |
 | `section.c` | 100% | ≥95% |
 | `density.c` | 100% | ≥95% |
 | `motif.c` | 100% | ≥95% |

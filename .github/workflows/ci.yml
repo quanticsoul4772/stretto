@@ -168,14 +168,21 @@ jobs:
         # Tightening these forces the project's coverage discipline
         # to ratchet up over time.
         run: |
+          # lsystem.c / chord_progression.c gates sit at their proven
+          # ceilings: the only uncovered lines are defensive guards
+          # that unit tests pin as unreachable (lsystem mutation can
+          # only write SYM_UP..SYM_REST, so the unknown-symbol guards
+          # never fire; every Markov row has a positive sum, so the
+          # degenerate-row guard never fires). 95 is not reachable
+          # without deleting that defense-in-depth.
           declare -A thresholds=(
             [audio_midi.c]=90
             [arena.c]=95
             [effects.c]=95
             [voice.c]=95
             [gen.c]=90
-            [lsystem.c]=90
-            [chord_progression.c]=90
+            [lsystem.c]=94
+            [chord_progression.c]=92
             [section.c]=95
             [density.c]=95
             [motif.c]=95
