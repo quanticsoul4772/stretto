@@ -157,6 +157,15 @@ int ui_term_read_key(char *out) {
     return (read(0, out, 1) == 1) ? 1 : 0;
 }
 
+/* One exit path for the four raw-mode syscall failures: each inline
+   fprintf+exit pair costs ~30 B of call setup, and this file sits a
+   few dozen bytes under a 4 KB text-segment page cliff (Principle I:
+   crossing it costs the full page). */
+static void die_sys(const char *what) {
+    fprintf(stderr, "%s: %s\n", what, strerror(errno));
+    exit(1);
+}
+
 void ui_term_raw_mode(void) {
     /* Not a TTY on either end (stdin redirected: no keys to read;
        stdout redirected: the oscilloscope escapes would be garbage in
@@ -170,15 +179,9 @@ void ui_term_raw_mode(void) {
         no_ui_flag = 1;
         return;
     }
-    if (tcgetattr(0, &saved_termios) < 0) {
-        fprintf(stderr, "tcgetattr: %s\n", strerror(errno));
-        exit(1);
-    }
+    if (tcgetattr(0, &saved_termios) < 0) die_sys("tcgetattr");
     int flags = fcntl(0, F_GETFL, 0);
-    if (flags < 0) {
-        fprintf(stderr, "fcntl: %s\n", strerror(errno));
-        exit(1);
-    }
+    if (flags < 0) die_sys("fcntl");
     /* Record BOTH saved states before flipping termios_saved: the
        signal handler restores termios AND fcntl flags whenever
        termios_saved is set, so setting it before saved_fcntl_flags
@@ -191,14 +194,8 @@ void ui_term_raw_mode(void) {
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 0;
     raw_termios = raw;   /* keep a copy for the SIGTSTP resume replay */
-    if (tcsetattr(0, TCSANOW, &raw) < 0) {
-        fprintf(stderr, "tcsetattr: %s\n", strerror(errno));
-        exit(1);
-    }
-    if (fcntl(0, F_SETFL, flags | O_NONBLOCK) < 0) {
-        fprintf(stderr, "fcntl: %s\n", strerror(errno));
-        exit(1);
-    }
+    if (tcsetattr(0, TCSANOW, &raw) < 0) die_sys("tcsetattr");
+    if (fcntl(0, F_SETFL, flags | O_NONBLOCK) < 0) die_sys("fcntl");
 }
 
 static void sig_term_restore(void);
@@ -281,15 +278,14 @@ static void sig_suspend_and_resume(int sig) {
 }
 
 void ui_install_signal_handlers(void) {
+    static const int fatal[] = { SIGINT, SIGTERM, SIGHUP, SIGQUIT };
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = sig_restore_and_reraise;
     sa.sa_flags = SA_RESETHAND;
     sigemptyset(&sa.sa_mask);
-    sigaction(SIGINT,  &sa, NULL);
-    sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGHUP,  &sa, NULL);
-    sigaction(SIGQUIT, &sa, NULL);
+    for (unsigned i = 0; i < sizeof(fatal) / sizeof(fatal[0]); i++)
+        sigaction(fatal[i], &sa, NULL);
     signal(SIGTSTP, sig_suspend_and_resume);
 }
 
