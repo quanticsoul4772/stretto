@@ -549,11 +549,18 @@ install:
 	@test -x synth || { echo "install: ./synth not built; run 'make' first (as your user, not root)"; exit 1; }
 	install -Dm755 synth $(DESTDIR)$(PREFIX)/bin/stretto
 	install -Dm644 stretto.1 $(DESTDIR)$(PREFIX)/share/man/man1/stretto.1
-	@echo "installed: $(DESTDIR)$(PREFIX)/bin/stretto + man1/stretto.1"
+# bash completion installs under the BARE command name: the
+# .bash-suffixed lookup only exists in bash-completion >= 2.12; the
+# bare name works on every 2.x. Do not "fix" it to stretto.bash.
+	install -Dm644 completions/stretto.bash $(DESTDIR)$(PREFIX)/share/bash-completion/completions/stretto
+	install -Dm644 completions/_stretto $(DESTDIR)$(PREFIX)/share/zsh/site-functions/_stretto
+	@echo "installed: $(DESTDIR)$(PREFIX)/bin/stretto + man1/stretto.1 + bash/zsh completions"
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/stretto \
-	      $(DESTDIR)$(PREFIX)/share/man/man1/stretto.1
+	      $(DESTDIR)$(PREFIX)/share/man/man1/stretto.1 \
+	      $(DESTDIR)$(PREFIX)/share/bash-completion/completions/stretto \
+	      $(DESTDIR)$(PREFIX)/share/zsh/site-functions/_stretto
 
 # Debug build: -O0 -g -DDEBUG, assertions enabled, no LTO, no strip.
 # For stepping through SVF / envelope / scheduler behaviour in gdb.

@@ -111,6 +111,17 @@ jobs:
           cp stretto.exe        "dist/stretto-${ver}-windows-x86_64.exe"
           cp stretto.packed.exe "dist/stretto-${ver}-windows-x86_64-upx.exe"
           cp stretto.1          dist/stretto.1
+          # Shell completions + the demo WAV (068). UNVERSIONED names
+          # (like stretto.1) so releases/latest/download/ URLs stay
+          # stable, and shaped so the installer's bin_name anchor
+          # (^stretto-.*-linux-x86_64$) can never match them. The demo
+          # is the exact canonical "hear it now" render from README /
+          # install.sh; rendered fresh per release - a committed
+          # golden hash would be runner-image-fragile (libm tables).
+          cp completions/stretto.bash dist/stretto.bash
+          cp completions/_stretto     dist/_stretto
+          ./synth --render 10 dist/stretto-demo.wav --seed 42
+          test -s dist/stretto-demo.wav
           cd dist && sha256sum * > sha256sums.txt && cat sha256sums.txt
 
       - name: Installer drift gate
@@ -127,6 +138,11 @@ jobs:
           STRETTO_BASE_URL="file://$PWD/dist" STRETTO_INSTALL_DIR="$idest" sh install.sh
           "$idest/stretto" --version | head -1
           test -f "$idest/stretto.1"
+          # Completions present in this dist -> the installer must
+          # have fetched, verified, and installed them (flat mode
+          # keeps the asset names).
+          test -f "$idest/stretto.bash"
+          test -f "$idest/_stretto"
 
       - name: Upload rehearsal artifacts
         if: github.ref_type != 'tag'
@@ -147,6 +163,10 @@ jobs:
             echo "**Windows users: download the unpacked \`.exe\`.** The \`-upx\` binaries"
             echo "exist for the size-budget tradition and are routinely false-positived"
             echo "by antivirus software."
+            echo
+            echo "\`stretto-demo.wav\` is a 10 s render at \`--seed 42\` - exactly what"
+            echo "\`stretto --render 10 demo.wav --seed 42\` produces. \`stretto.bash\` /"
+            echo "\`_stretto\` are shell completions (install.sh installs them for you)."
             echo
             echo '## sha256sums'
             echo '```'
