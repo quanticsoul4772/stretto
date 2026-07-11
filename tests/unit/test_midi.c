@@ -824,6 +824,76 @@ TEST(midi_malformed_channels_are_dropped) {
     audio_midi_init(-1);
 }
 
+/* ============================================================
+ * Deterministic MIDI event-stream fuzz (067). The drain is the trust
+ * boundary; this drives ~50k pseudo-random events - invalid types,
+ * out-of-contract channels, 8-bit keys/values - through the real
+ * enqueue/drain path and asserts the engine's clamp + hygiene
+ * invariants after every batch. Runs under the CI sanitizers job
+ * like every unit test, so ASan/UBSan sweep the same hostile stream
+ * on every PR (the channel-0 CC#64 shift UB fixed earlier in 067 is
+ * exactly the class this catches). Fixed-seed xorshift32: identical
+ * stream every run, no flakes.
+ * ============================================================ */
+static uint32_t fuzz_rng_state = 0x2E787331u;   /* fixed seed */
+static uint32_t fuzz_rng(void) {
+    uint32_t x = fuzz_rng_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    fuzz_rng_state = x;
+    return x;
+}
+
+TEST(midi_event_stream_fuzz) {
+    test_init_synth();
+    voice_pool_init();
+    audio_midi_init(0);
+    /* The untouched cutoff default (200) sits ABOVE its [30,180]
+       clamp - reset to interior values first or the range invariant
+       trips before the first cutoff CC arrives. */
+    reset_cc_targets_to_interior();
+
+    const int TOTAL = 50000, BATCH = 200;
+    for (int done = 0; done < TOTAL; done += BATCH) {
+        for (int i = 0; i < BATCH; i++) {
+            uint32_t r = fuzz_rng();
+            midi_event_t ev = {
+                .type    = (uint8_t)(r % 6u),          /* incl. NONE + invalid 4/5 */
+                .channel = (uint8_t)(r >> 8),          /* raw byte: 0..255 */
+                .key     = (uint8_t)(r >> 16),         /* raw byte */
+                .value   = (uint8_t)(r >> 24)          /* raw byte */
+            };
+            audio_midi_enqueue(&ev);
+        }
+        audio_midi_drain();
+        if ((done / BATCH) % 3 == 0) pedal_mix(256);
+        /* Clamp invariants: every parameter getter must stay inside
+           its documented range no matter what the stream contained. */
+        ASSERT_BETWEEN(voice_get_cutoff(),          30,   180);
+        ASSERT_BETWEEN(voice_get_resonance(),        0,   180);
+        ASSERT_BETWEEN(reverb_get_wet(),             0,   256);
+        ASSERT_BETWEEN(delay_get_wet(),              0,   256);
+        ASSERT_BETWEEN(delay_get_feedback(),         0,   200);
+        ASSERT_BETWEEN(compressor_get_threshold(), 8000, 30000);
+        /* Batches are < the 256-entry queue capacity: nothing may drop. */
+        ASSERT_EQ(audio_midi_drop_count(), 0u);
+    }
+
+    /* End-state: pedal-up then All Notes Off on every channel must
+       silence the pool completely - no stuck voices, whatever the
+       stream left behind. 40000 mixes > the 28800-sample melody
+       release. */
+    for (uint8_t ch = 1; ch <= 16; ch++) {
+        pedal_enqueue(MIDI_EVENT_CC, ch, 64, 0);
+        pedal_enqueue(MIDI_EVENT_CC, ch, 123, 0);
+    }
+    audio_midi_drain();
+    pedal_mix(40000);
+    ASSERT_EQ(voice_pool_active_mask(), 0u);
+    audio_midi_init(-1);
+}
+
 /* T032 (US3): audio_midi_list_devices NULL-pointer guard. NULL
  * out or NULL count each return -1 (audio_midi.c:audio_midi_list_devices
  * "if (out == 0 || count == 0) return -1;" paranoia guard). Valid
