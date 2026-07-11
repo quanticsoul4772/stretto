@@ -297,6 +297,8 @@ make test-smoke      # spawns ./synth for 2 s, expects clean exit / SIGTERM
 make coverage        # rebuilds with -fprofile-arcs -ftest-coverage and prints
                      # per-file line coverage via gcov (output to build_cov/)
 make verify          # Constitution<->Makefile bridge check + its regression suites
+make test-crossplatform  # ./synth vs ./stretto.exe byte-compare (dev box with
+                         # WSL interop or Windows; auto-skips elsewhere)
 make debug           # builds synth_debug: -O0 -g -DDEBUG, no LTO, gdb-friendly
 ```
 

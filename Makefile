@@ -315,6 +315,15 @@ test-smoke: synth
 	chmod +x tests/test_smoke_live.sh
 	./tests/test_smoke_live.sh
 
+# Cross-platform bit-exactness (Constitution III): same seeds through
+# ./synth AND ./stretto.exe, byte-compared + checked against the 16 s
+# golden. Dev-box only (needs to EXECUTE the .exe - WSL interop or
+# Windows; CI's Linux runner cannot), so not part of `make test`.
+# Auto-skips where the .exe is absent or not executable.
+test-crossplatform: synth stretto.exe
+	chmod +x tests/test_crossplatform.sh
+	./tests/test_crossplatform.sh
+
 # One-command local dev check for the Constitution<->Makefile bridge.
 # Bundles the 3 spec<->build verification artifacts in order, exiting
 # on first failure with a clear per-step status. Equivalent to running
