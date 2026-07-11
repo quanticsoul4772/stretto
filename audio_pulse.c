@@ -42,14 +42,19 @@ void audio_play(void) {
        failure after termios is already raw) still restore. The
        signal handlers cover the non-exit() deaths (Ctrl-C, SIGTERM,
        SIGQUIT, SIGHUP) that atexit can never see; they restore the
-       terminal async-signal-safely and re-raise. Installed in
-       --no-ui mode too: with no terminal state saved the handler is
-       a plain re-raise, so behavior there is unchanged. */
+       terminal async-signal-safely and re-raise. Installed BEFORE
+       raw mode engages, for the same reason atexit is registered
+       first: a Ctrl-C landing inside raw-mode setup must already
+       have the restoring handler, not the default disposition
+       (which would kill the process with the terminal left raw).
+       Installed in --no-ui mode too: with no terminal state saved
+       the handler is a plain re-raise, so behavior there is
+       unchanged. */
     atexit(restore_terminal);
+    ui_install_signal_handlers();
     if (!ui_get_no_ui()) {
         ui_term_raw_mode();
     }
-    ui_install_signal_handlers();
     /* Initial resume-line snapshot (seed + any CLI-flag params) so a
        session killed before its first keypress - including headless
        --no-ui runs - is still recallable via the signal handler. */
