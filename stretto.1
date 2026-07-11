@@ -85,8 +85,10 @@ Open MIDI input device
 .BR \-\-midi\-list\-devices ),
 or subscribe to every readable input port if
 .I N
-is omitted. Exits 1 if no device is available. Never opened in render
-mode. Notes map through the active scale; velocity 0 is note\-off.
+is omitted (on Windows the first device is opened instead: WinMM binds
+one handle to one device and has no MIDI input mapper). Exits 1 if no
+device is available. Never opened in render mode. Notes map through
+the active scale; velocity 0 is note\-off.
 .TP
 .B \-\-midi\-default
 Alias for

@@ -642,21 +642,28 @@ TEST(midi_channel_filter_drops_non_matching) {
 /* T032 (US3): audio_midi_list_devices NULL-pointer guard. NULL
  * out or NULL count each return -1 (audio_midi.c:audio_midi_list_devices
  * "if (out == 0 || count == 0) return -1;" paranoia guard). Valid
- * pointers return whatever the platform backend returns -- in this
- * unit-test environment, the post-T022 ALSA / winmm backends return
- * -1 because there is no MIDI device to enumerate. CI runners have
- * the real backends linked in. */
+ * pointers hit the REAL backend (the T022 stubs are gone): the
+ * result is environment-dependent -- -1 where the sequencer is
+ * unreachable (no snd-seq module: typical CI runner / WSL), 0 with
+ * count in [0, MIDI_LIST_DEVICES_CAP] where it is. The out buffer
+ * must be MIDI_LIST_DEVICES_CAP deep: the backend fills up to the
+ * cap, not up to the caller's guess. */
 TEST(midi_list_devices_null_guard) {
     int32_t count = 0;
-    midi_input_device_t devs[4];
+    midi_input_device_t devs[MIDI_LIST_DEVICES_CAP];
     /* NULL out pointer -> -1. */
     ASSERT_EQ(audio_midi_list_devices(NULL, &count), -1);
     /* NULL count pointer -> -1. */
     ASSERT_EQ(audio_midi_list_devices(devs, NULL), -1);
-    /* Both valid: returns whatever the platform backend has -- in
-     * this unit-test environment, the post-T022 backend returns -1
-     * because there is no MIDI device to enumerate. */
-    ASSERT_EQ(audio_midi_list_devices(devs, &count), -1);
+    /* Both valid: environment-dependent (see above). */
+    int rc = audio_midi_list_devices(devs, &count);
+    ASSERT_EQ(rc == 0 || rc == -1, 1);
+    if (rc == 0) {
+        ASSERT_EQ(count >= 0 && count <= MIDI_LIST_DEVICES_CAP, 1);
+    } else {
+        /* Failed enumeration must not report phantom devices. */
+        ASSERT_EQ(count, 0);
+    }
 }
 
 /* T033: live MODE dispatch coverage-lift. The T019 --no-midi
@@ -749,9 +756,9 @@ TEST(midi_note_on_off_live_dispatch) {
 /* T034: audio_midi_open / audio_midi_close round-trip. Closes the
  * last coverage gap in audio_midi.c: no test exercises the platform
  * backend #if-branch in audio_midi_open() or the g_enabled reset in
- * audio_midi_close(). The post-T022 platform stubs return -1 from
- * audio_midi_linux_init / audio_midi_winmm_init / audio_midi_linux_list_devices
- * etc., so audio_midi_open also returns -1 from this unit-test env.
+ * audio_midi_close(). The real platform backends return -1 in a
+ * no-sequencer / no-device unit-test env, so audio_midi_open
+ * usually returns -1 here too (0 on a rig with hardware).
  * After audio_midi_close() flips g_enabled to 0, the next drain is
  * a no-op even if a NOTE_ON is enqueued -- simulates the real-world
  * teardown sequence (init -> open -> drain loop -> close -> init -1). */
@@ -796,8 +803,9 @@ TEST(midi_open_close_round_trip) {
  * confused with "open device index -1" (which would crash on
  * most backends - N is unsigned-interpreted). The platform
  * backends validate N >= -1 (with -1 reserved) and route -1 to
- * the wildcard iterate-subscribe (linux) / WAVE_MAPPER fallback
- * (winmm). In the unit-test env with no real hw, the call either
+ * the wildcard iterate-subscribe (linux) / first-device open
+ * (winmm - Win32 has no MIDI INPUT mapper; WAVE_MAPPER is
+ * output-only). In the unit-test env with no real hw, the call either
  * returns -1 (init failed earlier) or 0 (init succeeded, nothing
  * to subscribe to because the platform returns no devices).
  * Assert only that the call returns deterministically: no crash

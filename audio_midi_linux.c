@@ -204,6 +204,21 @@ int audio_midi_linux_init(int device_index) {
          * here because the operator picked that specific N
          * deliberately and a silent fallback to wildcard would
          * obscure an operator-visible misroute. */
+        if (device_index == 0) {
+            /* --midi 0 / --midi-default: raw index 0 decodes to ALSA
+             * client 0 port 0 = the kernel's System Timer port, which
+             * is never a MIDI device (connecting would deliver timer
+             * queue events, not notes). Per FR-002's intent ("open
+             * the default device"), 0 means the FIRST device from
+             * --midi-list-devices; remap before decoding. */
+            midi_input_device_t devs[MIDI_LIST_DEVICES_CAP];
+            int32_t n = 0;
+            if (audio_midi_linux_list_devices(devs, &n) != 0 || n == 0) {
+                snd_seq_close(seq);
+                return -1;
+            }
+            device_index = devs[0].index;
+        }
         int src_client = (device_index >> 8) & 0xFF;
         int src_port   = device_index & 0xFF;
         if (snd_seq_connect_from(seq, synth_port, src_client, src_port) < 0) {
@@ -310,9 +325,47 @@ void audio_midi_linux_close(void) {
 }
 
 int audio_midi_linux_list_devices(midi_input_device_t *out, int32_t *count) {
-    (void)out; (void)count;
-    /* Implemented in T034 (snd_seq_query_next_client +
-       snd_seq_query_get_port_info); T022 keeps the stub so re-builds
-       without libasound2-dev still link cleanly via --gc-sections. */
-    return -1;
+    /* T034, finally real (the long-standing stub returned -1 and made
+       --midi-list-devices print nothing on every platform). Walks the
+       sequencer with the SAME dual filter the wildcard open path uses
+       (CAP_READ + MIDI_GENERIC), so what this lists is exactly what
+       `--midi` would subscribe to. index is the (client<<8)|port
+       encoding audio_midi_linux_init decodes for explicit --midi N -
+       list output is directly bindable. name is "client port",
+       truncated to the struct's 64 bytes. */
+    *count = 0;
+    snd_seq_t *seq;
+    if (snd_seq_open(&seq, "default", SND_SEQ_OPEN_INPUT, 0) < 0)
+        return -1;   /* no sequencer (no snd-seq module / container) */
+
+    snd_seq_client_info_t *cinfo;
+    snd_seq_client_info_alloca(&cinfo);
+    snd_seq_client_info_set_client(cinfo, -1);
+    int my_client = snd_seq_client_id(seq);
+    while (snd_seq_query_next_client(seq, cinfo) >= 0
+           && *count < MIDI_LIST_DEVICES_CAP) {
+        int client = snd_seq_client_info_get_client(cinfo);
+        if (client == my_client) continue;
+        const char *cname = snd_seq_client_info_get_name(cinfo);
+        snd_seq_port_info_t *pinfo;
+        snd_seq_port_info_alloca(&pinfo);
+        snd_seq_port_info_set_client(pinfo, client);
+        snd_seq_port_info_set_port(pinfo, -1);
+        while (snd_seq_query_next_port(seq, pinfo) >= 0
+               && *count < MIDI_LIST_DEVICES_CAP) {
+            unsigned int caps = snd_seq_port_info_get_capability(pinfo);
+            unsigned int type = snd_seq_port_info_get_type(pinfo);
+            if (!(caps & SND_SEQ_PORT_CAP_READ)) continue;
+            if (!(type & SND_SEQ_PORT_TYPE_MIDI_GENERIC)) continue;
+            int port = snd_seq_port_info_get_port(pinfo);
+            midi_input_device_t *d = &out[*count];
+            d->index = (int32_t)(((client & 0xFF) << 8) | (port & 0xFF));
+            snprintf(d->name, sizeof d->name, "%s %s",
+                     cname ? cname : "?",
+                     snd_seq_port_info_get_name(pinfo));
+            (*count)++;
+        }
+    }
+    snd_seq_close(seq);
+    return 0;
 }

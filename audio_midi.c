@@ -43,7 +43,7 @@ typedef struct {
     uint32_t     tail;                          /* audio-thread-only, plain */
 } midi_queue_t;
 
-static midi_queue_t q;  /* BSS-allocated; arena-allocated mirror below. */
+static midi_queue_t q;  /* BSS-allocated (the 128 KB arena is untouched by MIDI). */
 
 /* CC_MAP[128] - the static CC -> synth-parameter routing table (per
  * data-model.md Entity 4 + tasks.md T029). One entry per MIDI CC
@@ -232,7 +232,12 @@ void audio_midi_drain(void) {
                  * no fprintf, no callback overhead (Principle VII).
                  * Multiple CCs targeting the same parameter sum
                  * additively per FR-022 because the adjust_* calls
-                 * compose over the previous value. */
+                 * compose over the previous value.
+                 * Bounds guard: CC_MAP has exactly 128 entries and
+                 * ev.key is uint8_t (0..255) filled by the backends -
+                 * a malformed producer value > 127 must not index
+                 * .rodata out of bounds. */
+                if (ev.key > 127) break;
                 const cc_map_entry_t *entry = &CC_MAP[ev.key];
                 if (entry->target == CC_TARGET_NONE) break;
                 int delta = ((int)ev.value - 64) * (int)entry->scale;

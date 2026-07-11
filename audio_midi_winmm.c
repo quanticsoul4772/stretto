@@ -103,8 +103,11 @@ static void midiInProc(HMIDIIN hMidiIn, UINT wMsg,
                audio thread's audio_midi_drain timing instead). */
             uint32_t raw = (uint32_t)dwParam1;
             uint8_t  status  = (uint8_t)(raw & 0xFFu);
-            uint8_t  data1   = (uint8_t)((raw >> 8)  & 0xFFu);
-            uint8_t  data2   = (uint8_t)((raw >> 16) & 0xFFu);
+            /* Data bytes are 7-bit by the MIDI spec; mask 0x7F (not
+               0xFF) so a misbehaving driver can never hand the drain
+               a CC number >= 128 (CC_MAP has exactly 128 entries). */
+            uint8_t  data1   = (uint8_t)((raw >> 8)  & 0x7Fu);
+            uint8_t  data2   = (uint8_t)((raw >> 16) & 0x7Fu);
 
             /* System realtime / common (0xF0..0xFF) are ignored -
                they arrive via MIM_LONGDATA for sysex, never in
@@ -210,16 +213,19 @@ int audio_midi_winmm_init(int device_index) {
     if (g_hin != NULL && g_current_device_index == device_index) return 0;
     if (g_hin != NULL) audio_midi_winmm_close();
 
-    /* device_index >= 0 decodes the raw device id used by
-     * midiInGetNumDevs enumeration / --midi-list-devices enumeration
-     * output (per PR #108 enumerate -> midiInGetDevCapsA path).
-     * device_index < 0 means "use the default mapper" (the one the
-     * control panel routes controller "From" dropdown to). Negative
-     * is used by main.c when --midi is passed without an explicit
-     * N -- the operator has no specific device, so the OS picks. */
+    /* device_index >= 0 is the raw device id (dense ordinal, same as
+     * --midi-list-devices output). device_index < 0 (wildcard --midi)
+     * opens the FIRST device: Win32 has no MIDI *input* mapper -
+     * WAVE_MAPPER/MIDI_MAPPER exist for output only, and
+     * midiInOpen((UINT)-1) fails with MMSYSERR_BADDEVICEID even with
+     * hardware attached (the old code did exactly that). One handle =
+     * one device on this backend, so Windows wildcard is
+     * "first available device", not Linux's subscribe-to-all;
+     * documented in --help / the man page. */
     UINT devid;
     if (device_index < 0) {
-        devid = WAVE_MAPPER;
+        if (midiInGetNumDevs() == 0) return -1;
+        devid = 0;
     } else {
         UINT n = midiInGetNumDevs();
         if ((UINT)device_index >= n) return -1;
