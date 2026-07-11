@@ -1,14 +1,16 @@
 #!/bin/sh
 # stretto installer - downloads the latest release binary + man page
-# from GitHub releases, verifies BOTH against the release's
-# sha256sums.txt, and installs to ~/.local (or /usr/local as root).
+# (+ bash/zsh completions when the release ships them), verifies
+# EVERYTHING against the release's sha256sums.txt, and installs to
+# ~/.local (or /usr/local as root).
 #
 #   curl --proto '=https' --tlsv1.2 -fsSL \
 #     https://raw.githubusercontent.com/quanticsoul4772/stretto/main/install.sh | sh
 #
 # Env overrides:
 #   STRETTO_VERSION=vX.Y.Z   install a specific release instead of latest
-#   STRETTO_INSTALL_DIR=DIR  install binary AND man page flat into DIR
+#   STRETTO_INSTALL_DIR=DIR  install binary, man page AND completions
+#                            flat into DIR under their asset names
 #                            (test/rehearsal hook; skips /usr/local ~/.local)
 #   STRETTO_BASE_URL=URL     fetch assets from URL instead of GitHub
 #                            releases (test/rehearsal hook; file:// URLs
@@ -142,8 +144,25 @@ main() {
     fetch "$base/$bin_name" "$tmp/$bin_name" || die "download failed: $base/$bin_name"
     fetch "$base/stretto.1" "$tmp/stretto.1" || die "download failed: $base/stretto.1"
 
+    # Shell completions (068): CONDITIONAL on presence in the sums
+    # file - releases before v1.5.0 do not ship them, and the header's
+    # compatibility promise covers every published release, so absence
+    # is a silent skip. Presence followed by a failed download or a
+    # bad hash still dies loudly. awk exits 0 match-or-not, so the
+    # probes are set -eu-safe (never grep -q here).
+    have_bash=$(awk -v n="stretto.bash" '$2 == n { print 1; exit }' "$tmp/sha256sums.txt")
+    have_zsh=$(awk -v n="_stretto" '$2 == n { print 1; exit }' "$tmp/sha256sums.txt")
+    if [ -n "$have_bash" ]; then
+        fetch "$base/stretto.bash" "$tmp/stretto.bash" || die "download failed: $base/stretto.bash"
+    fi
+    if [ -n "$have_zsh" ]; then
+        fetch "$base/_stretto" "$tmp/_stretto" || die "download failed: $base/_stretto"
+    fi
+
     verify "$tmp" "$bin_name"
     verify "$tmp" "stretto.1"
+    [ -z "$have_bash" ] || verify "$tmp" "stretto.bash"
+    [ -z "$have_zsh" ]  || verify "$tmp" "_stretto"
 
     # --- install ----------------------------------------------------
     if [ -n "${STRETTO_INSTALL_DIR:-}" ]; then
@@ -157,21 +176,55 @@ main() {
         done
         bin_dir=$idir
         man_dir=$idir
+        # Flat mode keeps the ASSET names: the bash completion's
+        # canonical install name is the bare command name "stretto",
+        # which here would clobber the binary at $idir/stretto.
+        comp_bash_path=$idir/stretto.bash
+        comp_zsh_path=$idir/_stretto
+        zsh_hint=0
     elif [ "$(id -u)" = 0 ]; then
         bin_dir=/usr/local/bin
         man_dir=/usr/local/share/man/man1
+        # Bare command name: the .bash-suffixed lookup only exists in
+        # bash-completion >= 2.12; the bare name works on every 2.x.
+        comp_bash_path=/usr/local/share/bash-completion/completions/stretto
+        # In the compiled-in default fpath since zsh 5.x (2014).
+        comp_zsh_path=/usr/local/share/zsh/site-functions/_stretto
+        zsh_hint=0
     else
         bin_dir=$HOME/.local/bin
         man_dir=$HOME/.local/share/man/man1
+        # bash-completion >= 2.11's XDG user-dir lookup (every 2026
+        # mainstream distro) picks this up automatically.
+        comp_bash_path=$HOME/.local/share/bash-completion/completions/stretto
+        # NOT in any default fpath - the epilogue prints the
+        # activation hint when this lands.
+        comp_zsh_path=$HOME/.local/share/zsh/site-functions/_stretto
+        zsh_hint=1
     fi
     mkdir -p "$bin_dir" "$man_dir"
     # Release assets carry no exec bit; install sets modes explicitly.
     install -m 755 "$tmp/$bin_name" "$bin_dir/stretto"
     install -m 644 "$tmp/stretto.1" "$man_dir/stretto.1"
+    if [ -n "$have_bash" ]; then
+        mkdir -p "$(dirname "$comp_bash_path")"
+        install -m 644 "$tmp/stretto.bash" "$comp_bash_path"
+    fi
+    if [ -n "$have_zsh" ]; then
+        mkdir -p "$(dirname "$comp_zsh_path")"
+        install -m 644 "$tmp/_stretto" "$comp_zsh_path"
+    fi
 
     say ""
     say "installed: $bin_dir/stretto ($ver)"
     say "           $man_dir/stretto.1"
+    [ -z "$have_bash" ] || say "           $comp_bash_path (bash completion)"
+    [ -z "$have_zsh" ]  || say "           $comp_zsh_path (zsh completion)"
+    if [ -n "$have_zsh" ] && [ "$zsh_hint" = 1 ]; then
+        say "note: zsh does not search ~/.local/share/zsh/site-functions by"
+        say "      default - add this to ~/.zshrc before compinit:"
+        say "        fpath=(~/.local/share/zsh/site-functions \$fpath)"
+    fi
 
     existing=$(command -v stretto 2>/dev/null || true)
     if [ -n "$existing" ] && [ "$existing" != "$bin_dir/stretto" ]; then

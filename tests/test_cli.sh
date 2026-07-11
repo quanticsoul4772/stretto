@@ -258,9 +258,11 @@ else
     printf 'fake stretto binary\n' > "$idist/stretto-vTEST-linux-x86_64"
     printf 'fake upx binary\n'     > "$idist/stretto-vTEST-linux-x86_64-upx"
     printf '.TH STRETTO 1\n'       > "$idist/stretto.1"
+    printf '# fake bash completion\n' > "$idist/stretto.bash"
+    printf '#compdef stretto\n'       > "$idist/_stretto"
     (cd "$idist" && sha256sum -- * > sha256sums.txt)
 
-    # (1) happy path: installs both files, prints the epilogue.
+    # (1) happy path: installs all four files, prints the epilogue.
     # $idist is absolute (mktemp -d), so file://$idist is file:///abs.
     if ! out=$(STRETTO_BASE_URL="file://$idist" STRETTO_INSTALL_DIR="$idest" sh install.sh 2>&1); then
         echo "FAIL: offline install.sh happy path exited non-zero:"
@@ -273,6 +275,47 @@ else
     esac
     if [ ! -x "$idest/stretto" ] || [ ! -f "$idest/stretto.1" ]; then
         echo "FAIL: install.sh did not install binary + man page"; fail=1
+    fi
+    # Flat mode keeps the ASSET names (068): stretto.bash / _stretto -
+    # the bash completion's canonical name "stretto" would clobber the
+    # binary in this mode.
+    if [ ! -f "$idest/stretto.bash" ] || [ ! -f "$idest/_stretto" ]; then
+        echo "FAIL: install.sh did not install the completion files"; fail=1
+    fi
+
+    # (1b) v1.4.0-shape dist: NO completion assets. The header's
+    # compatibility promise covers every published release, so this
+    # must still succeed and install only binary + man page.
+    iold=$(mktemp -d -p "$CT")
+    idest_old=$(mktemp -d -p "$CT")
+    printf 'fake stretto binary\n' > "$iold/stretto-vTEST-linux-x86_64"
+    printf 'fake upx binary\n'     > "$iold/stretto-vTEST-linux-x86_64-upx"
+    printf '.TH STRETTO 1\n'       > "$iold/stretto.1"
+    (cd "$iold" && sha256sum -- * > sha256sums.txt)
+    if ! STRETTO_BASE_URL="file://$iold" STRETTO_INSTALL_DIR="$idest_old" sh install.sh >/dev/null 2>&1; then
+        echo "FAIL: install.sh broke on a pre-completions release layout"; fail=1
+    fi
+    if [ ! -x "$idest_old/stretto" ] || [ -e "$idest_old/stretto.bash" ]; then
+        echo "FAIL: pre-completions layout installed the wrong file set"; fail=1
+    fi
+
+    # (1c) sums LISTS stretto.bash but the asset is missing: presence
+    # in sums makes the download mandatory - must die loudly, nothing
+    # installed (the exact boundary of the conditionality).
+    rm -f "$iold/sha256sums.txt"
+    printf '# fake bash completion\n' > "$iold/stretto.bash"
+    (cd "$iold" && sha256sum -- * > sha256sums.txt)
+    rm -f "$iold/stretto.bash"
+    idest_404=$(mktemp -d -p "$CT")
+    set +e
+    out=$(STRETTO_BASE_URL="file://$iold" STRETTO_INSTALL_DIR="$idest_404" sh install.sh 2>&1)
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then
+        echo "FAIL: install.sh ignored a sums-listed completion that failed to download"; fail=1
+    fi
+    if [ -e "$idest_404/stretto" ]; then
+        echo "FAIL: completion-404 install left a binary behind"; fail=1
     fi
 
     # (2) tampered binary: loud mismatch, nothing installed.
@@ -353,6 +396,56 @@ else
         fi
     done
 fi
+
+# --- shell completions (068): bidirectional help<->completions drift ---
+# Deliberately OUTSIDE the groff guard: this needs only ./synth --help
+# and grep, and the dev boxes most likely to hand-edit completions are
+# exactly the ones without groff. Checker, not generator - both
+# completion files stay hand-written.
+comp_help_flags=$(./synth --help | grep -oE -- '--[a-z][a-z-]+' | sort -u)
+if [ "$(printf '%s\n' $comp_help_flags | wc -w)" -lt 10 ]; then
+    echo "FAIL: --help flag extraction looks broken (got: $comp_help_flags)"
+    fail=1
+fi
+# Syntax gates: bash always (bash runs this script); zsh when present
+# (not preinstalled on the CI runner - a skip, not a hole: the drift
+# gates below are pure text and always run).
+if ! bash -n completions/stretto.bash; then
+    echo "FAIL: completions/stretto.bash does not parse under bash -n"; fail=1
+fi
+if command -v zsh >/dev/null 2>&1; then
+    if ! zsh -n completions/_stretto; then
+        echo "FAIL: completions/_stretto does not parse under zsh -n"; fail=1
+    fi
+else
+    echo "SKIP: zsh unavailable; _stretto syntax check skipped"
+fi
+for cf in completions/stretto.bash completions/_stretto; do
+    if [ ! -f "$cf" ]; then
+        echo "FAIL: $cf missing"; fail=1; continue
+    fi
+    # Forward: every help flag must be completable.
+    for f in $comp_help_flags; do
+        if ! grep -qE -- "$f([^a-z-]|\$)" "$cf"; then
+            echo "FAIL: --help flag '$f' is missing from $cf"
+            fail=1
+        fi
+    done
+    # Reverse: every flag the completion advertises must still exist
+    # in --help (the forward gate can never catch a REMOVED flag
+    # lingering here).
+    comp_flags=$(grep -oE -- '--[a-z][a-z-]+' "$cf" | sort -u)
+    if [ "$(printf '%s\n' $comp_flags | wc -w)" -lt 10 ]; then
+        echo "FAIL: flag extraction from $cf looks broken (got: $comp_flags)"
+        fail=1
+    fi
+    for f in $comp_flags; do
+        if ! printf '%s\n' $comp_help_flags | grep -qx -- "$f"; then
+            echo "FAIL: $cf advertises '$f' which is not in --help"
+            fail=1
+        fi
+    done
+done
 
 rm -f "$CT"/cli_stderr "$CT"/cli_stdout "$CT"/cli_a.wav "$CT"/cli_b.wav
 

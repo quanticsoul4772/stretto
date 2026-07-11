@@ -1,0 +1,39 @@
+#compdef stretto
+# zsh completion for stretto (068).
+#
+# Autoload-clean AND source-able: #compdef line, a function, and a
+# trailing call - no compdef/compinit calls inside. Installed by
+# `make install` / install.sh as .../zsh/site-functions/_stretto.
+# User-mode installs land in ~/.local/share/zsh/site-functions, which
+# is NOT in the default fpath - the installer prints the activation
+# hint. Drift-gated bidirectionally against `stretto --help` by
+# tests/test_cli.sh.
+
+_stretto() {
+    _arguments \
+        '--render[render N seconds to a WAV file]:seconds (1-3600):' \
+        '--seed[fix all generative state to seed N]:seed:' \
+        '--no-ui[headless live mode, no TTY required]' \
+        '--midi[open MIDI input device N, or every input port if omitted]::device index:' \
+        '--midi-default[open the first listed MIDI device]' \
+        '--no-midi[explicit MIDI opt-out]' \
+        '--midi-channel[accept only this MIDI channel]:channel (1-16):' \
+        '--midi-list-devices[list MIDI input devices and exit]' \
+        '--scale[starting scale]:scale:(dorian lydian phrygian locrian harmminor mixolydian)' \
+        '--bar-ms[milliseconds per bar]:bar-ms (760-7600):' \
+        '--gate[melody gate probability]:gate (32-255):' \
+        '--mod-depth[FM modulation depth]:mod-depth (100-8000):' \
+        '--cutoff[filter cutoff base]:cutoff (30-180):' \
+        '--resonance[filter resonance base]:resonance (0-180):' \
+        '--lfo-depth[filter LFO depth]:lfo-depth (0-255):' \
+        '--filter-mode[filter mode]:mode:(lp hp bp notch)' \
+        '--reverb[reverb wet mix]:reverb (0-256):' \
+        '--delay[delay wet mix]:delay (0-256):' \
+        '--feedback[delay feedback]:feedback (0-200):' \
+        '--comp-threshold[compressor threshold]:threshold (8000-30000):' \
+        '(- *)'{-h,--help}'[print help and exit]' \
+        '(- *)--version[print version information and exit]' \
+        '*:output file (or -):_files -g "*.wav"'
+}
+
+_stretto "$@"
