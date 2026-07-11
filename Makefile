@@ -1,7 +1,13 @@
+# -fcf-protection=none: Ubuntu's gcc enables CET by default (an
+# endbr64 landing pad at every indirectly-callable function entry,
+# ~30 survive LTO here). Disabling it matches the binary's existing
+# size-over-hardening posture (-fno-stack-protector, norelro, no-pie)
+# and keeps the text segment clear of a 4 KB page cliff that gcc 13
+# (CI) sits closer to than older local compilers.
 CFLAGS = -Os -flto -fuse-linker-plugin -ffast-math \
          -ffunction-sections -fdata-sections -fno-plt \
          -fno-asynchronous-unwind-tables -fno-stack-protector \
-         -fno-pic -Qn \
+         -fcf-protection=none -fno-pic -Qn \
          -pthread -latomic
 LDFLAGS = -Wl,--gc-sections -Wl,-z,norelro \
           -Wl,--hash-style=sysv -no-pie \

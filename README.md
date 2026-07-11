@@ -232,7 +232,7 @@ When the OS disconnects the MIDI source mid-session, the synth does **not** auto
 | `q` | Quit (restores terminal state) |
 | `Ctrl-C` | Clean shutdown, terminal restored — same for `SIGTERM`, `SIGQUIT` (Ctrl-\), `SIGHUP` |
 
-Known issue: `Ctrl-Z` (SIGTSTP) suspends with the terminal still in raw mode until `fg` resumes.
+`Ctrl-Z` suspends cleanly: the terminal is restored before the stop, and `fg` re-enters raw mode. (Resuming with `bg` re-stops it — the standard TUI behavior; use `fg`.)
 
 Redirected invocations (`./synth < /dev/null`, `./synth > log`) degrade to headless `--no-ui` mode instead of dying; a present, non-empty `NO_COLOR` environment variable disables the ANSI colors while keeping the monochrome oscilloscope readable.
 
