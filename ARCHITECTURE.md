@@ -643,11 +643,12 @@ The oscilloscope draws each frame into a 24 KB static buffer (one `write()` sysc
 
 | Target | Scope |
 |---|---|
-| `make test` | CLI contract (`tests/test_cli.sh`: help/version/usage errors, stdout render, preset flags, no-server UX, offline install.sh, man page) + bit-exact regression (render 16 s at `--seed 0` twice, byte-compare, sha256 against `golden/regression_16s.sha256`) + the Constitution↔Makefile bridge and amend regression suites. |
+| `make test` | CLI contract (`tests/test_cli.sh`: help/version/usage errors, stdout render, preset flags, no-server UX, offline install.sh, man page) + bit-exact regression (render 16 s at `--seed 0` twice, byte-compare, sha256 against `golden/regression_16s.sha256`) + the Constitution↔Makefile bridge and amend regression suites + the size-budget-gate fixture suite (`tests/test_size_budget_gate.sh`). |
 | `make test-unit` | 178 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
 | `make test-multiseed` | Renders 4 s at seeds 0 / 1 / 42 / 12345, asserts each is deterministic across runs, asserts all four produce distinct sha256s, asserts each render's peak / clip count / spectral centroid / zero-crossing rate land within sane bounds (RMS is reported but not gated, since the randomized INTRO palette varies loudness), then matches each hash against `golden/regression_multiseed.sha256.txt`. |
 | `make test-smoke` | Spawns `./synth --no-ui` under a 2 s timeout. Pass on exit 0 / 124 / 143; fail on segfault. Auto-skips if no PulseAudio. |
 | `make coverage` | Rebuilds instrumented (`-fprofile-arcs -ftest-coverage`), runs the regression + unit suites, prints per-file line coverage via `gcov`. |
+| `make test-asan` | ASan + UBSan over the unit suite + a 30 s render, in its own `build_san/` tree. UB is FATAL (`-fno-sanitize-recover`) so CI cannot green-light a report-and-continue; LSan is off (no malloc in the synth; alsa-lib's config cache is a known false positive). Runs as its own CI job. |
 
 The framework header `tests/unit/test.h` (149 LOC) provides `TEST(name) {...}` registration via constructor attributes plus assertion macros (`ASSERT_TRUE` / `ASSERT_EQ` / `ASSERT_NE` / `ASSERT_NEAR` / `ASSERT_BETWEEN`). Each `tests/unit/test_*.c` links against `arena.o + voice.o + gen.o` (no `main.o`) and runs as a standalone binary.
 
@@ -707,9 +708,9 @@ The amend script leaves the Makefile rationale paragraph (comment block above th
 
 ### CI step layout (post-#128)
 
-`.github/workflows/ci.yml` defines 18 explicit steps. **Note on step numbering:** GitHub Actions auto-prepends `Set up job` to every job, so UI step numbers are **1-indexed from the auto-added step**. The explicit `actions/checkout@v4` step (no `name:`) renders as `Run actions/checkout@v4` / step #2. The YAML order is 0-indexed from `actions/checkout@v4` and internal to the file. Use UI numbers in PR bodies / commit messages (the header comment at the top of `ci.yml` documents this convention so future PRs don't re-discover the off-by-one).
+`.github/workflows/ci.yml` defines two jobs (main `build-test-coverage` with 19 explicit steps, plus the `sanitizers` job). **Note on step numbering:** GitHub Actions auto-prepends `Set up job` to every job, so UI step numbers are **1-indexed from the auto-added step**. The explicit `actions/checkout@v4` step (no `name:`) renders as `Run actions/checkout@v4` / step #2. The YAML order is 0-indexed from `actions/checkout@v4` and internal to the file. Use UI numbers in PR bodies / commit messages (the header comment at the top of `ci.yml` documents this convention so future PRs don't re-discover the off-by-one).
 
-The 18 explicit steps render as UI rows 2–19 (row 1 is the auto-prepended `Set up job`):
+ci.yml defines two jobs. The `sanitizers` job (066) is a single `make test-asan` step — ASan + UBSan (fatal) over the unit suite + a render on a fresh checkout, `timeout-minutes: 15`, NOT the ruleset's required check (that remains `build-test-coverage` by job name; promote after green history). The main `build-test-coverage` job's 19 explicit steps render as UI rows 2–20 (row 1 is the auto-prepended `Set up job`):
 
 | # | Step | Purpose |
 |---:|---|---|
@@ -717,23 +718,24 @@ The 18 explicit steps render as UI rows 2–19 (row 1 is the auto-prepended `Set
 | 2 | Run actions/checkout@v4 | *(no `name:`; auto-renders)* |
 | 3 | Install build deps | apt: gcc, make, libpulse-dev, libasound2-dev, upx-ucl, gcc-mingw-w64-x86-64, python3, python3-numpy |
 | 4 | Build Linux synth | `make` |
-| 5 | Bit-exact regression test | `make test` (bitexact + bridge + amend + unit) |
-| 6 | Bridge regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_check.sh` — 5 scenarios / 9 sub-checks. Pre-flight for the Binary size budget gate (step 15). |
+| 5 | Bit-exact regression test | `make test` (CLI contract + bitexact + bridge + amend + size-gate fixture suites) |
+| 6 | Bridge regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_check.sh` — 5 scenarios / 9 sub-checks. Pre-flight for the Binary size budget gate (step 16). |
 | 7 | Amend helper regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_amend.sh` — 6 scenarios / 21 sub-checks |
-| 8 | Unit tests | `make test-unit` (153 tests across 13 modules) |
-| 9 | Multi-seed integration test | `make test-multiseed` |
-| 10 | Live-mode smoke test (skips if no PA) | `make test-smoke` |
-| 11 | Cross-compile Windows .exe | `make win` |
-| 12 | UPX-pack Windows .exe | `make winpack` |
-| 13 | Binary sizes report | `make size | tee binary-sizes.txt` (measurements + `budget_*` rows) |
-| 14 | Upload binary sizes artifact | uploads `binary-sizes.txt` as the `binary-sizes` artifact |
-| 15 | **Binary size budget gate** | 3-key gate against `binary-sizes.txt`; budgets come from the artifact's `budget_*` rows (echoed by `make size` from the Makefile — no inline constants in ci.yml). Replaces the pre-#125 single-key gate. |
-| 16 | Coverage report | `make coverage | tee coverage.log` |
-| 17 | Coverage gates | Per-file coverage thresholds (90-95%) |
-| 18 | Upload Windows binary artifact | `stretto-windows` artifact |
-| 19 | Upload coverage log | `coverage-log` artifact |
+| 8 | Size budget gate regression test | `bash tests/test_size_budget_gate.sh` — synthetic binary-sizes.txt fixtures over every gate path incl. the page-cliff ADVISORY (066) |
+| 9 | Unit tests | `make test-unit` (178 tests across 13 modules) |
+| 10 | Multi-seed integration test | `make test-multiseed` |
+| 11 | Live-mode smoke test (skips if no PA) | `make test-smoke` |
+| 12 | Cross-compile Windows .exe | `make win` |
+| 13 | UPX-pack Windows .exe | `make winpack` |
+| 14 | Binary sizes report | `make size | tee binary-sizes.txt` (measurements + `budget_*` rows + the 066 code-segment/page-cliff-headroom rows) |
+| 15 | Upload binary sizes artifact | uploads `binary-sizes.txt` as the `binary-sizes` artifact |
+| 16 | **Binary size budget gate** | 3-key gate against `binary-sizes.txt`; budgets come from the artifact's `budget_*` rows (echoed by `make size` from the Makefile — no inline constants in ci.yml). Non-fatal page-cliff ADVISORY (surfaced as a PR annotation) when code-segment headroom < 256 B. |
+| 17 | Coverage report | `make coverage | tee coverage.log` |
+| 18 | Coverage gates | Per-file coverage thresholds (90-95%) |
+| 19 | Upload Windows binary artifact | `stretto-windows` artifact |
+| 20 | Upload coverage log | `coverage-log` artifact |
 
-(The pre-041 versions of this table omitted the `Upload binary sizes artifact` row and numbered the gate #14; the corrected UI number is #15.) The pre-#125 cascade also had a redundant `Assert Spec↔Build size budgets` step that duplicated the bridge. PR #125 removed it; the Bridge regression test (step 6) + Binary size budget gate (step 15) are the only 2 spec↔build enforcement points now, with clear pre-flight / measurement roles.
+The Bridge regression test (step 6) + Binary size budget gate (step 16) are the only 2 spec↔build enforcement points, with clear pre-flight / measurement roles.
 
 ## Build details
 

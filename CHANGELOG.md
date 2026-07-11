@@ -1,5 +1,13 @@
 # Changelog
 
+## Recent: sanitizer CI job + page-cliff visibility (066)
+
+Two safety nets, planned and twice-reviewed before implementation (the round-1 reviewer caught a merge-blocking fresh-checkout defect a passing local run had masked):
+
+- **`make test-asan` + a parallel `sanitizers` CI job**: ASan + UBSan (UB made FATAL via `-fno-sanitize-recover` - the default report-and-continue exits 0 and would green-light CI) over the full unit suite + a 30 s render, in its own `build_san/` tree. LSan off by rationale (the synth has no malloc; alsa-lib's config cache is a known false positive). First run: 13/13 suites clean. Never touches the release binary. The `$(HEADERS)` prerequisite the fresh-checkout job needs also fixed the same latent gap in the coverage build.
+- **Page-cliff visibility**: `make size` now emits the code segment's size and its distance to the next 4 KB page boundary - the number that actually predicts a file-size jump (the 063 arc lost a CI round-trip to a cliff no local measurement showed). The budget gate prints a non-fatal ADVISORY (surfaced as a PR annotation on Actions) when headroom drops below 256 B.
+- **`tests/test_size_budget_gate.sh`**: the gate script was the only tools/ script without a regression suite; 12 fixture checks now pin every path (PASS / per-key FAIL / skipped / missing-key / missing-file / ADVISORY incl. the exactly-page-aligned wording / annotation suppression outside Actions). Wired into `make test` + a standalone CI step per repo precedent.
+
 ## Recent: CC#64 sustain pedal + MIDI gate semantics (065)
 
 Implementing the pedal surfaced a deeper gap: the amplitude envelope had NO sustain phase - every note auto-decayed A->D->R and died ~0.8 s after trigger even with the key still held, which made "pedal defers the release" nearly meaningless (the voice released itself 200 ms in). Amended as FR-023 in specs/003:

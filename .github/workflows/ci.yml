@@ -21,6 +21,29 @@ permissions:
   contents: read
 
 jobs:
+  # ASan + UBSan over the unit suite + a render regression (separate
+  # object tree via `make test-asan`; UB is FATAL via
+  # -fno-sanitize-recover, since UBSan's default report-and-continue
+  # exits 0). Runs in parallel with the main job. NOTE: the branch
+  # ruleset's required check is `build-test-coverage` by job name -
+  # this job shows red on the PR without blocking a merge; add it to
+  # the ruleset to make it required.
+  sanitizers:
+    runs-on: ubuntu-24.04
+    # A sanitizer-slowed hang must not burn the 360-minute default;
+    # the whole job finishes in ~2-4 minutes.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make pkg-config libpulse-dev libasound2-dev
+      - name: Sanitized tests (ASan + UBSan fatal)
+        run: make test-asan
+
   build-test-coverage:
     # Pinned (not -latest) and kept IDENTICAL to release.yml's runner:
     # the lookup tables are generated at build time with host libm
@@ -87,6 +110,14 @@ jobs:
         # no build artefacts required since the amend helper is
         # pure Constitution<->Makefile static mutation.
         run: bash tests/test_spec_budget_amend.sh
+
+      - name: Size budget gate regression test
+        # Fixture suite for tools/size-budget-gate.sh (066): synthetic
+        # binary-sizes.txt files exercise the PASS / FAIL / skipped /
+        # missing-key / missing-file / ADVISORY paths without any
+        # build. Mirrors the `make test` wiring as a distinct CI step,
+        # same pattern as the two spec-budget suites above.
+        run: bash tests/test_size_budget_gate.sh
 
       - name: Unit tests
         run: make test-unit

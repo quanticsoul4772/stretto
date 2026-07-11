@@ -36,8 +36,32 @@ awk -F= '
   $1 == "budget_linux_synth_stripped"         { STRIP_BUDGET = $2 }
   $1 == "budget_linux_synth_packed"           { PACK_BUDGET = $2 }
   $1 == "budget_windows_stretto_exe_packed"   { WIN_PACK_BUDGET = $2 }
+  $1 == "linux_synth_page_cliff_headroom"     { headroom = $2 }
   END {
     fail = 0
+
+    # Advisory only (never fails the gate): the code segment pays file
+    # size in whole 4 KB pages, so low headroom means the NEXT feature
+    # jumps the file size by a page - and possibly over budget - even
+    # if this build is fine. The 063 arc hit exactly that, visible
+    # only on CI where gcc 13 emits slightly more text than local
+    # compilers. Numeric match only: "missing" and garbage values must
+    # not advise. The ::notice:: workflow command (column 0, single
+    # line) surfaces the advisory on the PR checks UI; it is gated on
+    # GITHUB_ACTIONS so the fixture-driven regression suite
+    # (tests/test_size_budget_gate.sh) and dev boxes never emit
+    # annotation directives.
+    if (headroom ~ /^[0-9]+$/ && headroom + 0 < 256) {
+      if (headroom + 0 == 0) {
+        msg = sprintf("linux_synth_page_cliff_headroom=0 -- the code segment is exactly page-aligned; the next byte of code costs a full 4 KB page. Budget accordingly (see the 063/065 arcs).")
+      } else {
+        msg = sprintf("linux_synth_page_cliff_headroom=%s bytes -- the next ~%s B of code cost a full 4 KB page. Budget accordingly (or bank headroom first; see the 063/065 arcs).", headroom, headroom)
+      }
+      printf("  ADVISORY: %s\n", msg)
+      if (ENVIRON["GITHUB_ACTIONS"] == "true") {
+        printf("::notice title=Binary size page-cliff advisory::%s\n", msg)
+      }
+    }
 
     if (STRIP_BUDGET + 0 <= 0 || PACK_BUDGET + 0 <= 0 || WIN_PACK_BUDGET + 0 <= 0) {
       print "FAIL: budget_* keys missing or non-numeric in binary-sizes.txt -- `make size` must echo STRIP_TARGET / PACK_TARGET / WIN_PACK_BUDGET as budget_* rows"
