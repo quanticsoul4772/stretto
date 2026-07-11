@@ -5,6 +5,7 @@
 # and keeps the text segment clear of a 4 KB page cliff that gcc 13
 # (CI) sits closer to than older local compilers.
 CFLAGS = -Os -flto -fuse-linker-plugin -ffast-math \
+         -Wall -Wextra \
          -ffunction-sections -fdata-sections -fno-plt \
          -fno-asynchronous-unwind-tables -fno-stack-protector \
          -fcf-protection=none -fno-pic -Qn \
@@ -136,6 +137,7 @@ main.o main.win.o main.dbg.o: version.h
 WIN_CC      = x86_64-w64-mingw32-gcc
 WIN_STRIP   = x86_64-w64-mingw32-strip
 WIN_CFLAGS  = -Os -flto -fuse-linker-plugin -ffunction-sections \
+              -Wall -Wextra \
               -fdata-sections -fno-asynchronous-unwind-tables \
               -fno-stack-protector -Qn -DWIN32_LEAN_AND_MEAN
 WIN_LDFLAGS = -Wl,--gc-sections -s -no-pie
@@ -171,15 +173,15 @@ winpack: stretto.packed.exe
 # Build-time table generators. Each runs once at build to emit a
 # fixed .rodata header that voice.c / gen.c consume.
 gen_sin_table: gen_sin_table.c
-	gcc -O2 gen_sin_table.c -o gen_sin_table -lm
+	gcc -O2 -Wall -Wextra gen_sin_table.c -o gen_sin_table -lm
 gen_env_table: gen_env_table.c
-	gcc -O2 gen_env_table.c -o gen_env_table -lm
+	gcc -O2 -Wall -Wextra gen_env_table.c -o gen_env_table -lm
 gen_note_table: gen_note_table.c
-	gcc -O2 gen_note_table.c -o gen_note_table -lm
+	gcc -O2 -Wall -Wextra gen_note_table.c -o gen_note_table -lm
 gen_euclid_table: gen_euclid_table.c
-	gcc -O2 gen_euclid_table.c -o gen_euclid_table
+	gcc -O2 -Wall -Wextra gen_euclid_table.c -o gen_euclid_table
 gen_wavetable: gen_wavetable.c
-	gcc -O2 gen_wavetable.c -o gen_wavetable -lm
+	gcc -O2 -Wall -Wextra gen_wavetable.c -o gen_wavetable -lm
 
 sin_table.h: gen_sin_table
 	./gen_sin_table > sin_table.h
@@ -330,7 +332,7 @@ tests/unit/test_%: tests/unit/test_%.c tests/unit/test.h $(OBJS_NO_MAIN)
 # library and on any host where libpthread symbols are not already
 # pulled in by libc itself. $(LIBASOUND) covers audio_midi_linux.o's
 # libasound references.
-	gcc -O2 -Wall -no-pie -Itests/unit $< $(OBJS_NO_MAIN) -o $@ -lm -pthread -latomic $(LIBASOUND)
+	gcc -O2 -Wall -Wextra -no-pie -Itests/unit $< $(OBJS_NO_MAIN) -o $@ -lm -pthread -latomic $(LIBASOUND)
 
 test-unit: $(UNIT_TEST_BINS)
 	@echo "=== unit tests ==="
@@ -390,7 +392,7 @@ golden-multiseed: synth
 # instrumented objects. Lets you alternate `make coverage` and
 # `make` / `make test-unit` without an intervening `make clean`.
 BUILD_COV = build_cov
-COV_FLAGS = -O0 -g -fprofile-arcs -ftest-coverage
+COV_FLAGS = -O0 -g -Wall -Wextra -fprofile-arcs -ftest-coverage
 
 # Source files split into two groups:
 #   MEASURED       - line coverage is reported and CI-gated.
@@ -483,7 +485,15 @@ coverage: $(COV_OBJS)
 BUILD_SAN = build_san
 # -ffast-math is DELIBERATELY absent from SAN_FLAGS: UBSan's float
 # checks misfire under fast-math's relaxed semantics.
-SAN_FLAGS = -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
+# -Werror lives HERE and only here (067): the CI sanitizers job is
+# the warning gate, while release/source builds stay permissive so a
+# newer downstream compiler's fresh warnings never break `make` for
+# users (the classic -Werror packaging hazard). Consequence: a CI gcc
+# bump can fail only the sanitizers job, never the release build. If
+# -Wmaybe-uninitialized ever misfires under instrumentation, prefer
+# -Wno-error=maybe-uninitialized over dropping -Werror.
+SAN_FLAGS = -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
             -fno-omit-frame-pointer -pthread
 
 SAN_OBJS      = $(addprefix $(BUILD_SAN)/,$(COV_SRCS:.c=.o))
