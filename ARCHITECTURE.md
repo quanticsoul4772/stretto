@@ -6,7 +6,7 @@
 
 | Binary | Size |
 |---|---|
-| Linux `synth` (stripped, links libpulse + libasound) | ~47 KB (48 584 B per `make synth` + `strip -s -R .comment`, measured 2026-07-11 on the 059 quality pass; STRIP_TARGET = 51 200 B) |
+| Linux `synth` (stripped, links libpulse + libasound) | ~48 KB (49 064 B per `make synth` + `strip -s -R .comment`, measured 2026-07-12 after the 077 size reclaim; STRIP_TARGET = 51 200 B) |
 | Linux `synth.packed` (UPX) | ~25 KB (25 460 B per the PR #117 `binary-sizes` CI artifact — historical; grows with the stripped binary); PACK_TARGET = 30 720 B per the Makefile enforces the Constitution v1.2.x cap |
 | Windows `stretto.exe` (stripped) | ~247 KB (252 928 B from `make win`, measured 2026-07-11; stripped — `-s` in `WIN_LDFLAGS` strips at link and the `stretto.exe` rule additionally runs `$(WIN_STRIP) -s -R .comment`) |
 | Windows `stretto.packed.exe` (UPX) | ~38 KB (per the PR #117 `binary-sizes` CI artifact — historical); WIN_PACK_BUDGET = 49 152 B |
@@ -593,7 +593,7 @@ Without `--seed`, `gen_init` derives the seed from `time(NULL)` at startup, so e
 
 ### CC mapping table (FR-020)
 
-The 128-entry `CC_MAP` lives in `.rodata` of `audio_midi.c` (512 B total). Per Clarifications 2026-07-06 Q4, all CC values start at 0 at synth launch — the first CC message from the controller sets the actual value; a knob moved before launch is not reflected until the user wiggles it (avoids the controller-inquiry round-trip not all hardware supports).
+The 128-entry `CC_MAP` lives in `.rodata` of `audio_midi.c` (256 B total; 2 B/entry since the 077 pack). Per Clarifications 2026-07-06 Q4, all CC values start at 0 at synth launch — the first CC message from the controller sets the actual value; a knob moved before launch is not reflected until the user wiggles it (avoids the controller-inquiry round-trip not all hardware supports).
 
 | CC#        | Target                              | Scale | Max swing (V = 0..127)             |
 |------------|-------------------------------------|-------|------------------------------------|
@@ -608,7 +608,7 @@ The 128-entry `CC_MAP` lives in `.rodata` of `audio_midi.c` (512 B total). Per C
 
 **CC#64 sustain (065, FR-023).** MIDI-tagged voices use gate semantics: after decay they PARK at the sustain level until Note Off (a held key rings — the generative scheduler's voices keep the fire-and-forget auto-release, so goldens are untouched). With the pedal down on a channel (`g_sustain_mask` in audio_midi.c, one bit per channel), Note Off marks the voice held instead of releasing it — high bit of `trigger_channel`, zero struct growth — and pedal-up flushes every voice held on that channel (`voice_pool_hold_midi` / `voice_pool_flush_sustained`). Voice-stealing ignores the held tag under pool pressure, the standard pedal compromise.
 
-`CC_TARGET_NONE` slots (silently dropped, no `fprintf`, no callback overhead; zero-initialized via the C99 designated-initializer `[N]={}` form so the table footprint is exactly 512 B in `.rodata` regardless of populated slot count):
+`CC_TARGET_NONE` slots (silently dropped, no `fprintf`, no callback overhead; zero-initialized via the C99 designated-initializer `[N]={}` form so the table footprint is exactly 256 B in `.rodata` regardless of populated slot count):
 
 - **CC#0** / **CC#10** (Bank Select MSB / Pan) — common wheel/encoder assignments on hardware controllers; explicitly out of scope for v1.
 - **CC#16 / CC#17 / CC#18 / CC#19** (General Purpose Controllers 1–4) — controller-specific use; deliberately unassigned so explicit CC routing stays in the table above.
@@ -647,7 +647,7 @@ The oscilloscope draws each frame into a 24 KB static buffer (one `write()` sysc
 | Target | Scope |
 |---|---|
 | `make test` | CLI contract (`tests/test_cli.sh`: help/version/usage errors, stdout render, preset flags, no-server UX, offline install.sh, man page) + bit-exact regression (render 16 s at `--seed 0` twice, byte-compare, sha256 against `golden/regression_16s.sha256`) + the Constitution↔Makefile bridge and amend regression suites + the size-budget-gate fixture suite (`tests/test_size_budget_gate.sh`). |
-| `make test-unit` | 205 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
+| `make test-unit` | 205 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys, resume) using the hand-rolled framework in `tests/unit/test.h`. |
 | `make test-multiseed` | Renders 4 s at seeds 0 / 1 / 42 / 12345, asserts each is deterministic across runs, asserts all four produce distinct sha256s, asserts each render's peak / clip count / spectral centroid / zero-crossing rate land within sane bounds (RMS is reported but not gated, since the randomized INTRO palette varies loudness), then matches each hash against `golden/regression_multiseed.sha256.txt`. |
 | `make test-smoke` | Spawns `./synth --no-ui` under a 2 s timeout. Pass on exit 0 / 124 / 143; fail on segfault. Auto-skips if no PulseAudio. |
 | `make coverage` | Rebuilds instrumented (`-fprofile-arcs -ftest-coverage`), runs the regression + unit suites, prints per-file line coverage via `gcov`. |
@@ -671,11 +671,11 @@ Approximate line coverage:
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
 | `main.c` | — | excluded (process-level argv branches; see Makefile `COV_SRCS_INTERACTIVE`) |
-| `audio_midi.c` | ~98% (gcov, WSL Ubuntu; CC dispatch + bounds/channel guards + sustain/All-Notes-Off + ring buffer + opt-out + the 50k-event fuzz; 30 unit tests in `tests/unit/test_midi.c`) | ≥90% |
+| `audio_midi.c` | ~98% (gcov, WSL Ubuntu; CC dispatch + bounds/channel guards + sustain/All-Notes-Off + ring buffer + opt-out + the 50k-event fuzz; 36 unit tests in `tests/unit/test_midi.c`) | ≥90% |
 | `ui.c`, `keys.c`, `audio_pulse.c`, `audio_midi_linux.c` | — | excluded (interactive; require TTY + audio device or snd-seq-dummy loopback to enumerate — listed in `Makefile` `COV_SRCS_INTERACTIVE`) |
 | `audio_midi_winmm.c` | — | platform-gated (Windows cross-compile only via `x86_64-w64-mingw32-gcc`; the Linux CI runner does not produce `audio_midi_winmm.o`, so it is implicitly excluded from `COV_SRCS_MEASURED` without needing an interactive-source listing) |
 
-Total: 196 unit tests across 14 modules (the MIDI suite covers: US1 scale-degree + octave clamp + velocity + voice-stealing + no-midi byte-identity, US2 CC dispatcher + multi-CC additive composition + reserved-CC no-op slots + sustain pedal + All Notes Off, US3 channel filter + enumeration + wildcard sentinel, plus the malformed-channel guard and the deterministic 50k-event fuzz).
+Total: 205 unit tests across 14 modules (the MIDI suite covers: US1 scale-degree + octave clamp + velocity + voice-stealing + no-midi byte-identity, US2 CC dispatcher + multi-CC additive composition + reserved-CC no-op slots + sustain pedal + All Notes Off, US3 channel filter + enumeration + wildcard sentinel, plus the malformed-channel guard and the deterministic 50k-event fuzz).
 
 The coverage build (`make coverage`) writes every artifact (instrumented `.o`, `.gcno`, `.gcda`, `synth_cov`, `.cov` test binaries) into `build_cov/` so it does not clobber the normal build. `make coverage` and `make test-unit` can be alternated freely without `make clean`. CI's "Coverage gates" step parses the per-file numbers and fails if any drop below the gate.
 

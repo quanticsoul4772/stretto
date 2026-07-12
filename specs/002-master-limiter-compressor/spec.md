@@ -100,7 +100,7 @@ Listener adjusts the compressor's threshold in real time via keyboard and hears 
 - **FR-030**: System MUST initialize the envelope to 0 and threshold to the default (20 000) from `effects_init()`.
 
 #### Status row
-- **FR-040**: System MUST display the current threshold in the status row as `Lm:<n>` (green label, white value) after the existing `T:` filter-mode field.
+- **FR-040**: System MUST display the current threshold in the status row as `Lm:<n>` (green label, white value) after the existing `T:` filter-mode field. *(Amended 2026-07-12, 074: the row is now the small-terminal fallback of a five-line rich panel, whose effects line shows the same value as `compressor <n>`; the `Lm:` fallback field is unchanged.)*
 
 #### Testing
 - **FR-050**: System MUST have unit tests covering: quiet-signal pass-through, loud-signal compression, brickwall enforcement, envelope state persistence, threshold clamping.

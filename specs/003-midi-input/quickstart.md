@@ -62,12 +62,13 @@ The existing `t` key cycles the captured motif (the most recent triggered note).
 
 | CC# | Name | Mapped to | Behavior |
 |---|---|---|---|
-| **1** | Mod Wheel | per-voice filter cutoff | additive ±20 units |
-| **7** | Channel Volume | master compressor threshold | additive ±4000 units (around default 20000) |
-| **71** | Resonance / Timbre | per-voice filter resonance | additive ±20 units |
-| **74** | Brightness / Cutoff | per-voice filter cutoff | additive ±20 units (sums with CC#1) |
-| **91** | Reverb Send | master reverb wet mix | additive ±32 units |
-| **93** | Chorus / Delay Send | master delay wet mix | additive ±32 units |
+| **1** | Mod Wheel | per-voice filter cutoff | additive, (value-64)×1 = -64..+63 units |
+| **7** | Channel Volume | master compressor threshold | additive, (value-64)×60 ≈ ±3800 units (around default 20000) |
+| **64** | Sustain Pedal | damper hold (065) | value ≥ 64 holds Note Offs per channel; < 64 releases held notes |
+| **71** | Resonance / Timbre | per-voice filter resonance | additive, -64..+63 units |
+| **74** | Brightness / Cutoff | per-voice filter cutoff | additive, -64..+63 units (sums with CC#1) |
+| **91** | Reverb Send | master reverb wet mix | additive, -64..+63 units |
+| **93** | Chorus / Delay Send | master delay wet mix | additive, -64..+63 units |
 | 16, 17, 19 | (GP1-4) | unassigned | ignored |
 | **123** | All Notes Off | releases the channel's notes (pedal-held survive until pedal-up) | value-independent |
 | (any other) | (unassigned) | unassigned | ignored |

@@ -117,7 +117,7 @@ While listening, the user adjusts tempo, gate density, filter cutoff/resonance, 
 - **FR-034**: System MUST exit with usage on any unrecognized argument combination.
 
 #### Live-mode UI
-- **FR-040**: System MUST render an oscilloscope + status row using ANSI escapes at every audio buffer boundary unless `--no-ui` is set.
+- **FR-040**: System MUST render an oscilloscope + status row using ANSI escapes at every audio buffer boundary unless `--no-ui` is set. *(Amended 2026-07-12, 074: the status surface is a five-line rich panel on terminals with >= 20 rows, with the single status row retained as the small-terminal fallback; original text kept for point-in-time traceability.)*
 - **FR-041**: System MUST respond to the documented key map (`?`, `q`, `+`/`-`, `[`/`]`, `s`, `g`/`G`, `d`/`D`, `f`/`F`, `r`/`R`, `c`/`C`, `n`/`N`, `m`/`M`, `t`) by invoking the corresponding setter and reflecting the change in subsequent audio + status row.
 - **FR-042**: System MUST gracefully restore terminal state on exit (cooked mode, cursor visible).
 

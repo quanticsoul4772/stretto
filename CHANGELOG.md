@@ -1,5 +1,15 @@
 # Changelog
 
+## Recent: spec/docs sync to the as-built 069-077 surface (078)
+
+Pure docs, zero code. A very-thorough drift sweep + fact-checking review found ~19 stale spots left behind by the last nine arcs:
+
+- **CC_MAP sizing** corrected in its three homes (003 data-model Entity 4 struct/size/summary-table, 003 plan.md Constitution row + amendment bullet, ARCHITECTURE x2): 2 B/entry / 256 B since the 077 pack (the doc'd 4 B/512 B was never what shipped - the int-enum layout was 8 B/1024 B). data-model's cc_target_t listing gains the SUSTAIN/ALL_NOTES_OFF values (065/067) it already referenced, and Entity 3's arena-vs-BSS self-contradiction is resolved (the queue is BSS; the arena is untouched by MIDI).
+- **003 tasks.md**: T034/T035 (real device enumerators, 059), T040/T042 (README/CHANGELOG artifacts), T043 (feature.json exists) flipped [X] with evidence; T039 stays open (the smoke sub-check lacks the amidi/RMS loopback the task specifies) and T044-T049 stay open per the continuous-CI-gates convention (95d2918).
+- **003 quickstart.md CC table**: adds the missing CC#64 sustain row; delta magnitudes corrected to the shipped scales (+/-63 for the x1 CCs, ~+/-3800 for CC#7's x60).
+- **001/002 spec FR-040**: inline amendment tags for the 074 rich panel (row = small-terminal fallback), original text retained; 001's FR-052 deliberately untouched - its own amendment-history footer already records the append-only convention.
+- **ARCHITECTURE/README numbers**: 196 -> 205 unit tests (three spots incl. an internal inconsistency), test_midi 30 -> 36, module list gains `resume`, binary row -> 49,064 B (077).
+
 ## Recent: size-headroom reclaim - 1,888 B back, zero behavior change (077)
 
 After 074 the stripped binary sat ~300 B under the 51,200 B Constitution gate - every future C arc was one bad estimate from a bust. Parallax-selected; a symbol-level audit (same-flags + -g out-of-tree build, identity-checked against the shipping binary) ranked the levers, largest first:

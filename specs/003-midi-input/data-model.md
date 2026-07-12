@@ -84,13 +84,13 @@ The struct is **not retained** past the print step of `--midi-list-devices`.
 #define MIDI_QUEUE_MASK     (MIDI_QUEUE_CAPACITY - 1)
 
 typedef struct {
-    midi_event_t events[MIDI_QUEUE_CAPACITY];  /* 256 × 4 = 1024 bytes; from arena per FR-040 */
+    midi_event_t events[MIDI_QUEUE_CAPACITY];  /* 256 × 4 = 1024 bytes; static (BSS) - see size note below */
     uint32_t     head;  /* producer-only write; consumer reads with __atomic_load_n(__ATOMIC_ACQUIRE) */
     uint32_t     tail;  /* consumer-only write; producer does not touch */
 } midi_queue_t;
 ```
 
-**Size**: 1024 + 4 + 4 = 1032 bytes. 8-byte aligned (per Constitution Memory model: 8-byte aligned bump allocator). Allocated from the arena at synth init time (per FR-040, "no `malloc`").
+**Size**: 1024 + 4 + 4 = 1032 bytes. (Amended 2026-07-12: as-built the queue is a static in audio_midi.c - BSS-allocated, zero file bytes, the 128 KB arena untouched by MIDI; satisfies FR-040's "no `malloc`" without an arena draw. audio_midi.h's own "Updated 2026-07-06" note records the same.)
 
 **SPSC invariants** (D3 decision):
 - Single producer: the platform callback (Linux: ALSA-managed thread; Windows: midiInProc)
@@ -101,7 +101,7 @@ typedef struct {
 
 **Overflow behavior**: If the consumer falls behind and `head - tail >= MIDI_QUEUE_CAPACITY`, the producer drops the new event (silently — no malloc, no fprintf from a callback). The dropped-event count is exposed via `audio_midi_drop_count()` for diagnostics; not surfaced in the UI in v1.
 
-**Relationships**: One `midi_queue_t` per process. Created in `audio_midi_init()` from the arena. Lives in the audio_midi.c module's static state (BSS-residing since it doesn't change size).
+**Relationships**: One `midi_queue_t` per process. Reset by `audio_midi_init()`. Lives in the audio_midi.c module's static state (BSS-residing; no arena draw - see the size note above).
 
 **State diagram**:
 ```
@@ -132,17 +132,23 @@ typedef enum {
     CC_TARGET_DELAY_FEEDBACK,    /* delay feedback; call delay_adjust_feedback(delta) */
     CC_TARGET_FILTER_LFO_DEPTH,  /* filter LFO depth; call voice_adjust_lfo_filter_depth(delta) */
     CC_TARGET_MUTATION_RATE,     /* mutates the generative mutation rate; call gen_force_mutate() or similar */
-    CC_TARGET_COMPRESSOR_THRESH  /* master compressor threshold; call compressor_adjust_threshold(delta) */
+    CC_TARGET_COMPRESSOR_THRESH, /* master compressor threshold; call compressor_adjust_threshold(delta) */
+    CC_TARGET_SUSTAIN,           /* (Amended 2026-07-11, 065) CC#64 pedal: raw VALUE semantics, not (V-64)*scale */
+    CC_TARGET_ALL_NOTES_OFF      /* (Amended 2026-07-11, 067) CC#123: Note Off per sounding note; appended LAST per the no-renumbering contract */
 } cc_target_t;
 
 typedef struct {
-    cc_target_t target;  /* 0=unassigned, else target id */
-    int8_t      scale;   /* 0 if target=NONE; else signed scale applied to (CC value - 64) */
-    uint8_t     _pad;
+    uint8_t target;  /* a cc_target_t value: 0=unassigned, else target id.
+                        (Amended 2026-07-12, 077: stored as uint8_t - the
+                        enum type is int-sized, which made the struct 8 B
+                        and CC_MAP 1024 B, double this spec's budget; all
+                        11 enum values fit uint8_t and comparisons promote
+                        back to int. The explicit _pad byte is gone.) */
+    int8_t  scale;   /* 0 if target=NONE; else signed scale applied to (CC value - 64) */
 } cc_map_entry_t;
 ```
 
-**Size**: 4 bytes (1+1+1+1 padding). The table is 128 entries × 4 bytes = 512 bytes in `.rodata`.
+**Size**: 2 bytes. The table is 128 entries × 2 bytes = 256 bytes in `.rodata` (Amended 2026-07-12, 077: was documented as 4 B/entry = 512 B; the shipped int-enum layout was actually 8 B/entry = 1024 B until the 077 pack brought it to 2 B/entry, inside the original 512 B budget).
 
 **Static table** (`audio_midi.c`):
 ```c
@@ -276,10 +282,10 @@ synth --midi [N]
 |---|---|---|---|
 | `midi_event_t` | 4 B | per event | stack/queue |
 | `midi_input_device_t` | 68 B | per `--midi-list-devices` call | stack |
-| `midi_queue_t` | 1032 B | process lifetime (allocated once) | arena |
-| `CC_MAP[128]` | 512 B | process lifetime | `.rodata` |
+| `midi_queue_t` | 1032 B | process lifetime (static) | BSS (amended 2026-07-12; was "arena") |
+| `CC_MAP[128]` | 256 B | process lifetime | `.rodata` (amended 2026-07-12, 077 pack; was 512 B) |
 | `Voice.trigger_key` | +1 B per voice | per voice | BSS (voice pool) |
 | `Voice.trigger_channel` | +1 B per voice | per voice | BSS (voice pool) |
-| **Total MIDI-specific data** | **~1.6 KB** | — | — |
+| **Total MIDI-specific data** | **~1.4 KB** | — | — |
 
 Well within the 128 KB arena budget (currently ~50-60 KB used by voice pool + reverb + delay). No impact on the existing memory budget.
