@@ -634,10 +634,10 @@ static const char *PARAM_KEYS[UI_PARAM_COUNT] = {
     "t", "r/R", "d/D", "f/F", "l/L", ""
 };
 
-/* Live value for PARAM_FLAGS[k]; named params return the index (the
+/* Live value for PARAM_FLAGS[k]; named params return the index (map
    overlay maps it to a name). bar-ms uses the canonical expression
    from keys.c's resume-line builder. */
-static unsigned param_current(int k) {
+unsigned ui_param_current(int k) {
     switch (k) {
         case UI_PARAM_SCALE:          return gen_get_scale();
         case UI_PARAM_BAR_MS:
@@ -677,11 +677,11 @@ int ui_build_help_overlay(char *buf) {
         append_str(buf, &p, PARAM_FLAGS[k].name + 2);   /* drop "--" */
         pad_to(buf, &p, ls, 26);
         if (PARAM_FLAGS[k].named == 1)
-            append_str(buf, &p, ui_scale_name((int)param_current(k)));
+            append_str(buf, &p, ui_scale_name((int)ui_param_current(k)));
         else if (PARAM_FLAGS[k].named == 2)
-            append_str(buf, &p, ui_filter_mode_name((int)param_current(k)));
+            append_str(buf, &p, ui_filter_mode_name((int)ui_param_current(k)));
         else
-            append_num(buf, &p, param_current(k));
+            append_num(buf, &p, ui_param_current(k));
         pad_to(buf, &p, ls, 38);
         buf[p++] = '[';
         append_num(buf, &p, (unsigned)PARAM_FLAGS[k].min);

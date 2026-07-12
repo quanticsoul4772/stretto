@@ -58,6 +58,12 @@ int ui_build_status_row(char *buf, unsigned tw);
    and returns the byte length. Public for PTY-free unit tests. */
 int ui_build_help_overlay(char *buf);
 
+/* Live value of PARAM_FLAGS[k] (named params return the index; map
+   via ui_scale_name / ui_filter_mode_name). Single source for the
+   help overlay AND keys.c's resume-line builder (077) - includes
+   the canonical bar-ms expression. */
+unsigned ui_param_current(int k);
+
 /* --- help overlay --- */
 
 void ui_show_help(void);
