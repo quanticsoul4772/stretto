@@ -20,38 +20,27 @@ void keys_build_resume_line(void) {
     int p = snprintf(buf, cap, "resume with: --seed %u",
                      (unsigned)gen_get_seed_input());
 
-#define APPEND(fmt, val) \
-    do { if (p > 0 && (size_t)p < cap) \
-        p += snprintf(buf + p, cap - (size_t)p, fmt, val); } while (0)
-
-    if (ui_param_is_set(UI_PARAM_SCALE))
-        APPEND(" --scale %s", ui_scale_name((int)gen_get_scale()));
-    if (ui_param_is_set(UI_PARAM_BAR_MS))
-        APPEND(" --bar-ms %u",
-               (unsigned)((uint64_t)gen_get_step_samples() * 48000u / SAMPLE_RATE));
-    if (ui_param_is_set(UI_PARAM_GATE))
-        APPEND(" --gate %u", (unsigned)gen_get_gate());
-    if (ui_param_is_set(UI_PARAM_MOD_DEPTH))
-        APPEND(" --mod-depth %u", (unsigned)voice_get_mod_depth());
-    if (ui_param_is_set(UI_PARAM_CUTOFF))
-        APPEND(" --cutoff %u", (unsigned)voice_get_cutoff());
-    if (ui_param_is_set(UI_PARAM_RESONANCE))
-        APPEND(" --resonance %u", (unsigned)voice_get_resonance());
-    if (ui_param_is_set(UI_PARAM_LFO_DEPTH))
-        APPEND(" --lfo-depth %u", (unsigned)voice_get_lfo_filter_depth());
-    if (ui_param_is_set(UI_PARAM_FILTER_MODE))
-        APPEND(" --filter-mode %s", ui_filter_mode_name((int)voice_get_filter_mode()));
-    if (ui_param_is_set(UI_PARAM_REVERB))
-        APPEND(" --reverb %u", (unsigned)reverb_get_wet());
-    if (ui_param_is_set(UI_PARAM_DELAY))
-        APPEND(" --delay %u", (unsigned)delay_get_wet());
-    if (ui_param_is_set(UI_PARAM_FEEDBACK))
-        APPEND(" --feedback %u", (unsigned)delay_get_feedback());
-    if (ui_param_is_set(UI_PARAM_COMP_THRESHOLD))
-        APPEND(" --comp-threshold %u", (unsigned)compressor_get_threshold());
-    if (ui_param_is_set(UI_PARAM_SWING))
-        APPEND(" --swing %u", (unsigned)gen_get_swing());
-#undef APPEND
+    /* One loop over the shared PARAM_FLAGS table + ui_param_current
+       getters instead of 13 hand-written APPEND blocks (077 size
+       reclaim: the old form was ~1 KB of snprintf call sites).
+       Output is byte-identical to the old per-param code -
+       tests/unit/test_resume.c pins the exact strings, including
+       the 232-char all-params max-width case - and the flag names
+       can no longer drift from main.c's parser. */
+    for (int k = 0; k < UI_PARAM_COUNT; k++) {
+        if (!ui_param_is_set(k)) continue;
+        if (p <= 0 || (size_t)p >= cap) break;
+        unsigned v = ui_param_current(k);
+        if (PARAM_FLAGS[k].named == 1)
+            p += snprintf(buf + p, cap - (size_t)p, " %s %s",
+                          PARAM_FLAGS[k].name, ui_scale_name((int)v));
+        else if (PARAM_FLAGS[k].named == 2)
+            p += snprintf(buf + p, cap - (size_t)p, " %s %s",
+                          PARAM_FLAGS[k].name, ui_filter_mode_name((int)v));
+        else
+            p += snprintf(buf + p, cap - (size_t)p, " %s %u",
+                          PARAM_FLAGS[k].name, v);
+    }
 
     ui_set_resume_line(buf);
 }

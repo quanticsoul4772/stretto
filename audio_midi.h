@@ -109,12 +109,15 @@ typedef enum {
 /* One entry of the static CC_MAP[128]. target=CC_TARGET_NONE means
  * silently dropped. scale is signed (int8) so the `(V-64)*scale`
  * delta can swing negative; for target=NONE, scale is 0 and ignored.
- * _pad is explicit so the struct stays 4 B (128 entries * 4 = 512 B
- * in `.rodata` per data-model.md field sizing summary). */
+ * target holds a cc_target_t VALUE but is stored as uint8_t: the
+ * enum type is int-sized, which made the struct 8 B and CC_MAP
+ * 1024 B - double data-model.md's 512 B budget (the drift the old
+ * comment documented). Packed to 2 B/entry, CC_MAP is 256 B, inside
+ * the spec budget (077 size reclaim). All 11 cc_target_t values fit
+ * uint8_t; comparisons and switches promote back to int. */
 typedef struct {
-    cc_target_t target;
-    int8_t      scale;
-    uint8_t     _pad;
+    uint8_t target;   /* a cc_target_t value */
+    int8_t  scale;
 } cc_map_entry_t;
 
 /* --- Audio-thread-side API (audio_midi.c) --- */

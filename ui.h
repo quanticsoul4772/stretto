@@ -58,6 +58,12 @@ int ui_build_status_row(char *buf, unsigned tw);
    and returns the byte length. Public for PTY-free unit tests. */
 int ui_build_help_overlay(char *buf);
 
+/* Live value of PARAM_FLAGS[k] (named params return the index; map
+   via ui_scale_name / ui_filter_mode_name). Single source for the
+   help overlay AND keys.c's resume-line builder (077) - includes
+   the canonical bar-ms expression. */
+unsigned ui_param_current(int k);
+
 /* --- help overlay --- */
 
 void ui_show_help(void);
@@ -100,10 +106,11 @@ enum {
    the help overlay reads names/ranges from this table. */
 typedef struct {
     const char *name;
-    int min, max;
     void (*set)(int);
-    int named;
-} ParamFlag;
+    int16_t min, max;   /* widest range is --comp-threshold's 30000 */
+    uint8_t named;
+} ParamFlag;            /* packed 32 B -> 24 B/row (077); the range
+                           compare in main.c promotes to long */
 
 extern const ParamFlag PARAM_FLAGS[UI_PARAM_COUNT];
 
