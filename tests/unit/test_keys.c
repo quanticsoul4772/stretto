@@ -248,6 +248,21 @@ TEST(status_panel_tw80_keeps_full_words) {
     ASSERT_TRUE(strstr(buf, "voices") != NULL);
 }
 
+TEST(status_panel_survives_10_digit_seed) {
+    ensure_init();
+    /* Live runs without --seed use a clock-derived seed (~10 digits).
+       append_num's digit buffer must hold a full uint32 - the
+       original t[6] smashed the stack on the panel's seed field
+       (found as a live-mode SIGSEGV by test_smoke_live sub-check C). */
+    gen_seed(4294967295u);
+    char buf[4096];
+    int len = ui_build_status_panel(buf, 200);
+    ASSERT_TRUE(len > 0);
+    int n = ui_strip_sgr(buf, len);
+    buf[n] = '\0';
+    ASSERT_TRUE(strstr(buf, "4294967295") != NULL);
+}
+
 TEST(status_row_contains_swing_field) {
     ensure_init();
     /* Wide budget: Sw: sits last in the row (importance-ordered) and
