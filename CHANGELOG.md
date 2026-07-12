@@ -1,5 +1,15 @@
 # Changelog
 
+## Recent: size-headroom reclaim - 1,888 B back, zero behavior change (077)
+
+After 074 the stripped binary sat ~300 B under the 51,200 B Constitution gate - every future C arc was one bad estimate from a bust. Parallax-selected; a symbol-level audit (same-flags + -g out-of-tree build, identity-checked against the shipping binary) ranked the levers, largest first:
+
+- **CC_MAP pack (-768 B)**: cc_target_t is int-sized, making cc_map_entry_t 8 B and CC_MAP 1,024 B - double data-model.md's 512 B budget, a drift the code itself documented. target stored as uint8_t (all 11 enum values fit): 2 B/entry, 256 B, inside spec.
+- **Resume-line table-drive (-864 B)**: keys_build_resume_line's 13 hand-written APPEND blocks (~1 KB of snprintf call sites) became one loop over the shared PARAM_FLAGS table + the exported ui_param_current getter. Output byte-identical (test_resume pins exact strings incl. the 232-char max-width case); flag names can no longer drift from the parser.
+- **Data-layout packs (-256 B)**: ParamFlag rows 32 B -> 24 B (int16 ranges); PARAM_KEYS + five name tables become 2D char arrays (pointer rows + relocs cost more than padded strings).
+
+50,952 -> 49,064 B stripped (slack 300 B -> 2,136 B; page-cliff headroom 1,552 -> 3,440 B). Audit-evaluated and rejected: fused-literal unfusing (net-negative, the 074 lesson), gold+ICF (refights the 063 page cliff for tens of bytes), die2 error-path helper (~50 B, below the line once the target was met). Goldens byte-identical at every commit; 205 unit tests + ASan suite green; no visual or contract-string changes.
+
 ## Recent: property tests for the 074 TUI surface + help-overlay pinning (076)
 
 074's one escaped defect (the append_num stack smash on 10-digit clock seeds) was caught by the smoke suite, not unit tests - example-based tests can't cover a fuzzed state space. Parallax-selected hardening at zero binary cost (both binaries byte-identical):
