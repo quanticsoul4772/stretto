@@ -87,6 +87,8 @@ TEST(ui_draw_scope_rich_panel) {
     fflush(stdout);
     fflush(stderr);
     pid_t pid = fork();
+    ASSERT_TRUE(pid >= 0);
+    if (pid < 0) return;   /* never reach reap/kill paths with pid -1 */
     if (pid == 0) {
         unsetenv("NO_COLOR");
         dup2(fd, 1);
@@ -107,7 +109,11 @@ TEST(ui_draw_scope_rich_panel) {
     unlink(out);
     ASSERT_TRUE(strstr(buf, "stretto") != NULL);
     ASSERT_TRUE(strstr(buf, "scale") != NULL);
-    ASSERT_TRUE(strstr(buf, "\x1b[") != NULL);
+    /* has_sgr, not a bare ESC search: the functional escapes
+       (\x1b[H, \x1b[2K) survive NO_COLOR stripping, so a bare
+       "contains ESC" assert could not detect an always-stripping
+       regression in no_color_enabled (082). */
+    ASSERT_TRUE(has_sgr(buf));
 }
 
 TEST(ui_draw_scope_no_color_strips_sgr) {
@@ -116,6 +122,8 @@ TEST(ui_draw_scope_no_color_strips_sgr) {
     fflush(stdout);
     fflush(stderr);
     pid_t pid = fork();
+    ASSERT_TRUE(pid >= 0);
+    if (pid < 0) return;   /* never reach reap/kill paths with pid -1 */
     if (pid == 0) {
         setenv("NO_COLOR", "1", 1);
         dup2(fd, 1);
@@ -144,6 +152,8 @@ TEST(ui_show_help_and_clear_write_paths) {
     fflush(stdout);
     fflush(stderr);
     pid_t pid = fork();
+    ASSERT_TRUE(pid >= 0);
+    if (pid < 0) return;   /* never reach reap/kill paths with pid -1 */
     if (pid == 0) {
         dup2(fd, 1);        /* no_ui stays default 0 in the child */
         test_init_synth();
@@ -183,6 +193,8 @@ TEST(ui_term_raw_mode_headless_degrade) {
     fflush(stdout);
     fflush(stderr);
     pid_t pid = fork();
+    ASSERT_TRUE(pid >= 0);
+    if (pid < 0) return;   /* never reach reap/kill paths with pid -1 */
     if (pid == 0) {
         int nul = open("/dev/null", 0);
         dup2(nul, 0);
@@ -215,6 +227,8 @@ TEST(ui_sigterm_reraise_semantics) {
     fflush(stdout);
     fflush(stderr);
     pid_t pid = fork();
+    ASSERT_TRUE(pid >= 0);
+    if (pid < 0) return;   /* never reach reap/kill paths with pid -1 */
     if (pid == 0) {
         int nul = open("/dev/null", 1);
         dup2(nul, 2);
@@ -240,6 +254,8 @@ TEST(ui_fatal_handler_lines_via_sigwinch) {
     fflush(stdout);
     fflush(stderr);
     pid_t pid = fork();
+    ASSERT_TRUE(pid >= 0);
+    if (pid < 0) return;   /* never reach reap/kill paths with pid -1 */
     if (pid == 0) {
         dup2(efd, 2);
         ui_install_signal_handlers();
@@ -268,6 +284,8 @@ TEST(ui_sigtstp_stop_and_resume) {
     fflush(stdout);
     fflush(stderr);
     pid_t pid = fork();
+    ASSERT_TRUE(pid >= 0);
+    if (pid < 0) return;   /* never reach reap/kill paths with pid -1 */
     if (pid == 0) {
         /* Own process group: a stop signal to an ORPHANED group is
            DISCARDED by POSIX (the script(1) lesson pinned in
