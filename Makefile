@@ -498,7 +498,7 @@ coverage: $(COV_OBJS) $(BUILD_COV)/main_testable.o
 	@echo "=== per-file line coverage (measured set only) ==="
 	@cd $(BUILD_COV) && gcov -n -o . $(addprefix ../,$(COV_SRCS_MEASURED)) main_testable.gcno 2>/dev/null | \
 		awk '/^File/ {sub(/[\x27]/,"",$$2); sub(/[\x27]/,"",$$2); f=$$2} \
-		     /^Lines/ {sub(/Lines executed:/,""); print f": "$$0}' | \
+		     /^Lines/ {sub(/Lines executed:/,""); if (f != "") print f": "$$0; f=""}' | \
 		grep "\.c"
 	@echo "(interactive modules ui.c keys.c audio_pulse.c audio_midi_linux.c excluded - require TTY/audio device; main.c measured via main_testable.gcno, 080)"
 
