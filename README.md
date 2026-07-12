@@ -248,7 +248,7 @@ Redirected invocations (`./synth < /dev/null`, `./synth > log`) degrade to headl
 Terminals with 20 or more rows get a five-line full-word panel above the oscilloscope:
 
 ```
-stretto 1.4.0 | seed 1783245061 | bar 37 [body] | 2000 ms/bar | swing 0
+stretto 1.5.0 | seed 1783245061 | bar 37 [body] | 2000 ms/bar | swing 0
 scale dorian | chord sus2 on degree 4 | tension 118 | motif capturing
 filter lowpass | cutoff 200 | resonance 100 | lfo 80
 reverb 60 | delay 100/140 | compressor 20000 | mod depth 1500
