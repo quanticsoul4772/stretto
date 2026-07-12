@@ -55,6 +55,30 @@ Covers, each with observable pass/fail and a deadline:
 | 6 | Real-console UI (needs pywinpty) | ConPTY session: ANSI escapes + rich status panel render (`stretto` + `scale`, UI mode engaged, not degrade); `s` then `q` → clean exit 0; resume line contains `--seed` and `--scale lydian` |
 | 7 | NO_COLOR (needs pywinpty) | ConPTY with NO_COLOR=1: status panel renders with zero SGR sequences; `q` exits 0 |
 
+## 2b. CI variant (079)
+
+`.github/workflows/windows-smoke.yml` runs ALL seven sections weekly
+(Mon 05:17 UTC), on manual dispatch, and on pushes to main touching the
+Windows/UI surface. Two jobs:
+
+- **build-reference** (ubuntu-24.04, the golden image): `make && make
+  win` in ONE tree (shared generated tables), renders the 4 s seed-42
+  Linux reference and uploads `stretto.exe` + `reference.sha256`.
+- **windows-smoke** (windows-2025): installs a VB-CABLE virtual audio
+  endpoint via `LABSN/sound-ci-helpers` (SHA-pinned; Scream's signing
+  cert expired 2023 and is a non-starter on hosted runners), preflights
+  the endpoint with `sounddevice`, drops the reference hash at
+  `scripts/reference.sha256` (turning section 2's cross-platform
+  bit-exactness check LIVE - previously dev-box-only via
+  `tests/test_crossplatform.sh`), then runs this script.
+
+Stays manual on the desk: §6 Ctrl-C-as-keystroke (ConPTY cannot emulate
+it) and real-speaker listening. Caveats: GitHub emails scheduled-run
+failures to whoever last modified the cron line, and auto-disables
+schedules after 60 days of repository inactivity. These jobs must NEVER
+be added to the main-protection ruleset (no pull_request trigger - a
+required context from here would block every PR).
+
 ## 3. Known CRT quirk (not a bug)
 
 The headless-degrade notice ("stdin/stdout is not a terminal") IS

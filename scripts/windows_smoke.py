@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Automated half of scripts/windows-smoke.md: native Windows live-path
-validation for stretto.exe. Run from Git Bash at the repo root:
+validation for stretto.exe. Runs on the maintainer's desk (any shell;
+paths resolve relative to this file) and in CI via
+.github/workflows/windows-smoke.yml, which builds stretto.exe on the
+golden ubuntu image and drops scripts/reference.sha256 so section 2's
+cross-platform hash check goes live:
 
     python scripts/windows_smoke.py
 
@@ -97,19 +101,29 @@ def main():
                r.returncode == 1 and b"index 0 unavailable" in r.stderr)
 
     print("=== 5. waveOut live smoke (6 s, harness-terminated) ===")
+    # stderr is CAPTURED (not DEVNULL) so a remote/CI failure shows
+    # the actual error line (e.g. "waveOutOpen failed (code N)") -
+    # exit(1) is a normal exit, so the CRT flushes it (the runbook's
+    # killed-process stderr caveat does not apply here).
     p = subprocess.Popen([EXE, "--no-ui"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
         time.sleep(6)
         alive = p.poll() is None
-        report("alive after 6 s (waveOut playing)", alive,
-               f"exited early rc={p.returncode}")
+        detail = ""
+        if not alive:
+            err = p.stderr.read().decode(errors="replace").strip()
+            first = err.splitlines()[0] if err else "(no stderr)"
+            detail = f"exited early rc={p.returncode}: {first}"
+        report("alive after 6 s (waveOut playing)", alive, detail)
     finally:
         p.kill()
         try:
             p.wait(timeout=10)
         except subprocess.TimeoutExpired:
             pass
+        if p.stderr:
+            p.stderr.close()
 
     try:
         import winpty  # type: ignore
