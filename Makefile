@@ -232,6 +232,7 @@ clean:
 	       tests/unit/test_section tests/unit/test_density \
 	       tests/unit/test_motif tests/unit/test_midi \
 	       tests/unit/test_mixer tests/unit/test_wav tests/unit/test_keys \
+	       tests/unit/test_resume \
 	       $(GENS) $(HEADERS) version.h version.h.tmp *.o *.win.o
 
 # Size report: builds every binary whose toolchain is locally available

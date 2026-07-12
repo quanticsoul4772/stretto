@@ -187,6 +187,29 @@ if ! cmp -s "$CT"/cli_sw1.wav "$CT"/cli_sw2.wav; then
     echo "FAIL: --swing 60 render is not reproducible"; fail=1
 fi
 rm -f "$CT"/cli_sw1.wav "$CT"/cli_sw2.wav
+# (c3) Full-surface combination (071): ALL 13 flags at non-default
+#      values in one render - the max combination previously exercised
+#      was two flags. Spellings are byte-identical to keys.c's resume
+#      fragments (pinned by tests/unit/test_resume.c): together the
+#      two tests close the keys.c-vs-main.c flag-name drift loop.
+ALL_FLAGS="--scale phrygian --bar-ms 1400 --gate 120 --mod-depth 4000 \
+--cutoff 90 --resonance 140 --lfo-depth 200 --filter-mode bp \
+--reverb 180 --delay 40 --feedback 30 --comp-threshold 12000 --swing 45"
+rm -f "$CT"/cli_a13.wav "$CT"/cli_b13.wav
+if ! ./synth --render 2 "$CT"/cli_a13.wav --seed 0 $ALL_FLAGS 2>/dev/null; then
+    echo "FAIL: 13-flag render exited non-zero"; fail=1
+fi
+if cmp -s "$CT"/cli_p0.wav "$CT"/cli_a13.wav; then
+    echo "FAIL: 13 non-default flags did not change the output"; fail=1
+fi
+if ! ./synth --render 2 "$CT"/cli_b13.wav --seed 0 $ALL_FLAGS 2>/dev/null; then
+    echo "FAIL: 13-flag render (repeat) exited non-zero"; fail=1
+fi
+if ! cmp -s "$CT"/cli_a13.wav "$CT"/cli_b13.wav; then
+    echo "FAIL: 13-flag render is not reproducible"; fail=1
+fi
+rm -f "$CT"/cli_a13.wav "$CT"/cli_b13.wav
+
 # (d) Out-of-range and malformed values are usage errors (exit 1,
 #     stderr), never silent clamps.
 for bad in "--gate 999" "--gate abc" "--scale nope" "--bar-ms 100" \
