@@ -51,9 +51,13 @@
 /* --- Event type discriminator (data-model.md Entity 1) --- */
 typedef enum {
     MIDI_EVENT_NONE   = 0,
-    MIDI_EVENT_NOTE_ON  = 1,
-    MIDI_EVENT_NOTE_OFF = 2,
-    MIDI_EVENT_CC       = 3
+    MIDI_EVENT_NOTE_ON    = 1,
+    MIDI_EVENT_NOTE_OFF   = 2,
+    MIDI_EVENT_CC         = 3,
+    MIDI_EVENT_PITCH_BEND = 4   /* 072/FR-015: 14-bit bend packed as
+                                   key = LSB (bits 0-6),
+                                   value = MSB (bits 7-13);
+                                   0..16383, center 8192 */
 } midi_event_type_t;
 
 /* --- Single MIDI event record (data-model.md Entity 1) --- */

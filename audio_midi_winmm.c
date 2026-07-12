@@ -144,11 +144,20 @@ static void midiInProc(HMIDIIN hMidiIn, UINT wMsg,
                     qev.key     = data1;
                     qev.value   = data2;
                     break;
+                case 0xE0u:  /* Pitch Bend (072/FR-015): data1 = LSB,
+                                data2 = MSB per MIDI 1.0 - already the
+                                packing midi_event_t carries, and both
+                                bytes are 0x7F-masked above. */
+                    qev.type    = MIDI_EVENT_PITCH_BEND;
+                    qev.channel = (uint8_t)((status & 0x0Fu) + 1u);
+                    qev.key     = data1;
+                    qev.value   = data2;
+                    break;
                 default:
                     /* Poly AT (0xA0) / Program Change (0xC0) /
-                       Channel Pressure (0xD0) / Pitch Bend (0xE0)
-                       fall through; do NOT enqueue MIDI_EVENT_NONE
-                       (queue slots are precious). */
+                       Channel Pressure (0xD0) fall through; do NOT
+                       enqueue MIDI_EVENT_NONE (queue slots are
+                       precious). */
                     return;
             }
             audio_midi_enqueue(&qev);
