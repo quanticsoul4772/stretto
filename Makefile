@@ -232,7 +232,7 @@ clean:
 	       tests/unit/test_section tests/unit/test_density \
 	       tests/unit/test_motif tests/unit/test_midi \
 	       tests/unit/test_mixer tests/unit/test_wav tests/unit/test_keys \
-	       tests/unit/test_resume \
+	       tests/unit/test_resume tests/unit/test_main \
 	       $(GENS) $(HEADERS) version.h version.h.tmp *.o *.win.o
 
 # Size report: builds every binary whose toolchain is locally available
@@ -339,6 +339,20 @@ tests/unit/test_%: tests/unit/test_%.c tests/unit/test.h $(OBJS_NO_MAIN)
 # libasound references.
 	gcc -O2 -Wall -Wextra -no-pie -Itests/unit $< $(OBJS_NO_MAIN) -o $@ -lm -pthread -latomic $(LIBASOUND)
 
+# main.c with main renamed to stretto_main (080): makes the CLI parse
+# + dispatch paths unit-testable without touching main.c or release
+# OBJS/CFLAGS. Linked ONLY into tests/unit/test_main (the explicit
+# rule below beats the tests/unit/test_% pattern rule); the test TU
+# stubs audio_play() with a sentinel exit so a forked child can never
+# enter PulseAudio. NOT in OBJS_NO_MAIN: main.c references
+# audio_play, which lives in the deliberately-excluded audio_pulse.o
+# - adding it there would break every other unit binary's link.
+main_testable.o: main.c $(HEADERS) version.h
+	gcc -O2 -Wall -Wextra -Dmain=stretto_main -c main.c -o $@
+
+tests/unit/test_main: tests/unit/test_main.c tests/unit/test.h $(OBJS_NO_MAIN) main_testable.o
+	gcc -O2 -Wall -Wextra -no-pie -Itests/unit $< $(OBJS_NO_MAIN) main_testable.o -o $@ -lm -pthread -latomic $(LIBASOUND)
+
 test-unit: $(UNIT_TEST_BINS)
 	@echo "=== unit tests ==="
 	@fail=0; for t in $(UNIT_TEST_BINS); do \
@@ -422,27 +436,23 @@ COV_FLAGS = -O0 -g -Wall -Wextra -fprofile-arcs -ftest-coverage
 #                          hardware (audio_midi_linux.c) - CI runners
 #                          have no /dev/snd/seq, so every path past
 #                          snd_seq_open() is untestable there.
-#                      (c) entry-point whose non-default argv branches
-#                          are only reachable via direct process
-#                          invocation that CI's `make coverage` render
-#                          path does not pass (main.c) - the 5-flag
-#                          --midi* argv pre-scan is only exercised when
-#                          the user runs `synth --midi*`. The default
-#                          `make coverage` invocation is `--render 110`
-#                          only, so 4 of 5 --midi* branches sit dormant.
-#                          Lifting main.c back to MEASURED requires
-#                          either extracting the pre-scan into a
-#                          callable helper that test_midi.c can invoke,
-#                          or adding a fork+exec integration test -
-#                          both are explicit follow-ups rather than
-#                          gate-dodging. The spec-kit principled move
-#                          is to declare the limitation rather than
-#                          inflate coverage metrics.
+#                    (main.c graduated to MEASURED in 080: the
+#                    main_testable.o rename + tests/unit/test_main's
+#                    fork harness with a stubbed audio_play made the
+#                    argv pre-scan, error paths, and dispatch
+#                    unit-reachable - the exact follow-up the old
+#                    reason (c) here called for.)
 COV_SRCS_MEASURED    = arena.c effects.c voice.c gen.c lsystem.c \
                        chord_progression.c section.c density.c motif.c \
                        mixer.c wav.c audio_midi.c
-COV_SRCS_INTERACTIVE = ui.c keys.c audio_pulse.c audio_midi_linux.c main.c
-COV_SRCS             = $(COV_SRCS_MEASURED) $(COV_SRCS_INTERACTIVE)
+COV_SRCS_INTERACTIVE = ui.c keys.c audio_pulse.c audio_midi_linux.c
+# main.c is MEASURED since 080, but via the main_testable object (the
+# gcov line below names main_testable.gcno explicitly): the module
+# main.o also carries render-run data from synth_cov, and emitting two
+# main.c entries would let ci.yml's max-lines dedup tie-break
+# lexically and pick the render-only percentage. main.c rejoins
+# COV_SRCS here only so synth_cov still links.
+COV_SRCS             = $(COV_SRCS_MEASURED) $(COV_SRCS_INTERACTIVE) main.c
 COV_OBJS             = $(addprefix $(BUILD_COV)/,$(COV_SRCS:.c=.o))
 # Pure-synth subset of instrumented .o files - what unit tests link.
 COV_TEST_OBJS        = $(addprefix $(BUILD_COV)/,$(OBJS_NO_MAIN))
@@ -455,13 +465,16 @@ $(BUILD_COV):
 # top of this file).
 $(BUILD_COV)/main.o: version.h
 
+$(BUILD_COV)/main_testable.o: main.c $(HEADERS) version.h | $(BUILD_COV)
+	gcc $(COV_FLAGS) -Dmain=stretto_main -c main.c -o $@
+
 # $(HEADERS) prereq (066): generates the table headers on a fresh
 # checkout and rebuilds instrumented objects when a header changes -
 # previously masked by CI job ordering (`make` ran first).
 $(BUILD_COV)/%.o: %.c $(HEADERS) | $(BUILD_COV)
 	gcc $(COV_FLAGS) -c $< -o $@
 
-coverage: $(COV_OBJS)
+coverage: $(COV_OBJS) $(BUILD_COV)/main_testable.o
 	gcc $(COV_FLAGS) $(COV_OBJS) -lpulse $(LIBASOUND) -o $(BUILD_COV)/synth_cov
 	@echo "=== render-mode regression ==="
 	# 110 s (~55 bars at 2.00 s/bar) covers INTRO (bars 0-23), BODY (24-47)
@@ -477,16 +490,17 @@ coverage: $(COV_OBJS)
 	@for t in $(UNIT_TEST_SRCS); do \
 		base=$${t%.c}; \
 		out=$(BUILD_COV)/$$base.cov; \
-		gcc $(COV_FLAGS) -no-pie -Itests/unit $$t $(COV_TEST_OBJS) \
+		extra=""; [ "$$base" = "tests/unit/test_main" ] && extra="$(BUILD_COV)/main_testable.o"; \
+		gcc $(COV_FLAGS) -no-pie -Itests/unit $$t $(COV_TEST_OBJS) $$extra \
 		    -o $$out -lm $(LIBASOUND); \
 		./$$out >/dev/null || true; \
 	done
 	@echo "=== per-file line coverage (measured set only) ==="
-	@cd $(BUILD_COV) && gcov -n -o . $(addprefix ../,$(COV_SRCS_MEASURED)) 2>/dev/null | \
+	@cd $(BUILD_COV) && gcov -n -o . $(addprefix ../,$(COV_SRCS_MEASURED)) main_testable.gcno 2>/dev/null | \
 		awk '/^File/ {sub(/[\x27]/,"",$$2); sub(/[\x27]/,"",$$2); f=$$2} \
 		     /^Lines/ {sub(/Lines executed:/,""); print f": "$$0}' | \
 		grep "\.c"
-	@echo "(interactive modules ui.c keys.c audio_pulse.c audio_midi_linux.c main.c excluded - require TTY/audio device or process invocation)"
+	@echo "(interactive modules ui.c keys.c audio_pulse.c audio_midi_linux.c excluded - require TTY/audio device; main.c measured via main_testable.gcno, 080)"
 
 # --- Sanitizer run (066): ASan + UBSan over the unit suite + a render
 # regression. Separate object tree (like coverage) so it alternates
@@ -519,13 +533,16 @@ $(BUILD_SAN):
 
 $(BUILD_SAN)/main.o: version.h
 
+$(BUILD_SAN)/main_testable.o: main.c $(HEADERS) version.h | $(BUILD_SAN)
+	gcc $(SAN_FLAGS) -Dmain=stretto_main -c main.c -o $@
+
 # $(HEADERS) prereq is LOAD-BEARING for the sanitizers CI job: it runs
 # `make test-asan` on a fresh checkout with no prior `make`, so the
 # generated tables (sin_table.h etc.) must be built by this chain.
 $(BUILD_SAN)/%.o: %.c $(HEADERS) | $(BUILD_SAN)
 	gcc $(SAN_FLAGS) -c $< -o $@
 
-test-asan: $(SAN_OBJS)
+test-asan: $(SAN_OBJS) $(BUILD_SAN)/main_testable.o
 	gcc $(SAN_FLAGS) $(SAN_OBJS) -lpulse $(LIBASOUND) -latomic -o $(BUILD_SAN)/synth_asan
 	@echo "=== sanitized render regression (30 s, seed 0) ==="
 	@f=$$(mktemp) && ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 \
@@ -535,7 +552,8 @@ test-asan: $(SAN_OBJS)
 	@fail=0; for t in $(UNIT_TEST_SRCS); do \
 		base=$${t%.c}; \
 		out=$(BUILD_SAN)/$$base.san; \
-		gcc $(SAN_FLAGS) -no-pie -Itests/unit $$t $(SAN_TEST_OBJS) \
+		extra=""; [ "$$base" = "tests/unit/test_main" ] && extra="$(BUILD_SAN)/main_testable.o"; \
+		gcc $(SAN_FLAGS) -no-pie -Itests/unit $$t $(SAN_TEST_OBJS) $$extra \
 		    -o $$out -lm $(LIBASOUND) -latomic || exit 1; \
 		echo; echo "[$$out]"; \
 		ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 ./$$out || fail=1; \
