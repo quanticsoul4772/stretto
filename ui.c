@@ -74,8 +74,6 @@ const ParamFlag PARAM_FLAGS[UI_PARAM_COUNT] = {
 
 /* --- help overlay (v2, 074) + clear --- */
 
-static int build_help_overlay(char *buf);   /* defined below */
-
 void ui_show_help(void) {
     if (no_ui_flag) return;
     /* Built on demand into BSS (zero file bytes; the old static
@@ -84,7 +82,7 @@ void ui_show_help(void) {
        running while help is up (only scope DRAWING pauses), so a
        CC-changed value goes stale until the next open - accepted. */
     static char hb[4096];
-    int n = build_help_overlay(hb);
+    int n = ui_build_help_overlay(hb);
     (void)!write(1, hb, (size_t)n);
 }
 
@@ -665,7 +663,7 @@ static void pad_to(char *buf, int *p, int line_start, int col) {
     while (*p - line_start < col) buf[(*p)++] = ' ';
 }
 
-static int build_help_overlay(char *buf) {
+int ui_build_help_overlay(char *buf) {
     int p = 0;
     append_str(buf, &p,
         "\x1b[H\x1b[2J"

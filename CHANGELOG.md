@@ -1,5 +1,13 @@
 # Changelog
 
+## Recent: property tests for the 074 TUI surface + help-overlay pinning (076)
+
+074's one escaped defect (the append_num stack smash on 10-digit clock seeds) was caught by the smoke suite, not unit tests - example-based tests can't cover a fuzzed state space. Parallax-selected hardening at zero binary cost (both binaries byte-identical):
+
+- **Five properties over the status builders**, driven by a fixed-seed xorshift32 fuzz through the REAL key dispatcher (250 iterations at random widths 1-200, plus a ~1M-sample gen_step burst that crosses a section boundary): P1 every line clamps to tw-1 visible columns; P2 no escape byte survives past the erase-line prefix (catches split escapes); P3 the clamped line is a byte-prefix of the unclamped one; P4 truncation lands on a space or the line was space-free; P5 consecutive builds are byte-identical. Reseeding inside the fuzz keeps standing regression pressure on the 074 t[10] fix. Both verified to FAIL on deliberately broken clamps (off-by-N budget -> P1; no-space-cut -> P4).
+- **Help overlay exported and pinned** (`ui_build_help_overlay`, the ui_strip_sgr testability precedent - previously written straight to fd 1 and untestable): length bounds vs its 4 KB buffer, the colorless contract (strip is a no-op), all 13 flag names from the shared PARAM_FLAGS table, "(flag only)" exactly once, and row-anchored LIVE value checks (set gate=77 -> the gate row shows 77; rebuild after gate=213 -> 213).
+- Ordering contract documented in test_keys.c: the fuzz mutates real state and the set-only param dirty mask for the rest of the binary - new tests go last, resume-line tests never below the fuzz. 205 unit tests; ASan/UBSan suite green over the property loops; goldens byte-identical.
+
 ## Recent: sanitizers promoted to a required check + golden-target mktemp hygiene (075)
 
 The `sanitizers` CI job (ASan + UBSan fatal + -Werror, added in 066) had been green on every PR since #159 but was not in the main-protection ruleset - an ASan-red PR could technically merge. Parallax-selected; plan-reviewed first (the review caught that a naive mktemp swap would make the golden-multiseed failure mode WORSE - see below):

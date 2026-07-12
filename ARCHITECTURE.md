@@ -647,7 +647,7 @@ The oscilloscope draws each frame into a 24 KB static buffer (one `write()` sysc
 | Target | Scope |
 |---|---|
 | `make test` | CLI contract (`tests/test_cli.sh`: help/version/usage errors, stdout render, preset flags, no-server UX, offline install.sh, man page) + bit-exact regression (render 16 s at `--seed 0` twice, byte-compare, sha256 against `golden/regression_16s.sha256`) + the Constitution↔Makefile bridge and amend regression suites + the size-budget-gate fixture suite (`tests/test_size_budget_gate.sh`). |
-| `make test-unit` | 201 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
+| `make test-unit` | 205 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
 | `make test-multiseed` | Renders 4 s at seeds 0 / 1 / 42 / 12345, asserts each is deterministic across runs, asserts all four produce distinct sha256s, asserts each render's peak / clip count / spectral centroid / zero-crossing rate land within sane bounds (RMS is reported but not gated, since the randomized INTRO palette varies loudness), then matches each hash against `golden/regression_multiseed.sha256.txt`. |
 | `make test-smoke` | Spawns `./synth --no-ui` under a 2 s timeout. Pass on exit 0 / 124 / 143; fail on segfault. Auto-skips if no PulseAudio. |
 | `make coverage` | Rebuilds instrumented (`-fprofile-arcs -ftest-coverage`), runs the regression + unit suites, prints per-file line coverage via `gcov`. |
