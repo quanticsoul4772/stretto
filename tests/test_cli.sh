@@ -144,7 +144,7 @@ esac
 #     setters consume no PRNG and perturb nothing.
 DEFAULT_FLAGS="--scale dorian --bar-ms 2000 --gate 200 --mod-depth 1500 \
 --resonance 100 --lfo-depth 80 --filter-mode lp --reverb 60 --delay 100 \
---feedback 140 --comp-threshold 20000"
+--feedback 140 --comp-threshold 20000 --swing 0"
 rm -f "$CT"/cli_p0.wav "$CT"/cli_p1.wav "$CT"/cli_p2.wav "$CT"/cli_p3.wav
 if ! ./synth --render 2 "$CT"/cli_p0.wav --seed 0 2>/dev/null; then
     echo "FAIL: flagless preset baseline render exited non-zero"; fail=1
@@ -170,10 +170,28 @@ fi
 if ! cmp -s "$CT"/cli_p2.wav "$CT"/cli_p3.wav; then
     echo "FAIL: flagged render is not reproducible"; fail=1
 fi
+# (c2) --swing (069): non-zero swing changes the output vs flagless,
+#      and reproducibly. Kept as its own pair - (b)/(c) already carry
+#      scale+cutoff and this pins the timing path specifically.
+rm -f "$CT"/cli_sw1.wav "$CT"/cli_sw2.wav
+if ! ./synth --render 2 "$CT"/cli_sw1.wav --seed 0 --swing 60 2>/dev/null; then
+    echo "FAIL: --swing 60 render exited non-zero"; fail=1
+fi
+if cmp -s "$CT"/cli_p0.wav "$CT"/cli_sw1.wav; then
+    echo "FAIL: --swing 60 did not change the output"; fail=1
+fi
+if ! ./synth --render 2 "$CT"/cli_sw2.wav --seed 0 --swing 60 2>/dev/null; then
+    echo "FAIL: --swing 60 render (repeat) exited non-zero"; fail=1
+fi
+if ! cmp -s "$CT"/cli_sw1.wav "$CT"/cli_sw2.wav; then
+    echo "FAIL: --swing 60 render is not reproducible"; fail=1
+fi
+rm -f "$CT"/cli_sw1.wav "$CT"/cli_sw2.wav
 # (d) Out-of-range and malformed values are usage errors (exit 1,
 #     stderr), never silent clamps.
 for bad in "--gate 999" "--gate abc" "--scale nope" "--bar-ms 100" \
-           "--filter-mode xy" "--comp-threshold 7999"; do
+           "--filter-mode xy" "--comp-threshold 7999" \
+           "--swing 101" "--swing abc"; do
     set +e
     ./synth --render 1 "$CT"/cli_bad.wav $bad >"$CT"/cli_stdout 2>"$CT"/cli_stderr
     rc=$?

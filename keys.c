@@ -49,6 +49,8 @@ void keys_build_resume_line(void) {
         APPEND(" --feedback %u", (unsigned)delay_get_feedback());
     if (ui_param_is_set(UI_PARAM_COMP_THRESHOLD))
         APPEND(" --comp-threshold %u", (unsigned)compressor_get_threshold());
+    if (ui_param_is_set(UI_PARAM_SWING))
+        APPEND(" --swing %u", (unsigned)gen_get_swing());
 #undef APPEND
 
     ui_set_resume_line(buf);

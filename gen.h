@@ -17,6 +17,9 @@ void gen_set_tempo(int delta_pct);
 void gen_set_scale(int idx);          /* clamps to 0..N_SCALES-1 */
 void gen_set_gate(int v);             /* clamps to [32, 255] */
 void gen_set_bar_ms(int ms);          /* clamps to [760, 7600] ms/bar */
+void gen_set_swing(int amount);       /* clamps to [0, 100]; 0 = straight,
+                                         100 ~ MPC 66.66% triplet (069) */
+uint8_t  gen_get_swing(void);
 uint32_t gen_get_step_samples(void);
 uint32_t gen_get_bar(void);
 uint8_t  gen_get_step(void);

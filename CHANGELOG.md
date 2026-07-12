@@ -1,5 +1,14 @@
 # Changelog
 
+## Recent: --swing <0-100> - MPC-style shuffle (069)
+
+Parallax-selected; audible via --render without MIDI hardware. Planned first; the design review corrected the mechanism twice before a line was written:
+
+- Delays every second 16th-note. Grid geometry does the musical work for free: odd 16th-substeps are hit only by melody, counter-melody, the 16ths hihat and the snare ghosts; bass, chord, kick, the bar boundary and the CA advance sit on even 16ths and stay straight - zero per-role code.
+- The tick guard is now the wraparound-safe signed compare `(int32_t)(sample_clock - next_fire) >= 0` with the swing offset computed ONCE at schedule time: the review proved both the naive per-sample recompute AND the plain stored-target-with-== scheme can permanently stall the scheduler when a live tempo shrink lands during a swung gap, and that a plain >= bursts thousands of ticks at the ~24.8 h uint32 wrap. A tempo-mash freeze-regression unit test encodes the hazard.
+- Mapping: `off = min(spss*swing/100, spss-1)` - swing 100 is one sample short of true triplet (MPC 66.7%; MPC% = 50 + swing/6). The review caught the draft /150 mapping undershooting at MPC ~61%.
+- Timing-only and composition-invariant BY CONSTRUCTION: the substep sequence, and with it every PRNG draw, is identical at any swing value (FR-105); byte-inert at 0 (flagless vs --swing 0 renders verified byte-identical; goldens untouched). First flag-only parameter (no live key). specs/004 FR-101 amended to 13 flags.
+
 ## Recent: demo WAV on releases + bash/zsh completions (068)
 
 Both remaining zero-binary-cost distribution items, planned first with a design-review round:

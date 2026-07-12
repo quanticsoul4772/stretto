@@ -362,6 +362,74 @@ TEST(seed_input_roundtrip) {
     gen_init();
 }
 
+/* ---- --swing (069) ---- */
+
+TEST(set_swing_clamps_and_sets) {
+    ensure_pool();
+    gen_set_swing(60);
+    ASSERT_EQ(gen_get_swing(), 60);
+    gen_set_swing(-5);
+    ASSERT_EQ(gen_get_swing(), 0);
+    gen_set_swing(999);
+    ASSERT_EQ(gen_get_swing(), 100);
+    gen_set_swing(0);
+}
+
+/* Freeze regression (the 069 review's finding #1): a live tempo
+ * SHRINK during a swung gap used to be able to strand the stored
+ * fire target at/below sample_clock, permanently stalling the tick
+ * under an == guard. The signed-difference guard must keep the bar
+ * counter advancing through aggressive tempo mashing at max swing. */
+TEST(swing_survives_tempo_mash) {
+    ensure_pool();
+    gen_seed(0);
+    gen_init();
+    gen_set_swing(100);
+    uint32_t bars_seen = gen_get_bar();
+    int direction = -1;
+    for (int i = 0; i < 480000; i++) {   /* ~10 s of samples */
+        gen_step();
+        if ((i % 3000) == 2999) {
+            gen_set_tempo(direction * 50);
+            direction = -direction;
+        }
+    }
+    ASSERT_TRUE(gen_get_bar() > bars_seen + 3);
+    gen_set_swing(0);
+    gen_init();
+}
+
+/* Bar boundaries sit on substep 0 (an even 16th) and must NEVER
+ * swing: the sample indices where gen_get_bar() increments are
+ * identical for swing 0 vs swing 100 under the same seed. */
+TEST(swing_never_moves_bar_boundaries) {
+    ensure_pool();
+    uint32_t marks_straight[4], marks_swung[4];
+    for (int pass = 0; pass < 2; pass++) {
+        gen_seed(7);
+        gen_init();
+        gen_set_swing(pass == 0 ? 0 : 100);
+        uint32_t *marks = (pass == 0) ? marks_straight : marks_swung;
+        uint32_t last_bar = gen_get_bar();
+        int found = 0;
+        uint32_t sample = 0;
+        while (found < 4 && sample < 900000u) {
+            gen_step();
+            sample++;
+            if (gen_get_bar() != last_bar) {
+                last_bar = gen_get_bar();
+                marks[found++] = sample;
+            }
+        }
+        ASSERT_EQ(found, 4);
+    }
+    for (int i = 0; i < 4; i++) {
+        ASSERT_EQ(marks_swung[i], marks_straight[i]);
+    }
+    gen_set_swing(0);
+    gen_init();
+}
+
 int main(void) {
     return RUN_ALL();
 }

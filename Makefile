@@ -17,8 +17,12 @@ CFLAGS = -Os -flto -fuse-linker-plugin -ffast-math \
 # read-only segments (2 LOADs instead of 4) matches the existing
 # posture (norelro, no-pie) and leaves ~780 B of cliff headroom
 # instead of ~150.
+# --build-id=none: the 36 B build-id note sits inside the merged
+# read-only LOAD segment (post noseparate-code) and eats page-cliff
+# headroom; release identity comes from sha256sums.txt, and there is
+# no debuginfo infrastructure correlating on build-id here.
 LDFLAGS = -Wl,--gc-sections -Wl,-z,norelro \
-          -Wl,-z,noseparate-code \
+          -Wl,-z,noseparate-code -Wl,--build-id=none \
           -Wl,--hash-style=sysv -no-pie \
           -pthread -latomic
 
