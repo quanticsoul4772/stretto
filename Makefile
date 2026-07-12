@@ -349,7 +349,7 @@ tests/unit/test_%: tests/unit/test_%.c tests/unit/test.h $(OBJS_NO_MAIN)
 # audio_play, which lives in the deliberately-excluded audio_pulse.o
 # - adding it there would break every other unit binary's link.
 main_testable.o: main.c $(HEADERS) version.h
-	gcc -O2 -Wall -Wextra -Dmain=stretto_main -c main.c -o $@
+	gcc -O2 -Wall -Wextra -MMD -Dmain=stretto_main -c main.c -o $@
 
 tests/unit/test_main: tests/unit/test_main.c tests/unit/test.h $(OBJS_NO_MAIN) main_testable.o
 	gcc -O2 -Wall -Wextra -no-pie -Itests/unit $< $(OBJS_NO_MAIN) main_testable.o -o $@ -lm -pthread -latomic $(LIBASOUND)
@@ -468,7 +468,7 @@ $(BUILD_COV):
 $(BUILD_COV)/main.o: version.h
 
 $(BUILD_COV)/main_testable.o: main.c $(HEADERS) version.h | $(BUILD_COV)
-	gcc $(COV_FLAGS) -Dmain=stretto_main -c main.c -o $@
+	gcc $(COV_FLAGS) -MMD -Dmain=stretto_main -c main.c -o $@
 
 # $(HEADERS) prereq (066): generates the table headers on a fresh
 # checkout and rebuilds instrumented objects when a header changes -
@@ -477,7 +477,7 @@ $(BUILD_COV)/%.o: %.c $(HEADERS) | $(BUILD_COV)
 	gcc $(COV_FLAGS) -c $< -o $@
 
 coverage: $(COV_OBJS) $(BUILD_COV)/main_testable.o
-	gcc $(COV_FLAGS) $(COV_OBJS) -lpulse $(LIBASOUND) -o $(BUILD_COV)/synth_cov
+	gcc $(COV_FLAGS) $(COV_OBJS) -lpulse $(LIBASOUND) -pthread -latomic -o $(BUILD_COV)/synth_cov
 	@echo "=== render-mode regression ==="
 	# 110 s (~55 bars at 2.00 s/bar) covers INTRO (bars 0-23), BODY (24-47)
 	# and TENSION (48+) so section-gated branches in gen.c - chord
@@ -494,7 +494,7 @@ coverage: $(COV_OBJS) $(BUILD_COV)/main_testable.o
 		out=$(BUILD_COV)/$$base.cov; \
 		extra=""; [ "$$base" = "tests/unit/test_main" ] && extra="$(BUILD_COV)/main_testable.o"; \
 		gcc $(COV_FLAGS) -no-pie -Itests/unit $$t $(COV_TEST_OBJS) $$extra \
-		    -o $$out -lm $(LIBASOUND); \
+		    -o $$out -lm $(LIBASOUND) -pthread -latomic || exit 1; \
 		./$$out >/dev/null || true; \
 	done
 	@echo "=== per-file line coverage (measured set only) ==="
@@ -536,7 +536,7 @@ $(BUILD_SAN):
 $(BUILD_SAN)/main.o: version.h
 
 $(BUILD_SAN)/main_testable.o: main.c $(HEADERS) version.h | $(BUILD_SAN)
-	gcc $(SAN_FLAGS) -Dmain=stretto_main -c main.c -o $@
+	gcc $(SAN_FLAGS) -MMD -Dmain=stretto_main -c main.c -o $@
 
 # $(HEADERS) prereq is LOAD-BEARING for the sanitizers CI job: it runs
 # `make test-asan` on a fresh checkout with no prior `make`, so the
@@ -631,4 +631,7 @@ debug: synth_debug
 # silences "no such file" when these have not been generated yet
 # (first build).
 -include $(OBJS:.o=.d)
+# main_testable dep files, all three trees (082: project-header
+# tracking - $(HEADERS) covers only the generated table headers)
+-include main_testable.d $(BUILD_COV)/main_testable.d $(BUILD_SAN)/main_testable.d
 -include $(WIN_OBJS:.o=.d)

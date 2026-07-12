@@ -191,6 +191,41 @@ TEST(strip_sgr_truncated_escape_at_end_kept) {
     ASSERT_EQ(n, (int)(sizeof buf - 1));
 }
 
+/* ---- CSI escape-sequence filter (082) ---- */
+
+TEST(keys_arrow_sequences_are_swallowed) {
+    ensure_init();
+    /* Right-arrow = ESC '[' 'C'. Pre-082 the '[' dropped mod-depth
+       200 and the 'C' bumped cutoff +10 (and both params got marked
+       user-set in the resume line). All three bytes must now be
+       ignored and state untouched. */
+    uint16_t mod = voice_get_mod_depth();
+    uint16_t cut = voice_get_cutoff();
+    ASSERT_EQ(keys_dispatch(0x1b), KEY_IGNORED);
+    ASSERT_EQ(keys_dispatch('['),  KEY_IGNORED);
+    ASSERT_EQ(keys_dispatch('C'),  KEY_IGNORED);
+    ASSERT_EQ(voice_get_mod_depth(), mod);
+    ASSERT_EQ(voice_get_cutoff(), cut);
+    /* Multi-byte CSI (e.g. ESC [ 1 ; 5 C): parameter bytes stay
+       swallowed until the final byte. */
+    ASSERT_EQ(keys_dispatch(0x1b), KEY_IGNORED);
+    ASSERT_EQ(keys_dispatch('['),  KEY_IGNORED);
+    ASSERT_EQ(keys_dispatch('1'),  KEY_IGNORED);
+    ASSERT_EQ(keys_dispatch(';'),  KEY_IGNORED);
+    ASSERT_EQ(keys_dispatch('D'),  KEY_IGNORED);
+    ASSERT_EQ(voice_get_mod_depth(), mod);
+    /* ESC followed by a non-CSI byte dispatches that byte normally:
+       ESC then 's' still cycles the scale. */
+    uint8_t sc = gen_get_scale();
+    ASSERT_EQ(keys_dispatch(0x1b), KEY_IGNORED);
+    ASSERT_EQ(keys_dispatch('s'),  KEY_CONSUMED);
+    ASSERT_EQ(gen_get_scale(), (uint8_t)((sc + 1) % 6));
+    /* And a plain '[' with no ESC prefix still works. */
+    voice_set_mod_depth(2000);
+    ASSERT_EQ(keys_dispatch('['), KEY_CONSUMED);
+    ASSERT_EQ(voice_get_mod_depth(), 1800u);
+}
+
 /* ---- status builders (074) ---- */
 
 /* Assert every \r\n-terminated segment of buf[0..len) is at most

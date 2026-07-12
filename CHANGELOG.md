@@ -1,5 +1,15 @@
 # Changelog
 
+## Recent: quality deep-pass over the 074-081 surface (082)
+
+Three fresh-eyes adversarial reviewers (render surface / test harnesses / build+CI plumbing) swept everything shipped since 074, self-refuting candidates before reporting. Ten findings survived and are fixed; the rest of the surface verified sound (clamp_line edges, buffer math, the 077 packs, resume round-trip, gcov merge mechanics, golden recipes, the Windows workflow):
+
+- **Arrow keys mutated the synth**: in raw mode an arrow arrives as ESC [ <final>; '[' dropped mod-depth 200, 'C' bumped cutoff - and 077's resume marking made the pollution permanent. keys.c now swallows CSI sequences (regression-tested incl. multi-byte forms); the Windows scancode-prefix twin is filtered in ui_term_read_key.
+- **Render edges**: a 1-2-row terminal drew a 22-row scope (per-frame scroll flood) - now 1 row; the grid's byte-cap bail on very tall terminals left stale rows - an erase-to-end-of-screen (functional, NO_COLOR-safe) now follows every frame.
+- **Harness integrity**: fork failure vacuously PASSED in both fork wrappers - and test_ui's failure branch could reach kill(-1, SIGKILL), which kills every user-owned process; both now fail explicitly with no kill path. test_main gains the 30 s deadline reap; test_ui's positive-color assert uses has_sgr (a bare ESC search was satisfied by functional escapes).
+- **Build/CI**: main_testable.o rules track project headers via -MMD (stale-ABI links on dirty-tree header edits); coverage links gain the Makefile's own documented-required -pthread -latomic; the coverage loop fails closed on compile errors; ci.yml's gate fails closed on non-numeric percentages.
+- Size 49,064 -> 49,160 (+96 B, slack ~2.0 KB); goldens unchanged; 241 tests; gates hold (ui.c 92.90, keys.c 100 incl. the new filter lines).
+
 ## Recent: coverage completion - ui.c and keys.c graduate into the gated set (081)
 
 The last two coverage-exempt modules with test-reachable surface, closing the sweep the 080 arc started. Sources untouched; release binary byte-identical:

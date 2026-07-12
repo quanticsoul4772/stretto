@@ -25,6 +25,8 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <signal.h>
+#include <time.h>
 
 int stretto_main(int argc, char **argv);
 
@@ -45,13 +47,38 @@ static int run_main(char **argv, char *out, char *err, size_t cap) {
     fflush(stdout);
     fflush(stderr);
     pid_t pid = fork();
+    if (pid < 0) {
+        /* Fork failure must FAIL the caller, not vacuously pass:
+           a bare waitpid(-1) would leave status 0 = "exit 0" (082). */
+        close(ofd);
+        close(efd);
+        unlink(otmp);
+        unlink(etmp);
+        out[0] = err[0] = '\0';
+        return -1;
+    }
     if (pid == 0) {
         dup2(ofd, 1);
         dup2(efd, 2);
         exit(stretto_main(argc, argv));
     }
+    /* Deadline reap (082): children run real ALSA opens and 1 s
+       renders - normally fast, but "normally fast" is what the
+       cold-runner SIGKILL incident in test_ui was made of. A wedge
+       must fail the test, not hang the suite. */
     int status = 0;
-    waitpid(pid, &status, 0);
+    int reaped = 0;
+    for (int i = 0; i < 3000 && !reaped; i++) {
+        if (waitpid(pid, &status, WNOHANG) == pid) reaped = 1;
+        else {
+            struct timespec ts = { 0, 10 * 1000 * 1000 };
+            nanosleep(&ts, NULL);
+        }
+    }
+    if (!reaped) {
+        kill(pid, SIGKILL);
+        waitpid(pid, &status, 0);
+    }
     for (int i = 0; i < 2; i++) {
         int fd = i ? efd : ofd;
         char *dst = i ? err : out;

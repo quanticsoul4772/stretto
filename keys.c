@@ -46,6 +46,30 @@ void keys_build_resume_line(void) {
 }
 
 int keys_dispatch(char ch) {
+    /* CSI escape-sequence filter (082): in raw mode an arrow key
+       arrives as ESC '[' <final>, and before this filter the '['
+       dropped mod-depth 200 and the final byte hit the dispatch
+       table ('C' = cutoff up, 'D' = delay up...) - navigation keys
+       silently mutated synth state AND marked those params user-set
+       in the resume line. Swallow ESC, then '[' + parameter bytes
+       (0x20-0x3F) up to the final byte (0x40-0x7E). A bare ESC
+       followed much later by a real '[' is also swallowed once -
+       ESC is not a documented key, acceptable. */
+    static int esc_state = 0;   /* 0 idle, 1 saw ESC, 2 inside CSI */
+    if (esc_state == 2) {
+        if ((unsigned char)ch >= 0x40 && (unsigned char)ch <= 0x7e)
+            esc_state = 0;      /* final byte ends the sequence */
+        return KEY_IGNORED;
+    }
+    if (esc_state == 1) {
+        esc_state = (ch == '[') ? 2 : 0;
+        if (ch == '[') return KEY_IGNORED;
+        /* not a CSI: fall through and dispatch ch normally */
+    }
+    if (ch == 0x1b) {
+        esc_state = 1;
+        return KEY_IGNORED;
+    }
     if (ch == '?') {
         int v = !ui_help_visible();
         ui_set_help_visible(v);

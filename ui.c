@@ -327,6 +327,14 @@ int ui_term_get_size(unsigned int *w, unsigned int *h) {
 int ui_term_read_key(char *out) {
     if (_kbhit()) {
         int ch = _getch();
+        if (ch == 0 || ch == 0xE0) {
+            /* Extended-key prefix (arrows, F-keys): the scancode
+               follows as a second byte - swallow it, or right-arrow's
+               'M' would bump the LFO depth etc. (082, the Windows
+               twin of keys.c's CSI filter). */
+            if (_kbhit()) (void)_getch();
+            return 0;
+        }
         if (ch == 3) {                  /* Ctrl-C arrives as 0x03 in raw mode */
             *out = 'q';
             return 1;
@@ -789,8 +797,12 @@ void ui_draw_oscilloscope(int16_t *buf, uint32_t frames) {
     /* Rich panel on tall terminals: 5 lines + (th-6)-row scope;
        fallback: 1 row + (th-2)-row scope. Both leave one spare row. */
     int rich = th >= PANEL_MIN_ROWS;
+    /* th <= 2 means the terminal GENUINELY reported 1-2 rows (ioctl
+       failure keeps the 80x24 defaults) - draw a 1-row scope, not
+       the old 22 (which forced ~21 scrolls per frame in a squeezed
+       pane; 082). */
     uint32_t h = rich ? (uint32_t)(th - 6u)
-                      : (th > 2u ? (uint32_t)(th - 2u) : 22u);
+                      : (th > 2u ? (uint32_t)(th - 2u) : 1u);
     if (w > frames) w = frames;
 
     /* 24 KB comfortable headroom for worst-case colored output:
@@ -805,6 +817,12 @@ void ui_draw_oscilloscope(int16_t *buf, uint32_t frames) {
     p += rich ? ui_build_status_panel(out + p, tw)
               : ui_build_status_row(out + p, tw);
     build_oscilloscope_grid(out, &p, (int)sizeof(out), buf, frames, w, h);
+    /* Erase from cursor to end of screen: if the grid bailed at its
+       byte cap (very tall terminal + hot signal), the undrawn rows
+       below would otherwise keep stale content from earlier frames;
+       also cleans remnants after a terminal shrink. Functional
+       escape - survives the NO_COLOR strip (082). */
+    append_str(out, &p, "\x1b[0J");
 
     if (no_color_enabled()) p = ui_strip_sgr(out, p);
     (void)!write(1, out, (size_t)p);

@@ -248,8 +248,8 @@ jobs:
             pct=$(grep -E "^${f}:" coverage.log | sort -k4 -n | tail -1 | \
                   awk '{print $2}' | tr -d '%' | awk -F. '{print $1}')
             need=${thresholds[$f]}
-            if [ -z "$pct" ]; then
-              echo "  $f: no coverage data (need >=${need}%)  FAIL"
+            if [ -z "$pct" ] || ! [[ "$pct" =~ ^[0-9]+$ ]]; then
+              echo "  $f: no/invalid coverage data \"$pct\" (need >=${need}%)  FAIL"
               fail=1
             elif [ "$pct" -lt "$need" ]; then
               echo "  $f: $pct%  FAIL (need >=${need}%)"
