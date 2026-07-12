@@ -143,6 +143,11 @@ void voice_pool_flush_sustained(uint8_t channel);
    the channel - hold != 0 (pedal down) converts them to held instead
    of releasing, per strict MIDI 1.0 damper semantics. */
 void voice_pool_release_all_midi(uint8_t channel, int hold);
+/* Pitch bend (072, FR-015): store the channel's wheel position
+   (-8192..8191, 0 = center) and rebend every sounding FM MIDI voice
+   on the channel; new notes on the channel trigger pre-bent. +/-2
+   semitone range, ~3-cent max interpolation deviation. */
+void voice_pool_bend_midi(uint8_t channel, int16_t bend);
 
 void     voice_set_mod_depth(uint16_t d);
 uint16_t voice_get_mod_depth(void);

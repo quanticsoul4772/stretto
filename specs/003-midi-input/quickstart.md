@@ -201,7 +201,7 @@ If your device isn't auto-detected, check the OS-level MIDI subsystem (see Platf
 - No SysEx configuration
 - No MIDI file playback
 - No user-configurable CC mapping
-- No pitch bend, aftertouch, channel pressure
+- Pitch bend: +/-2 semitones, per channel (072/FR-015). No aftertouch or channel pressure
 - No auto-reconnect on USB unplug/replug
 - No `--midi-record` to capture output as a MIDI file
 

@@ -100,6 +100,7 @@ Listener runs `synth --midi-list-devices` to see a numbered list of available MI
 - **FR-012**: A Note Off message MUST identify the matching held voice by (key, channel) and trigger its envelope release.
 - **FR-013**: If the matching voice is already in release, the Note Off MUST be a no-op (don't restart the release).
 - **FR-014**: The velocity of the Note On that triggered the voice (not the Note Off) MUST remain effective through the voice's life (V/127 amplitude scale).
+- **FR-015** (added 2026-07-11, 072): Pitch bend. The 14-bit bend value (0..16383, center 8192; wire packing: `key` = LSB bits 0-6, `value` = MSB bits 7-13) maps to a ±2-semitone offset, **per channel**. A bend MUST apply to every sounding MIDI voice on the channel (including pedal-held voices) AND to notes triggered afterward, and persists across notes and across a MIDI close/re-open (wheel position is device state — asymmetric with the CC#64 pedal, whose mask resets on re-init). Implementation is a linear interpolation between adjacent `note_phase_inc` entries — no lookup tables; maximum deviation from the true 2^(x/12) curve is ~3 cents mid-span, inside the FM voices' own ~±5-cent chorus LFO excursion. The bend range compresses within 2 semitones of notes 0/127 (defensive edge; mapped notes sit well inside). MIDI voices are exclusively FM, so FM-only coverage is total. Bend is transient performance state: never captured by the preset/resume surface, never active in `--render` (like all MIDI), and moves no synth parameters.
 
 #### MIDI → synth routing (CC → live parameter)
 - **FR-020**: A CC message on the active channel with controller C (0..127) and value V (0..127) MUST modulate a live parameter via a static mapping table:
@@ -180,7 +181,7 @@ Listener runs `synth --midi-list-devices` to see a numbered list of available MI
 - MIDI file playback.
 - Saving / loading MIDI mappings (the static table in v1 is hard-coded).
 - Visual feedback for incoming MIDI (already implicit in the status row's existing parameter fields).
-- Pitch bend, aftertouch, channel pressure.
+- Aftertouch, channel pressure. (Pitch bend shipped in the 072 amendment — FR-015.)
 - Note On → generative trigger (i.e., not just direct voice trigger; v1 is purely a direct voice trigger, not a generative-seed input).
 - `--midi-record` to capture generated output as MIDI file.
 

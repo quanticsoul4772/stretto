@@ -790,6 +790,132 @@ TEST(midi_cc123_pedal_down_converts_to_held) {
     audio_midi_init(-1);
 }
 
+/* ============================================================
+ * Pitch bend (072, FR-015). Observability: A/B capture of
+ * voice_pool_mix() sample streams under identically reinit'd state.
+ * voice_pool_mix is a pure pre-effects voice sum, and MIDI triggers
+ * never advance voice.c's module PRNG (no pan jitter) - so captures
+ * are bit-identical unless pitch actually changed. CONSTRAINT: these
+ * tests may only use MIDI triggers; voice_pool_trigger_role/_drum DO
+ * advance the PRNG and would poison the comparison.
+ * ============================================================ */
+#define BEND_CAP 2048
+static int16_t bend_cap_l[BEND_CAP];
+
+/* Reinit, dispatch the given prelude events, trigger note 60 ch 1
+ * (unless note_first, in which case the note comes before the
+ * prelude), then capture BEND_CAP left samples. */
+static void bend_capture(const midi_event_t *pre, int npre,
+                         int note_first, int16_t *out) {
+    test_init_synth();
+    voice_pool_init();
+    audio_midi_init(0);
+    midi_event_t on = { .type = MIDI_EVENT_NOTE_ON, .channel = 1,
+                        .key = 60, .value = 100 };
+    if (note_first) audio_midi_enqueue(&on);
+    for (int i = 0; i < npre; i++) audio_midi_enqueue(&pre[i]);
+    if (!note_first) audio_midi_enqueue(&on);
+    audio_midi_drain();
+    for (int i = 0; i < BEND_CAP; i++) {
+        Stereo s = voice_pool_mix();
+        out[i] = s.l;
+    }
+    audio_midi_init(-1);
+}
+
+TEST(midi_bend_center_is_byte_inert) {
+    int16_t a[BEND_CAP];
+    bend_capture(NULL, 0, 0, a);
+    /* Center bend = raw14 8192 = LSB 0, MSB 64. */
+    midi_event_t center = { .type = MIDI_EVENT_PITCH_BEND, .channel = 1,
+                            .key = 0, .value = 64 };
+    bend_capture(&center, 1, 1, bend_cap_l);
+    ASSERT_EQ(memcmp(a, bend_cap_l, sizeof a), 0);
+}
+
+TEST(midi_bend_max_changes_pitch) {
+    int16_t a[BEND_CAP];
+    bend_capture(NULL, 0, 0, a);
+    /* Max up-bend = raw14 16383 = LSB 127, MSB 127, sent AFTER the
+       note (rebends the sounding voice). */
+    midi_event_t up = { .type = MIDI_EVENT_PITCH_BEND, .channel = 1,
+                        .key = 127, .value = 127 };
+    bend_capture(&up, 1, 1, bend_cap_l);
+    ASSERT_NE(memcmp(a, bend_cap_l, sizeof a), 0);
+}
+
+TEST(midi_bend_applies_to_new_notes) {
+    int16_t a[BEND_CAP];
+    bend_capture(NULL, 0, 0, a);
+    /* Bend BEFORE the note: the fresh trigger must sound bent. */
+    midi_event_t dn = { .type = MIDI_EVENT_PITCH_BEND, .channel = 1,
+                        .key = 0, .value = 0 };   /* raw14 0 = -8192 */
+    bend_capture(&dn, 1, 0, bend_cap_l);
+    ASSERT_NE(memcmp(a, bend_cap_l, sizeof a), 0);
+}
+
+TEST(midi_bend_is_per_channel) {
+    int16_t a[BEND_CAP];
+    bend_capture(NULL, 0, 0, a);
+    /* Max bend on channel 2 must not touch the channel-1 note. */
+    midi_event_t other = { .type = MIDI_EVENT_PITCH_BEND, .channel = 2,
+                           .key = 127, .value = 127 };
+    bend_capture(&other, 1, 0, bend_cap_l);
+    ASSERT_EQ(memcmp(a, bend_cap_l, sizeof a), 0);
+}
+
+/* Directional correctness: stream-difference tests can't tell "bent
+ * down" from "wrapped 4 octaves up" (the classic uint32-subtraction
+ * bug in the interpolation). Zero-crossing count tracks the carrier
+ * frequency: down-bend must LOWER it, up-bend must RAISE it. */
+static int bend_zero_crossings(const int16_t *s, int n) {
+    int zc = 0;
+    for (int i = 1; i < n; i++)
+        if ((s[i - 1] < 0) != (s[i] < 0)) zc++;
+    return zc;
+}
+
+TEST(midi_bend_direction_is_correct) {
+    /* HALF bends, deliberately: a wrapped uint32 subtraction in the
+       interpolation self-corrects mod 2^32 at exactly full scale, so
+       only partial bends expose it (and half-span also exercises the
+       interpolation midpoint). raw14 4096 = -4096 (-1 semi),
+       raw14 12288 = +4096 (+1 semi). */
+    int16_t mid[BEND_CAP], dn[BEND_CAP], up[BEND_CAP];
+    bend_capture(NULL, 0, 0, mid);
+    midi_event_t bdn = { .type = MIDI_EVENT_PITCH_BEND, .channel = 1,
+                         .key = 0, .value = 32 };     /* raw14 4096 */
+    bend_capture(&bdn, 1, 0, dn);
+    midi_event_t bup = { .type = MIDI_EVENT_PITCH_BEND, .channel = 1,
+                         .key = 0, .value = 96 };     /* raw14 12288 */
+    bend_capture(&bup, 1, 0, up);
+    int z_mid = bend_zero_crossings(mid, BEND_CAP);
+    int z_dn  = bend_zero_crossings(dn,  BEND_CAP);
+    int z_up  = bend_zero_crossings(up,  BEND_CAP);
+    ASSERT_TRUE(z_dn < z_mid);
+    ASSERT_TRUE(z_mid < z_up);
+}
+
+TEST(midi_bend_reaches_held_voices) {
+    /* Pedal-hold a note (Note Off under the pedal tags it 0x80), then
+       bend: the held voice must still rebend - the walk strips the
+       held tag with & 0x7F. */
+    int16_t a[BEND_CAP];
+    midi_event_t hold_pre[2] = {
+        { .type = MIDI_EVENT_CC, .channel = 1, .key = 64, .value = 127 },
+        { .type = MIDI_EVENT_NOTE_OFF, .channel = 1, .key = 60, .value = 0 },
+    };
+    /* note first, then pedal-down + note-off => held, unbent */
+    bend_capture(hold_pre, 2, 1, a);
+    midi_event_t hold_bend[3] = {
+        { .type = MIDI_EVENT_CC, .channel = 1, .key = 64, .value = 127 },
+        { .type = MIDI_EVENT_NOTE_OFF, .channel = 1, .key = 60, .value = 0 },
+        { .type = MIDI_EVENT_PITCH_BEND, .channel = 1, .key = 127, .value = 127 },
+    };
+    bend_capture(hold_bend, 3, 1, bend_cap_l);
+    ASSERT_NE(memcmp(a, bend_cap_l, sizeof a), 0);
+}
+
 /* Channel-range guard (067): the drain is the trust boundary and
  * ev.channel is a raw uint8_t; the backends' 1..16 contract must be
  * enforced there. Pre-guard, channel 0 made the CC#64 dispatch shift
@@ -859,7 +985,7 @@ TEST(midi_event_stream_fuzz) {
         for (int i = 0; i < BATCH; i++) {
             uint32_t r = fuzz_rng();
             midi_event_t ev = {
-                .type    = (uint8_t)(r % 6u),          /* incl. NONE + invalid 4/5 */
+                .type    = (uint8_t)(r % 6u),          /* incl. NONE, PITCH_BEND (valid since 072) + invalid 5 */
                 .channel = (uint8_t)(r >> 8),          /* raw byte: 0..255 */
                 .key     = (uint8_t)(r >> 16),         /* raw byte */
                 .value   = (uint8_t)(r >> 24)          /* raw byte */

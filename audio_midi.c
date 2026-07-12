@@ -321,6 +321,18 @@ void audio_midi_drain(void) {
                 }
                 break;
             }
+            case MIDI_EVENT_PITCH_BEND: {
+                /* 072/FR-015: RAW bytes, never mapped_key - for a
+                 * bend event, key/value are the 14-bit LSB/MSB, not
+                 * a note (the mapped_key computed above is
+                 * meaningless here). Masks keep raw14 in [0,16383]
+                 * whatever a producer hands us. */
+                uint16_t raw14 = (uint16_t)((ev.key & 0x7Fu)
+                               | ((uint16_t)(ev.value & 0x7Fu) << 7));
+                voice_pool_bend_midi(ev.channel,
+                                     (int16_t)((int)raw14 - 8192));
+                break;
+            }
             default:
                 break;
         }

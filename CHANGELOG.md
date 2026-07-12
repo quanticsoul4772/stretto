@@ -1,5 +1,13 @@
 # Changelog
 
+## Recent: pitch bend - the last expressive-MIDI gap (072)
+
+Bend events previously vanished silently in both backends. Planned first; the design review flagged both implementation traps in advance and both are now pinned by tests:
+
+- +/-2 semitones, per channel, 14-bit (FR-015): rebends every sounding FM MIDI voice on the channel (pedal-held included - the walk strips the 065 held tag), applies to notes triggered while bent, and persists across notes and MIDI re-open (wheel position is device state; asymmetric with the pedal by design). Implementation interpolates between adjacent note_phase_inc entries - zero new tables, ~3-cent max deviation, inside the FM voices' own ~+/-5-cent chorus excursion. Phase accumulators untouched: rebends are click-free by construction.
+- The two review-flagged traps: the drain's unconditional mapped_key must never feed the bend arm (raw LSB/MSB bytes only), and the uint32 neighbor subtraction wraps on down-bends - with the subtle twist, discovered during the negative check, that the wrap SELF-CORRECTS mod 2^32 at exactly full scale; the direction test therefore uses HALF bends, where a wrapped build measurably raises the zero-crossing rate instead of lowering it. Verified to fail on the broken build.
+- Six new unit tests via A/B voice_pool_mix stream capture (pure pre-effects sum; MIDI triggers never advance the module PRNG): center-bend byte-inert, max-bend divergence, bend-before-trigger, channel isolation, held-voice rebend, and zero-crossing direction. 196 unit tests total. Goldens byte-identical (MIDI never renders); binary 48 648 B, ~3.8 KB cliff headroom.
+
 ## Recent: resume-line property tests - closing the preset-capture loop (071)
 
 The flag-bearing resume line ("paste it, get the same run" - the preset-capture feature's whole promise) had no CI-reachable verification: render mode prints seed-only and the full line is live-mode-only, PA-gated. Pure test work, zero binary changes:

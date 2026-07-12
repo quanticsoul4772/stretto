@@ -650,12 +650,23 @@ int16_t voice_step(Voice *v) {
 
 static Voice *pool;
 
+/* Pitch bend (072, FR-015): per-channel wheel position, -8192..8191,
+   0 = center. Audio-thread-only like audio_midi.c's g_sustain_mask
+   (drain and trigger both run on the audio thread; no atomics).
+   Deliberately NOT reset by audio_midi_init: wheel position persists
+   across a MIDI close/re-open per MIDI semantics (asymmetric with the
+   pedal, documented in FR-015). Reset here in voice_pool_init for
+   process start + test hygiene. */
+static int16_t midi_bend[17];
+static uint32_t bent_inc(uint8_t note, int16_t bend);
+
 void voice_pool_init(void) {
     /* Idempotent: only arena-allocate on the first call so test
        binaries can call this from each TEST without draining the
        arena. Re-init zeros the voice fields either way. */
     if (!pool) pool = arena_alloc(N_VOICES * sizeof(Voice));
     for (int i = 0; i < N_VOICES; i++) voice_init(&pool[i]);
+    for (int i = 0; i < 17; i++) midi_bend[i] = 0;
 }
 
 /* Voice slot ranges per role. Drum slots are dedicated per drum type
@@ -927,6 +938,57 @@ void voice_pool_trigger_midi(uint8_t note, uint8_t velocity, uint8_t channel) {
     /* Tag the voice for Note-Off matching (FR-012). */
     pool[chosen].trigger_key     = note;
     pool[chosen].trigger_channel = channel;
+
+    /* FR-015: new notes sound bent while the channel's wheel is
+       off-center (MIDI semantics). */
+    if (channel >= 1 && channel <= 16 && midi_bend[channel] != 0) {
+        uint32_t inc = bent_inc(note, midi_bend[channel]);
+        pool[chosen].u.fm.inc_c = inc;
+        pool[chosen].u.fm.inc_m = inc * role_fm_ratio[ROLE_MELODY];
+    }
+}
+
+/* FR-015 bend factor: linear interpolation between note_phase_inc[k]
+   and the +/-2-semitone neighbor - no new tables; max deviation from
+   the true 2^(x/12) curve is ~2.9 cents mid-span, inside fm_step's
+   own ~+/-5-cent LFO chorus excursion. Neighbor index clamps at the
+   table edges (bend range compresses within 2 semitones of note
+   0/127 - defensive; the drain's mapped notes sit well inside). */
+static uint32_t bent_inc(uint8_t note, int16_t bend) {
+    uint32_t base = note_phase_inc[note];
+    if (bend == 0) return base;
+    int k2 = (int)note + (bend > 0 ? 2 : -2);
+    if (k2 < 0)   k2 = 0;
+    if (k2 > 127) k2 = 127;
+    /* Negate AFTER int promotion (-8192 would overflow int16), and
+       cast each operand to int64 BEFORE subtracting - a uint32
+       subtraction wraps on every down-bend; note the wrap
+       SELF-CORRECTS mod 2^32 at exactly full scale, so only partial
+       bends expose it (the direction test uses half bends for this
+       reason). */
+    int frac = bend > 0 ? bend : -(int)bend;
+    int64_t d = (int64_t)note_phase_inc[k2] - (int64_t)base;
+    return (uint32_t)((int64_t)base + d * frac / 8192);
+}
+
+void voice_pool_bend_midi(uint8_t channel, int16_t bend) {
+    /* Guard 1..16: this walk matches on channel ALONE (no key
+       discriminator), so an out-of-contract value must never run. */
+    if (channel < 1 || channel > 16) return;
+    midi_bend[channel] = bend;
+    for (int i = 0; i < N_VOICES; i++) {
+        Voice *v = &pool[i];
+        /* Both guards REQUIRED: env-completion leaves stale trigger
+           tags on ENV_OFF voices, and the VOICE_FM check protects the
+           u.fm union access. The & 0x7F strips the 065 held tag so
+           pedal-held voices rebend too. Phase accumulators untouched:
+           frequency steps are phase-continuous, no click. */
+        if ((uint8_t)(v->trigger_channel & 0x7Fu) != channel) continue;
+        if (v->type != VOICE_FM || v->env_phase == ENV_OFF) continue;
+        uint32_t inc = bent_inc(v->trigger_key, bend);
+        v->u.fm.inc_c = inc;
+        v->u.fm.inc_m = inc * role_fm_ratio[ROLE_MELODY];
+    }
 }
 
 /* voice_pool_release_midi:

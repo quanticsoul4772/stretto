@@ -132,6 +132,20 @@ static void *midi_worker(void *arg) {
                     qev.key     = (uint8_t)ev->data.control.param;
                     qev.value   = (uint8_t)ev->data.control.value;
                     break;
+                case SND_SEQ_EVENT_PITCHBEND: {
+                    /* 072/FR-015: ALSA delivers the bend pre-combined
+                       and centered (-8192..8191) in control.value;
+                       re-split into the wire LSB/MSB packing the
+                       4-byte midi_event_t carries. */
+                    int raw14 = (int)ev->data.control.value + 8192;
+                    if (raw14 < 0)      raw14 = 0;
+                    if (raw14 > 16383)  raw14 = 16383;
+                    qev.type    = MIDI_EVENT_PITCH_BEND;
+                    qev.channel = (uint8_t)(ev->data.control.channel + 1);
+                    qev.key     = (uint8_t)(raw14 & 0x7F);
+                    qev.value   = (uint8_t)(raw14 >> 7);
+                    break;
+                }
                 case SND_SEQ_EVENT_PORT_EXIT:
                     /* fallthrough */
                 case SND_SEQ_EVENT_CLIENT_EXIT:
@@ -148,8 +162,8 @@ static void *midi_worker(void *arg) {
                     __atomic_store_n(&g_run, 0u, __ATOMIC_RELEASE);
                     return NULL;
                 default:
-                    /* Sysex / clock / active-sensing / pitch-bend /
-                       program change fall through; do NOT enqueue
+                    /* Sysex / clock / active-sensing / program
+                       change fall through; do NOT enqueue
                        MIDI_EVENT_NONE (queue slots are precious). */
                     continue;
             }
