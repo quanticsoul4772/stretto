@@ -645,7 +645,7 @@ The oscilloscope draws each frame into a 24 KB static buffer (one `write()` sysc
 | Target | Scope |
 |---|---|
 | `make test` | CLI contract (`tests/test_cli.sh`: help/version/usage errors, stdout render, preset flags, no-server UX, offline install.sh, man page) + bit-exact regression (render 16 s at `--seed 0` twice, byte-compare, sha256 against `golden/regression_16s.sha256`) + the Constitution↔Makefile bridge and amend regression suites + the size-budget-gate fixture suite (`tests/test_size_budget_gate.sh`). |
-| `make test-unit` | 185 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
+| `make test-unit` | 190 unit tests across the `tests/unit/test_*.c` files (arena, effects, voice, gen, lsystem, midi, chord_progression, section, density, motif, mixer, wav, keys) using the hand-rolled framework in `tests/unit/test.h`. |
 | `make test-multiseed` | Renders 4 s at seeds 0 / 1 / 42 / 12345, asserts each is deterministic across runs, asserts all four produce distinct sha256s, asserts each render's peak / clip count / spectral centroid / zero-crossing rate land within sane bounds (RMS is reported but not gated, since the randomized INTRO palette varies loudness), then matches each hash against `golden/regression_multiseed.sha256.txt`. |
 | `make test-smoke` | Spawns `./synth --no-ui` under a 2 s timeout. Pass on exit 0 / 124 / 143; fail on segfault. Auto-skips if no PulseAudio. |
 | `make coverage` | Rebuilds instrumented (`-fprofile-arcs -ftest-coverage`), runs the regression + unit suites, prints per-file line coverage via `gcov`. |
@@ -673,7 +673,7 @@ Approximate line coverage:
 | `ui.c`, `keys.c`, `audio_pulse.c`, `audio_midi_linux.c` | — | excluded (interactive; require TTY + audio device or snd-seq-dummy loopback to enumerate — listed in `Makefile` `COV_SRCS_INTERACTIVE`) |
 | `audio_midi_winmm.c` | — | platform-gated (Windows cross-compile only via `x86_64-w64-mingw32-gcc`; the Linux CI runner does not produce `audio_midi_winmm.o`, so it is implicitly excluded from `COV_SRCS_MEASURED` without needing an interactive-source listing) |
 
-Total: 185 unit tests across 13 modules (the MIDI suite covers: US1 scale-degree + octave clamp + velocity + voice-stealing + no-midi byte-identity, US2 CC dispatcher + multi-CC additive composition + reserved-CC no-op slots + sustain pedal + All Notes Off, US3 channel filter + enumeration + wildcard sentinel, plus the malformed-channel guard and the deterministic 50k-event fuzz).
+Total: 190 unit tests across 14 modules (the MIDI suite covers: US1 scale-degree + octave clamp + velocity + voice-stealing + no-midi byte-identity, US2 CC dispatcher + multi-CC additive composition + reserved-CC no-op slots + sustain pedal + All Notes Off, US3 channel filter + enumeration + wildcard sentinel, plus the malformed-channel guard and the deterministic 50k-event fuzz).
 
 The coverage build (`make coverage`) writes every artifact (instrumented `.o`, `.gcno`, `.gcda`, `synth_cov`, `.cov` test binaries) into `build_cov/` so it does not clobber the normal build. `make coverage` and `make test-unit` can be alternated freely without `make clean`. CI's "Coverage gates" step parses the per-file numbers and fails if any drop below the gate.
 
@@ -723,7 +723,7 @@ ci.yml defines two jobs. The `sanitizers` job (066) is a single `make test-asan`
 | 6 | Bridge regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_check.sh` — 5 scenarios / 9 sub-checks. Pre-flight for the Binary size budget gate (step 16). |
 | 7 | Amend helper regression test (Constitution↔Makefile) | `bash tests/test_spec_budget_amend.sh` — 6 scenarios / 21 sub-checks |
 | 8 | Size budget gate regression test | `bash tests/test_size_budget_gate.sh` — synthetic binary-sizes.txt fixtures over every gate path incl. the page-cliff ADVISORY (066) |
-| 9 | Unit tests | `make test-unit` (178 tests across 13 modules) |
+| 9 | Unit tests | `make test-unit` (190 tests across 14 modules) |
 | 10 | Multi-seed integration test | `make test-multiseed` |
 | 11 | Live-mode smoke test (skips if no PA) | `make test-smoke` |
 | 12 | Cross-compile Windows .exe | `make win` |

@@ -133,9 +133,13 @@ EOF
     chmod +x "$ST"/q_check.sh
 
     echo "=== terminal-restore B: clean 'q' quit clears O_NONBLOCK (PTY) ==="
-    # Feed 's' (cycle scale -> lydian) before 'q' so the resume line
-    # must capture the touched parameter, not just the seed.
-    out_b=$( (sleep 2; printf s; sleep 1; printf q; sleep 1) | timeout 30 script -qec "$ST"/q_check.sh /dev/null | tr -d '\r')
+    # Feed 's' (cycle scale -> lydian) and 'r' (reverb down) before
+    # 'q' so the resume line must capture BOTH touched parameters in
+    # enum order. 'r' is the safe second key: reverb_get_wet returns
+    # the user base (mutate() drifts a separate bias), unlike cutoff/
+    # resonance which drift live. No literal reverb value asserted -
+    # this PA-gated path stays unflaky.
+    out_b=$( (sleep 2; printf s; sleep 0.5; printf r; sleep 0.5; printf q; sleep 1) | timeout 30 script -qec "$ST"/q_check.sh /dev/null | tr -d '\r')
     echo "$out_b"
     case "$out_b" in
         *"QCHECK-OK rc=0"*)
@@ -151,8 +155,8 @@ EOF
     # Preset capture (specs/004-preset-capture): the quit path must
     # print a pasteable resume line with the seed and the parameter
     # touched by the 's' keypress above.
-    if grep -qE '^resume with: --seed [0-9]+ --scale lydian$' "$ST"/q_stderr; then
-        echo "PASS: clean-q resume line captures seed + touched scale"
+    if grep -qE '^resume with: --seed [0-9]+ --scale lydian --reverb [0-9]+$' "$ST"/q_stderr; then
+        echo "PASS: clean-q resume line captures seed + both touched params in enum order"
     else
         echo "FAIL: resume line missing or wrong; synth stderr was:"
         cat "$ST"/q_stderr

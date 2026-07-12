@@ -1,5 +1,13 @@
 # Changelog
 
+## Recent: resume-line property tests - closing the preset-capture loop (071)
+
+The flag-bearing resume line ("paste it, get the same run" - the preset-capture feature's whole promise) had no CI-reachable verification: render mode prints seed-only and the full line is live-mode-only, PA-gated. Pure test work, zero binary changes:
+
+- New tests/unit/test_resume.c (dedicated binary - ui.c's param mask is set-only, so only a fresh binary has the clean mask the absence assertions need): empty-line + seed-only contracts; a staged random-order marking property (fragments must render in enum order for every subset - the strongest property a set-only mask permits); a 200-iteration all-set random-value property; and the exact max-width case (232 chars incl. newline - the ui.c "~233 B" comment is exact). Expected lines are built from the DRAWN values, never the getters, so setter/getter bugs cannot self-agree. Verified to FAIL on a deliberately broken keys.c format string.
+- test_cli.sh: a 13-flag all-non-default combination pair (previous maximum: two flags), spellings byte-identical to the unit test's fragments - together they close the keys.c-vs-main.c flag-name drift loop.
+- PTY smoke: the live resume grep now asserts TWO touched params in enum order ('s' + 'r'; reverb is the safe second key - mutate() drifts a separate bias, unlike cutoff/resonance which drift live and by design print current-not-set values).
+
 ## Recent: Windows live-path validation runbook + smoke script (070)
 
 The native Windows LIVE path (waveOut, real-console UI, keystrokes, winmm MIDI) had never been systematically exercised - cross-platform testing covered only --render. First full run (2026-07-11, native Windows 11): real-console ConPTY UI with ANSI oscilloscope + status row, live keys, clean q-quit with the resume line, 6 s of live waveOut, NO_COLOR, native-FS render determinism, binary-safe stdout piping, and all four winmm MIDI failure paths (the first in-the-wild exercise of the 059 WAVE_MAPPER removal - contract-exact) - ALL PASS, zero code changes needed.
