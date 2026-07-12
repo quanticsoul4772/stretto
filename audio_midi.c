@@ -53,10 +53,10 @@ static midi_queue_t q;  /* BSS-allocated (the 128 KB arena is untouched by MIDI)
  * number; unspecified indices are zero-initialized by the designated
  * initializer (C99 §6.7.8 p21) so they default to { target=NONE,
  * scale=0 } and the dispatch below treats them as silently dropped.
- * Total footprint: 128 * sizeof(cc_map_entry_t) bytes in .rodata
- * (data-model.md budgets 512 B; actual may be 8 B/entry on platforms
- * where cc_target_t is enum-int-sized -- documented as a known spec
- * drift so a future budget bump can lift it cleanly).
+ * Total footprint: 128 * 2 B = 256 B in .rodata, inside
+ * data-model.md's 512 B budget (the pre-077 int-sized-enum layout
+ * was 8 B/entry = 1024 B, a documented spec drift - resolved by the
+ * uint8_t target packing in audio_midi.h).
  *
  * Scale is signed (int8) so the (V - 64) * scale delta can swing
  * negative within `voice_get_*` clamp ranges. CC#7's +60 scale makes
