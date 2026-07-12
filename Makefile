@@ -233,6 +233,7 @@ clean:
 	       tests/unit/test_motif tests/unit/test_midi \
 	       tests/unit/test_mixer tests/unit/test_wav tests/unit/test_keys \
 	       tests/unit/test_resume tests/unit/test_main \
+	       tests/unit/test_ui \
 	       $(GENS) $(HEADERS) version.h version.h.tmp *.o *.win.o
 
 # Size report: builds every binary whose toolchain is locally available
@@ -427,25 +428,26 @@ COV_FLAGS = -O0 -g -Wall -Wextra -fprofile-arcs -ftest-coverage
 #   MEASURED       - line coverage is reported and CI-gated.
 #   INTERACTIVE    - compiled+linked so synth_cov runs, but excluded
 #                    from the coverage report AND the per-file gate.
-#                    Three reasons qualify a module as INTERACTIVE:
-#                      (a) requires a TTY + a live audio device
-#                          (ui.c keys.c audio_pulse.c) - the live loop
-#                          + raw-mode terminal raw + key handler.
+#                    Two reasons qualify a module as INTERACTIVE:
+#                      (a) requires a live audio server
+#                          (audio_pulse.c) - the PulseAudio loop.
 #                      (b) platform backend whose code paths need a
 #                          reachable ALSA sequencer + real controller
 #                          hardware (audio_midi_linux.c) - CI runners
 #                          have no /dev/snd/seq, so every path past
 #                          snd_seq_open() is untestable there.
-#                    (main.c graduated to MEASURED in 080: the
-#                    main_testable.o rename + tests/unit/test_main's
-#                    fork harness with a stubbed audio_play made the
-#                    argv pre-scan, error paths, and dispatch
-#                    unit-reachable - the exact follow-up the old
-#                    reason (c) here called for.)
+#                    Graduations: main.c in 080 (fork harness over
+#                    stretto_main, audio_play stubbed); ui.c + keys.c
+#                    in 081 (keys.c was already 100% via test_keys;
+#                    ui.c's draw/write/degrade/signal paths are
+#                    fork-driven by tests/unit/test_ui.c - the
+#                    remaining ~22 uncovered lines are the TTY-only
+#                    termios bodies + die_sys, documented at the
+#                    ci.yml gate).
 COV_SRCS_MEASURED    = arena.c effects.c voice.c gen.c lsystem.c \
                        chord_progression.c section.c density.c motif.c \
-                       mixer.c wav.c audio_midi.c
-COV_SRCS_INTERACTIVE = ui.c keys.c audio_pulse.c audio_midi_linux.c
+                       mixer.c wav.c audio_midi.c ui.c keys.c
+COV_SRCS_INTERACTIVE = audio_pulse.c audio_midi_linux.c
 # main.c is MEASURED since 080, but via the main_testable object (the
 # gcov line below names main_testable.gcno explicitly): the module
 # main.o also carries render-run data from synth_cov, and emitting two
@@ -500,7 +502,7 @@ coverage: $(COV_OBJS) $(BUILD_COV)/main_testable.o
 		awk '/^File/ {sub(/[\x27]/,"",$$2); sub(/[\x27]/,"",$$2); f=$$2} \
 		     /^Lines/ {sub(/Lines executed:/,""); if (f != "") print f": "$$0; f=""}' | \
 		grep "\.c"
-	@echo "(interactive modules ui.c keys.c audio_pulse.c audio_midi_linux.c excluded - require TTY/audio device; main.c measured via main_testable.gcno, 080)"
+	@echo "(interactive modules audio_pulse.c audio_midi_linux.c excluded - require audio server / ALSA sequencer; main.c measured via main_testable.gcno)"
 
 # --- Sanitizer run (066): ASan + UBSan over the unit suite + a render
 # regression. Separate object tree (like coverage) so it alternates
