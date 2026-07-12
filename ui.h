@@ -41,10 +41,22 @@ int ui_strip_sgr(char *buf, int len);
    terminated line(s) into buf, clamped to tw-1 VISIBLE columns
    (SGR bytes don't count), and returns the byte length. The 5-line
    full-word panel renders when the terminal has >= 20 rows; the
-   compact single row is the small-terminal fallback. Public for
-   PTY-free unit tests (the ui_strip_sgr precedent). */
+   compact single row is the small-terminal fallback. tw must be
+   >= 1 (tw == 0 disables clamping; unreachable from real callers -
+   ui_term_get_size and ui_draw_oscilloscope guarantee 80-col
+   defaults). Public for PTY-free unit tests (the ui_strip_sgr
+   precedent). */
 int ui_build_status_panel(char *buf, unsigned tw);
 int ui_build_status_row(char *buf, unsigned tw);
+
+/* Help overlay builder (074, exported 076): one row per PARAM_FLAGS
+   entry with the live key, flag name, CURRENT value, and range,
+   plus hardcoded SPACE/?/q footer lines. Colorless by contract (the
+   only escapes are the leading cursor-home + clear, which
+   ui_strip_sgr keeps) - no second NO_COLOR strip site. Writes into
+   buf (ui_show_help passes a 4 KB buffer; worst case is ~1.2 KB)
+   and returns the byte length. Public for PTY-free unit tests. */
+int ui_build_help_overlay(char *buf);
 
 /* --- help overlay --- */
 
