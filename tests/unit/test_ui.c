@@ -31,12 +31,16 @@
 #include <fcntl.h>
 #include <time.h>
 
-/* Reap pid with a ~5 s deadline; SIGKILL + final blocking reap if it
-   neither exits nor (when flags & WUNTRACED) stops in time. Returns
-   the waitpid status. */
+/* Reap pid with a ~30 s deadline; SIGKILL + final blocking reap if
+   it neither exits nor (when flags & WUNTRACED) stops in time.
+   Returns the waitpid status. 30 s, not 5: the first CI run of this
+   suite SIGKILLed a child that was still faulting in its pages on a
+   cold runner - the deadline exists to prevent hangs, not to race
+   the scheduler (WNOHANG polling costs nothing when the child is
+   fast). */
 static int reap_or_kill(pid_t pid, int flags) {
     int status = 0;
-    for (int i = 0; i < 500; i++) {
+    for (int i = 0; i < 3000; i++) {
         pid_t r = waitpid(pid, &status, flags | WNOHANG);
         if (r == pid) return status;
         struct timespec ts = { 0, 10 * 1000 * 1000 };

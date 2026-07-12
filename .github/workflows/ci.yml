@@ -194,11 +194,12 @@ jobs:
 
       - name: Coverage gates
         # Per-file gates against the measured subset (interactive
-        # modules ui.c, keys.c, audio_pulse.c, audio_midi_linux.c
-        # are excluded by COV_SRCS_INTERACTIVE in the Makefile - they
-        # need a TTY / audio device / ALSA sequencer that CI's render
-        # path does not provide. main.c GRADUATED to measured in 080
-        # via the fork harness over stretto_main).
+        # modules audio_pulse.c, audio_midi_linux.c are excluded by
+        # COV_SRCS_INTERACTIVE in the Makefile - they need a live
+        # audio server / ALSA sequencer that CI does not provide.
+        # Graduations: main.c in 080 (fork harness over stretto_main),
+        # ui.c + keys.c in 081 (fork-driven draw/write/degrade/signal
+        # tests; keys.c was already 100% via test_keys).
         # Tightening these forces the project's coverage discipline
         # to ratchet up over time.
         run: |
@@ -215,7 +216,16 @@ jobs:
           # (print-loop body vs zero-device notice; exactly one is
           # unreachable per environment). Driven by the 080 fork
           # harness over stretto_main (main_testable.gcno).
+          # ui.c gates at its fork-reachable ceiling (081): 92.88%
+          # identical on CI and local. The ~26 uncovered lines are
+          # the TTY-only termios bodies (raw-mode entry, restore/
+          # replay) + die_sys - reaching them needs a real PTY
+          # (posix_openpt could add ~5% but couples the gate to
+          # /dev/ptmx; deliberate non-goal). keys.c is fully driven
+          # by test_keys/test_resume.
           declare -A thresholds=(
+            [ui.c]=92
+            [keys.c]=100
             [main.c]=99
             [audio_midi.c]=90
             [arena.c]=95
