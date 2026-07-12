@@ -1,5 +1,14 @@
 # Changelog
 
+## Recent: coverage completion - ui.c and keys.c graduate into the gated set (081)
+
+The last two coverage-exempt modules with test-reachable surface, closing the sweep the 080 arc started. Sources untouched; release binary byte-identical:
+
+- **keys.c: 100%** - already fully driven by test_keys/test_resume; pure graduation, gated at 100.
+- **ui.c: 67.67% -> 92.88%** via nine fork-based tests (new tests/unit/test_ui.c): rich-panel + NO_COLOR draw (forked stdout-on-a-file makes the ioctl fail, so 80x24 defaults hit the panel path deterministically everywhere), help/clear write paths, read_key pipe/EOF, headless degrade, and the POSIX signal handlers. Two review catches shaped the signal tests: a child killed by the re-raised SIGTERM never flushes gcov counters (the carrier retrieves the installed handler and re-raises it as SIGWINCH - default ignore - so the child survives and flushes), and stop signals to orphaned process groups are discarded (the child takes its own pgrp via setpgid). One CI flake fixed pre-merge: a cold runner outran the 5 s reap deadline and SIGKILLed a child that was about to stop - deadline now 30 s (it guards hangs, not the scheduler).
+- Remaining ~26 uncovered ui.c lines are the TTY-only termios bodies + die_sys, documented at the gate (posix_openpt could add ~5% but couples the gate to /dev/ptmx - deliberate non-goal; test_smoke_live stays the real-PTY semantics authority).
+- 240 unit tests across 16 binaries; ASan green incl. the signal forks; gates pinned at the CI-proven integers (identical to local).
+
 ## Recent: main.c coverage lift - 99% gated via a fork harness (080)
 
 main.c was the largest uncovered file and fully coverage-exempt ("needs direct argv invocation"). Now measured at 99.33% and CI-gated at 99, with main.c and the release build byte-untouched:
