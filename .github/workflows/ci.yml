@@ -24,10 +24,12 @@ jobs:
   # ASan + UBSan over the unit suite + a render regression (separate
   # object tree via `make test-asan`; UB is FATAL via
   # -fno-sanitize-recover, since UBSan's default report-and-continue
-  # exits 0). Runs in parallel with the main job. NOTE: the branch
-  # ruleset's required check is `build-test-coverage` by job name -
-  # this job shows red on the PR without blocking a merge; add it to
-  # the ruleset to make it required.
+  # exits 0). Runs in parallel with the main job. NOTE: REQUIRED by
+  # the main-protection ruleset (id 18729764) BY THE RENDERED JOB
+  # NAME `sanitizers`, same coupling as `build-test-coverage` below
+  # (075). Renaming this job or adding a `name:` key orphans the
+  # required context and blocks every merge with "Expected - waiting
+  # for status"; update the ruleset in the same change.
   sanitizers:
     runs-on: ubuntu-24.04
     # A sanitizer-slowed hang must not burn the 360-minute default;

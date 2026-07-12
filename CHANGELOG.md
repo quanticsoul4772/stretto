@@ -1,5 +1,12 @@
 # Changelog
 
+## Recent: sanitizers promoted to a required check + golden-target mktemp hygiene (075)
+
+The `sanitizers` CI job (ASan + UBSan fatal + -Werror, added in 066) had been green on every PR since #159 but was not in the main-protection ruleset - an ASan-red PR could technically merge. Parallax-selected; plan-reviewed first (the review caught that a naive mktemp swap would make the golden-multiseed failure mode WORSE - see below):
+
+- **Required check**: the ruleset now requires BOTH `build-test-coverage` and `sanitizers`, matched by rendered job name (renaming either job orphans the context and blocks all merges - documented in ci.yml and ARCHITECTURE). Applied via the rulesets API with the pre-change snapshot preserved in the PR for rollback. Zero merge-latency cost: sanitizers runs in parallel and finishes first.
+- **Golden-target hygiene**: `golden` and `golden-multiseed` no longer render to fixed, predictable `/tmp` names (concurrent-checkout collisions, leftover WAVs) - mktemp + EXIT-trap cleanup, matching tests/test_bitexact.sh. The real fix underneath: golden-multiseed's `>/dev/null 2>&1` swallowed render failures and hashed whatever sat at the fixed path; renders are now unsilenced and checked, and the tracked golden is only `mv`'d over on full success (a mid-loop failure can never truncate it). Regenerated outputs verified byte-identical to the checked-in goldens before restore.
+
 ## Recent: rich TUI - full-word status panel + live-value help overlay (074)
 
 The TUI was one cryptic 131-char row plus a static help card; terminals have rows to spare and every displayed value has a getter (swing displayed NOWHERE). Planned first, two reviewer rounds; the round-2 review caught the PARAM_FLAGS link-direction blocker and the SGR-vs-visible-column truncation defect before implementation:
