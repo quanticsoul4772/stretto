@@ -1,5 +1,15 @@
 # Changelog
 
+## Recent: rich TUI - full-word status panel + live-value help overlay (074)
+
+The TUI was one cryptic 131-char row plus a static help card; terminals have rows to spare and every displayed value has a getter (swing displayed NOWHERE). Planned first, two reviewer rounds; the round-2 review caught the PARAM_FLAGS link-direction blocker and the SGR-vs-visible-column truncation defect before implementation:
+
+- **Status panel**: terminals with >= 20 rows get five full-word lines (version/seed/bar/section/ms-per-bar/swing; scale/chord/tension/motif; filter words + cutoff/resonance/lfo; effects; voices by role band) over a (th-6)-row scope; shorter terminals keep the compact row, which now shows `Sw:`. Both layouts total th-1 rows.
+- **Width clamp**: every status line passes through one SGR-aware post-pass counting only VISIBLE columns, cutting at the last space boundary at tw-1. Also fixes the pre-existing sub-72-column row wrap that scrolled the scope every frame. (The first cut threaded per-field-group save/rollback through ~40 call sites and busted the size budget at 52,520 B; the one-pass clamp recovered ~1.9 KB.)
+- **Help overlay v2**: static HELP_TEXT deleted; `?` builds the overlay into a 4 KB BSS buffer with one row per PARAM_FLAGS entry - live key, flag name, CURRENT value, range - names/ranges single-sourced with the CLI parser (the table moved to ui.c so unit-test binaries linking ui.o without main.o resolve it). Colorless: ui_strip_sgr stays the single NO_COLOR strip site.
+- **Stack-smash fix caught by the smoke suite**: append_num's t[6] digit buffer segfaulted live mode on the panel's seed field (clock-derived seeds are ~10 digits); now t[10], with a 4294967295-seed regression test. test_smoke_live sub-check C found it pre-merge.
+- 201 unit tests (5 new: tw=40 clamp for panel + row, tw=80 full-word presence, fallback Sw:, 10-digit seed); ASan/UBSan green; goldens byte-identical (UI-only). Binary 50,952 B stripped (248 B slack), cliff headroom 1,552 B. ConPTY smoke greps updated for the panel.
+
 ## Recent: pitch bend - the last expressive-MIDI gap (072)
 
 Bend events previously vanished silently in both backends. Planned first; the design review flagged both implementation traps in advance and both are now pinned by tests:
