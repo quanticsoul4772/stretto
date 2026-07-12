@@ -1,0 +1,8 @@
+# CodeRabbit is disabled for this repo (user decision, 2026-07-11).
+# The app remains installed at the account level; this config stops
+# automatic PR reviews. To fully remove: github.com/settings/
+# installations -> CodeRabbit -> Uninstall. To re-enable reviews:
+# delete this file.
+reviews:
+  auto_review:
+    enabled: false
