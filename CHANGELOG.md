@@ -1,5 +1,14 @@
 # Changelog
 
+## Recent: Windows smoke under CI + first in-CI cross-platform bit-exactness (079)
+
+The native Windows live path (waveOut, ConPTY panel + NO_COLOR strip-through, live keys, winmm MIDI error contracts) was validated only by running scripts/windows_smoke.py on the maintainer's desk. New scheduled/manual workflow (windows-smoke.yml, never a required check):
+
+- **All 7 smoke sections on windows-2025** with a VB-CABLE virtual audio endpoint (LABSN/sound-ci-helpers, SHA-pinned; research verdict: Scream's signing cert expired 2023-07 and its devcon path is dead on Win11-era kernels). An endpoint preflight attributes driver failures separately from synth failures.
+- **Cross-platform bit-exactness under CI for the first time**: the ubuntu job builds synth + stretto.exe from one tree (shared generated tables - the test_crossplatform.sh scope note) and ships the 4 s seed-42 Linux render hash; smoke section 2 compares the native Windows render against it.
+- Smoke script: section 5 now captures stderr so a CI failure shows the actual waveOutOpen error line; docstring loosened (any shell, not just Git Bash).
+- Weekly cron (off-the-hour per GH docs) + workflow_dispatch + paths-filtered pushes to main; contents:read only; runbook gains the CI-variant section incl. the 60-day schedule auto-disable caveat. Ctrl-C-as-keystroke and speaker listening stay manual.
+
 ## Recent: spec/docs sync to the as-built 069-077 surface (078)
 
 Pure docs, zero code. A very-thorough drift sweep + fact-checking review found ~19 stale spots left behind by the last nine arcs:

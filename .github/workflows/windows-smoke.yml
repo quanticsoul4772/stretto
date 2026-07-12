@@ -1,0 +1,104 @@
+# Native-Windows live-path validation (arc 079): runs the full
+# scripts/windows_smoke.py suite (waveOut, ConPTY panel + NO_COLOR,
+# winmm MIDI error contracts) on a real Windows runner with a virtual
+# audio endpoint, plus - via the reference.sha256 flow - the FIRST
+# in-CI check of the cross-platform bit-exactness promise (Linux
+# render hash == Windows render hash; previously dev-box-only in
+# tests/test_crossplatform.sh).
+#
+# Scheduled/manual validation ONLY. NEVER add these job names to the
+# main-protection ruleset (id 18729764): this workflow has no
+# pull_request trigger, so a required context from here would block
+# every PR with "Expected - waiting for status".
+#
+# Failure visibility: GitHub emails scheduled-run failures to the user
+# who last modified the cron line; schedules auto-disable after 60
+# days of repo inactivity (both documented in scripts/windows-smoke.md).
+name: Windows smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1'   # Mondays 05:17 UTC; off-the-hour per GH docs
+  push:
+    branches: [main]
+    paths:
+      - scripts/windows_smoke.py
+      - scripts/windows-smoke.md
+      - audio_winmm.c
+      - audio_midi_winmm.c
+      - ui.c
+      - keys.c
+      - .github/workflows/windows-smoke.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ubuntu-24.04 pinned: the image the goldens gate on (lookup tables
+  # are generated with host libm - see ci.yml's build-test-coverage
+  # note). Building synth AND stretto.exe from ONE tree means they
+  # share the same generated tables, which is what makes the
+  # reference-hash comparison the Constitution III cross-platform
+  # promise rather than a tautology (tests/test_crossplatform.sh
+  # documents the same scope).
+  build-reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # resolvable git-describe for --version
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make libpulse-dev libasound2-dev gcc-mingw-w64-x86-64
+      - name: Build Linux synth + Windows exe (one tree, shared tables)
+        run: |
+          make
+          make win
+      - name: Render Linux reference (4 s seed 42 - what smoke section 2 renders)
+        run: |
+          ./synth --render 4 reference.wav --seed 42
+          sha256sum reference.wav > reference.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke-input
+          path: |
+            stretto.exe
+            reference.sha256
+
+  windows-smoke:
+    needs: build-reference
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-smoke-input
+          path: .   # stretto.exe lands at repo root, where the script expects it
+      - name: Place Linux reference hash for smoke section 2
+        run: Move-Item reference.sha256 scripts/reference.sha256
+      - name: Install virtual audio endpoint (VB-CABLE)
+        # Third-party action that installs a kernel driver - pinned to
+        # the v1.0.4 commit. Scream is NOT an alternative: its signing
+        # cert expired 2023-07 and its devcon path is dead on
+        # Win11-era kernels (scream#202).
+        uses: LABSN/sound-ci-helpers@d08c889a7bba7d9b1b059f8f76dac4672ea3a9cf # v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Smoke deps + audio-endpoint preflight
+        # The preflight attributes driver-install failures separately
+        # from synth failures (mirrors sound-ci-helpers' own test).
+        run: |
+          pip install pywinpty sounddevice
+          python -m sounddevice
+          python -c "import sounddevice as sd; assert any(d['max_output_channels'] > 0 for d in sd.query_devices()), 'no output endpoint'"
+      - name: Run Windows smoke (sections 1-7)
+        run: python scripts/windows_smoke.py
