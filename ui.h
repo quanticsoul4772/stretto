@@ -71,6 +71,27 @@ enum {
     UI_PARAM_COUNT
 };
 
+/* Preset-capture flag table (specs/004-preset-capture): one row per
+   initial-state flag, indexed by its UI_PARAM_* id. Ranges mirror the
+   engine setters' clamps exactly. `named`: 1 = scale names, 2 =
+   filter-mode names (numeric always accepted too). Defined in ui.c
+   (NOT main.c): every unit-test binary links ui.o without main.o, and
+   the help overlay reads names/ranges from this table. */
+typedef struct {
+    const char *name;
+    int min, max;
+    void (*set)(int);
+    int named;
+} ParamFlag;
+
+extern const ParamFlag PARAM_FLAGS[UI_PARAM_COUNT];
+
+/* Version string for the status panel. main() passes STRETTO_VERSION
+   once at startup; ui.c never includes version.h so only main.o
+   rebuilds when the version changes (version.h is deliberately out of
+   the Makefile's $(HEADERS)). Defaults to "" until set. */
+void ui_set_version(const char *v);
+
 /* Dirty bits track parameters the USER explicitly set (CLI flag or
    live key) - never internal mutate() drift, which --seed already
    reproduces from bar 0. Marked at the user-action call sites, not

@@ -35,6 +35,42 @@ static int win_term_saved = 0;
 static int help_visible = 0;
 static int no_ui_flag   = 0;
 
+/* Version string shown in the status panel. "" (not NULL) until
+   main() calls the setter: unit-test binaries link ui.o without
+   main.o and must be able to build the panel without crashing.
+   ui.c deliberately does NOT include version.h - the Makefile keeps
+   version.h out of $(HEADERS) so only main.o rebuilds per version
+   bump. */
+static const char *version_str = "";
+
+void ui_set_version(const char *v) { version_str = v ? v : ""; }
+
+/* Preset-capture flag table (specs/004-preset-capture): one row per
+   initial-state flag, indexed by its UI_PARAM_* id. Ranges mirror the
+   engine setters' clamps exactly; out-of-range values are usage
+   errors rather than silent clamps. `named`: 1 = scale names, 2 =
+   filter-mode names (numeric always accepted too). Setters consume
+   no PRNG draws, so output stays a pure function of (seed, flags).
+   Lives HERE, not in main.c: unit-test binaries link ui.o without
+   main.o, and the help overlay reads names/ranges from this table. */
+static void set_mod_depth_i(int v) { voice_set_mod_depth((uint16_t)v); }
+
+const ParamFlag PARAM_FLAGS[UI_PARAM_COUNT] = {
+    /* [UI_PARAM_SCALE]          */ { "--scale",          0,    5,     gen_set_scale,              1 },
+    /* [UI_PARAM_BAR_MS]         */ { "--bar-ms",         760,  7600,  gen_set_bar_ms,             0 },
+    /* [UI_PARAM_GATE]           */ { "--gate",           32,   255,   gen_set_gate,               0 },
+    /* [UI_PARAM_MOD_DEPTH]      */ { "--mod-depth",      100,  8000,  set_mod_depth_i,            0 },
+    /* [UI_PARAM_CUTOFF]         */ { "--cutoff",         30,   180,   voice_set_cutoff,           0 },
+    /* [UI_PARAM_RESONANCE]      */ { "--resonance",      0,    180,   voice_set_resonance,        0 },
+    /* [UI_PARAM_LFO_DEPTH]      */ { "--lfo-depth",      0,    255,   voice_set_lfo_filter_depth, 0 },
+    /* [UI_PARAM_FILTER_MODE]    */ { "--filter-mode",    0,    3,     voice_set_filter_mode,      2 },
+    /* [UI_PARAM_REVERB]         */ { "--reverb",         0,    256,   reverb_set_wet,             0 },
+    /* [UI_PARAM_DELAY]          */ { "--delay",          0,    256,   delay_set_wet,              0 },
+    /* [UI_PARAM_FEEDBACK]       */ { "--feedback",       0,    200,   delay_set_feedback,         0 },
+    /* [UI_PARAM_COMP_THRESHOLD] */ { "--comp-threshold", 8000, 30000, compressor_set_threshold,   0 },
+    /* [UI_PARAM_SWING]          */ { "--swing",          0,    100,   gen_set_swing,              0 },
+};
+
 /* --- help text + show / clear --- */
 
 static const char HELP_TEXT[] =
