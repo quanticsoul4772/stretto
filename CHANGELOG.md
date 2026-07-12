@@ -1,5 +1,14 @@
 # Changelog
 
+## Recent: v1.5.0 release readiness - tagging is now a 5-minute decision (083)
+
+66 commits since v1.4.0 (which contains work only through arc 060) are unreleased, including audible/user-visible work: sustain gate semantics, CC#123, --swing, pitch bend, the rich TUI, Ctrl-Z resume, the arrow-key fix, and the completions/demo-WAV distribution. The pipeline and installer have been release-ready since 068; this arc ships the missing human layer - NOTHING is tagged or published:
+
+- **scripts/release-runbook.md**: the full tag-day procedure (rehearse via workflow_dispatch -> verify the 8-asset rehearsal artifact -> annotated tag -> watch the gated publish -> post-publish smoke -> formula bump), with the failure shapes documented (idempotent re-runs, the invisible-draft case, the wrong-commit abort path) and the affirmative note that NO version file exists to bump (version.h is generated; the tag is the source of truth). Appendix A: the drafted v1.5.0 tag message. Appendix B: the ready formula block that lands the 068 completions IOU - deferred to the bump on purpose, since the v1.4.0 tarball predates completions/ and live lines would break installs today.
+- Formula gains a pointer comment to Appendix B; README's panel example pre-bumped to 1.5.0 (the repo already binds the next release to that number in two places).
+- Audit findings recorded: packaging/aur/PKGBUILD still pins v1.3.0 (unpublished; optional version+sha chore - make install already ships completions); install.sh needs zero edits (self-deriving from sha256sums, conditional completions pinned both ways by offline tests).
+- Rehearsal executed against main: full pipeline green incl. the installer drift gate; 8-file sha256sums verified locally.
+
 ## Recent: quality deep-pass over the 074-081 surface (082)
 
 Three fresh-eyes adversarial reviewers (render surface / test harnesses / build+CI plumbing) swept everything shipped since 074, self-refuting candidates before reporting. Ten findings survived and are fixed; the rest of the surface verified sound (clamp_line edges, buffer math, the 077 packs, resume round-trip, gcov merge mechanics, golden recipes, the Windows workflow):

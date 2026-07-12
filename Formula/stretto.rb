@@ -8,6 +8,10 @@
 # `brew audit --strict quanticsoul4772/stretto/stretto` passes clean
 # (last run 2026-07-11 via Linuxbrew in WSL). Re-run it when this file
 # changes.
+# At the NEXT version bump, also apply the prepared completion-install
+# block from scripts/release-runbook.md Appendix B (deferred there on
+# purpose: the v1.4.0 tarball predates completions/, so adding the
+# lines against the current URL would break installs today).
 class Stretto < Formula
   desc "Tiny deterministic generative music synthesizer"
   homepage "https://github.com/quanticsoul4772/stretto"
