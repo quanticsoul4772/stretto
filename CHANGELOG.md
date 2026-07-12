@@ -1,5 +1,15 @@
 # Changelog
 
+## Recent: main.c coverage lift - 99% gated via a fork harness (080)
+
+main.c was the largest uncovered file and fully coverage-exempt ("needs direct argv invocation"). Now measured at 99.33% and CI-gated at 99, with main.c and the release build byte-untouched:
+
+- **main_testable.o**: main.c compiled with -Dmain=stretto_main in all three build trees, linked only into the new tests/unit/test_main. The reviewed alternatives both dead-ended: the #include trick can't reach the gate's gcov plumbing, and putting the object in OBJS_NO_MAIN breaks every other unit link on the undefined audio_play.
+- **audio_play() stubbed to a sentinel exit-42 in the test TU**: the live dispatch becomes testable, libpulse stays out of unit links, and a forked child can never enter PulseAudio or hang on an unexpectedly-successful MIDI open.
+- **26 fork-based cases** quoting main.c's exact contract strings (help/version precedence, render paths + errors, param-flag errors, the --midi family with device-count-probed branches, both live-dispatch hits). Children exit() so gcov counters flush - the test_wav precedent.
+- **Latent gcov quirk fixed en route**: the per-file report attributed gcov's whole-run TOTAL line to the last file processed (the "reports a file twice" case ci.yml's dedup comments on) - post-080 that would have gated main.c on the wrong percentage.
+- 231 unit tests (205 + 26) across 15 binaries; ASan green; coverage identical on CI and local (99.33% of 150 - the single uncovered line is env-symmetric).
+
 ## Recent: Windows smoke under CI + first in-CI cross-platform bit-exactness (079)
 
 The native Windows live path (waveOut, ConPTY panel + NO_COLOR strip-through, live keys, winmm MIDI error contracts) was validated only by running scripts/windows_smoke.py on the maintainer's desk. New scheduled/manual workflow (windows-smoke.yml, never a required check):

@@ -194,10 +194,11 @@ jobs:
 
       - name: Coverage gates
         # Per-file gates against the measured subset (interactive
-        # modules ui.c, keys.c, audio_pulse.c, audio_midi_linux.c,
-        # main.c are excluded by COV_SRCS_INTERACTIVE in the Makefile
-        # - they need a TTY / audio device / ALSA sequencer / direct
-        # argv invocation that CI's render path does not provide).
+        # modules ui.c, keys.c, audio_pulse.c, audio_midi_linux.c
+        # are excluded by COV_SRCS_INTERACTIVE in the Makefile - they
+        # need a TTY / audio device / ALSA sequencer that CI's render
+        # path does not provide. main.c GRADUATED to measured in 080
+        # via the fork harness over stretto_main).
         # Tightening these forces the project's coverage discipline
         # to ratchet up over time.
         run: |
@@ -208,7 +209,14 @@ jobs:
           # never fire; every Markov row has a positive sum, so the
           # degenerate-row guard never fires). 95 is not reachable
           # without deleting that defense-in-depth.
+          # main.c gates at its proven ceiling (064 ratchet): 99.33%
+          # measured identically on CI and local - the single
+          # uncovered line is the env-symmetric list-devices branch
+          # (print-loop body vs zero-device notice; exactly one is
+          # unreachable per environment). Driven by the 080 fork
+          # harness over stretto_main (main_testable.gcno).
           declare -A thresholds=(
+            [main.c]=99
             [audio_midi.c]=90
             [arena.c]=95
             [effects.c]=95
