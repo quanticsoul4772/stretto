@@ -195,6 +195,7 @@ The first column is the `<index>` you pass to `--midi <N>`. On Linux it encodes 
 
 - Note On / Off maps through the active scale, the same way the generative melody does, so MIDI notes feel in-scale instead of chromatic. Velocity 0 on a Note On means Note Off.
 - A held key rings at its sustain level until you release it (gate semantics); the generative voices keep their own fire-and-forget envelopes.
+- Pitch bend works: ±2 semitones, per channel, applied to sounding notes (pedal-held ones included) and to notes you play while bent. Wheel position is transient performance state — it isn't captured in the resume line.
 - Octave offset clamps to [-2, +4] so a MIDI note never strays out of the synth's audible range.
 - 11-voice pool with voice-stealing: idle first, in-release second, oldest third.
 
@@ -298,7 +299,7 @@ See `ARCHITECTURE.md` for the detailed walkthrough.
 make test            # CLI contract + bit-exact regression (16 s seed-0 sha256)
                      # + Constitution<->Makefile bridge/amend + size-gate
                      # fixture regression suites
-make test-unit       # 190 unit tests across all pure-synth modules + keys + MIDI + resume
+make test-unit       # 196 unit tests across all pure-synth modules + keys + MIDI + resume
 make test-multiseed  # renders 4 seeds, checks determinism + audio bounds + golden
 make test-smoke      # spawns ./synth for 2 s, expects clean exit / SIGTERM
 make coverage        # rebuilds with -fprofile-arcs -ftest-coverage and prints
@@ -359,7 +360,7 @@ The spec-kit artifacts (spec, plan, research, tasks, quickstart) live under `spe
 | `tests/test_bitexact.sh` | Renders twice with `--seed 0`, sha256-compares, validates against golden |
 | `tests/test_multi_seed.sh` | Renders 4 seeds; determinism + audio bounds + golden hashes |
 | `tests/test_smoke_live.sh` | Live-mode smoke + PTY terminal-restore checks + MIDI wildcard smoke |
-| `tests/unit/test_*.c` | 190 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys, midi, resume |
+| `tests/unit/test_*.c` | 196 unit tests across arena, effects, voice, gen, lsystem, chord_progression, section, density, motif, mixer, wav, keys, midi, resume |
 | `golden/` | Reference hashes for the bit-exact regressions |
 | `.github/workflows/ci.yml` | CI: build, all tests, Windows cross-compile, coverage gates, size gate |
 | `.github/workflows/release.yml` | Tag-triggered release: full gates, installer drift gate, publishes checksummed binaries + `stretto.1` |

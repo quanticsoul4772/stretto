@@ -13,30 +13,33 @@ This document defines the data structures, relationships, and state transitions 
 **Definition**:
 ```c
 typedef struct {
-    uint8_t  type;     /* 0=NOTE_ON, 1=NOTE_OFF, 2=CC (see enum below) */
+    uint8_t  type;     /* midi_event_type_t below; 0 = NONE/unused */
     uint8_t  channel;  /* 1..16 */
-    uint8_t  key;      /* 0..127 (Note On/Off) OR 0..127 (CC controller number) */
-    uint8_t  value;    /* 0..127 (Note On velocity, Note Off velocity [ignored], CC value) */
+    uint8_t  key;      /* note number (Note On/Off), CC number (CC), or bend LSB bits 0-6 (PITCH_BEND) */
+    uint8_t  value;    /* velocity (Note On), ignored (Note Off), CC value, or bend MSB bits 7-13 (PITCH_BEND) */
 } midi_event_t;
 ```
 
 **Size**: 4 bytes (uint8_t × 4). Natural alignment, no padding. Designed to be lock-free-safe on x86 (any naturally-aligned 4-byte access is atomic on x86).
 
 **Validation rules**:
-- `type ∈ {0, 1, 2}` (the three event types we support)
-- `channel ∈ [1, 16]`
-- `key ∈ [0, 127]`
-- `value ∈ [0, 127]`
+- `type ∈ {0..4}` (NONE + the four event types we support)
+- `channel ∈ [1, 16]` (enforced at the drain's channel-range guard)
+- `key ∈ [0, 127]`, `value ∈ [0, 127]` (the drain masks bend bytes to 7 bits)
 
 **Lifecycle**: A `midi_event_t` is created by the platform callback (audio_midi_linux.c / audio_midi_winmm.c), written to the ring buffer, read by the audio thread, dispatched (translated into a `voice_pool_trigger_midi` / `voice_pool_release_midi` / `voice_adjust_cutoff` / etc. call), then dropped. The struct is **not retained** past the dispatch step.
 
 **Enum**:
 ```c
 enum {
-    MIDI_EVENT_NOTE_ON  = 0,
-    MIDI_EVENT_NOTE_OFF = 1,
-    MIDI_EVENT_CC       = 2
+    MIDI_EVENT_NONE       = 0,   /* unused slot marker */
+    MIDI_EVENT_NOTE_ON    = 1,
+    MIDI_EVENT_NOTE_OFF   = 2,
+    MIDI_EVENT_CC         = 3,
+    MIDI_EVENT_PITCH_BEND = 4    /* 072/FR-015; key=LSB, value=MSB */
 };
+/* (Amended 2026-07-11: this doc previously carried a stale 0/1/2
+   numbering; audio_midi.h has always been the authoritative enum.) */
 ```
 
 ---
