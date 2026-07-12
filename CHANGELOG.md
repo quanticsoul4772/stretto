@@ -1,5 +1,12 @@
 # Changelog
 
+## Recent: Windows live-path validation runbook + smoke script (070)
+
+The native Windows LIVE path (waveOut, real-console UI, keystrokes, winmm MIDI) had never been systematically exercised - cross-platform testing covered only --render. First full run (2026-07-11, native Windows 11): real-console ConPTY UI with ANSI oscilloscope + status row, live keys, clean q-quit with the resume line, 6 s of live waveOut, NO_COLOR, native-FS render determinism, binary-safe stdout piping, and all four winmm MIDI failure paths (the first in-the-wild exercise of the 059 WAVE_MAPPER removal - contract-exact) - ALL PASS, zero code changes needed.
+
+- `scripts/windows-smoke.md` runbook + `scripts/windows_smoke.py` (Python; pywinpty enables the ConPTY checks, SKIPs without it). Every synth spawn carries a hard deadline and a finally-block taskkill - the spawn rule, learned from two stray-audio incidents, is documented in the runbook.
+- Documented, not bugs: MS CRT fully buffers REDIRECTED stderr (unlike glibc), so a hard-killed process discards the headless-degrade notice; ConPTY input pipes cannot emulate keyboard Ctrl-C (a written 0x03 is swallowed - neither KEY_EVENT nor CTRL_C_EVENT), so Ctrl-C-as-keystroke is a manual runbook check.
+
 ## Recent: --swing <0-100> - MPC-style shuffle (069)
 
 Parallax-selected; audible via --render without MIDI hardware. Planned first; the design review corrected the mechanism twice before a line was written:

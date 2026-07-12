@@ -624,7 +624,7 @@ WSL2 + WSLg note: WSLg's RDP-based audio pipe is unreliable for sustained playba
 
 ### Windows: Win32 `waveOut`
 
-Four cycling buffers of 1024 frames each (~85 ms total latency). Opens via `waveOutOpen` with `CALLBACK_EVENT` so the main thread can wait on a single `HANDLE` for buffer completion — no callback function needed. After each `WHDR_DONE`, the freed buffer is filled by `render_chunk` and resubmitted via `waveOutWrite`. Links against `winmm.lib` only.
+Four cycling buffers of 1024 frames each (~85 ms total latency). Opens via `waveOutOpen` with `CALLBACK_EVENT` so the main thread can wait on a single `HANDLE` for buffer completion — no callback function needed. After each `WHDR_DONE`, the freed buffer is filled by `render_chunk` and resubmitted via `waveOutWrite`. Links against `winmm.lib` only. Native validation: [`scripts/windows-smoke.md`](./scripts/windows-smoke.md) + `scripts/windows_smoke.py` (first systematic run 2026-07-11: waveOut playback, real-console ConPTY UI, keystrokes, resume line, NO_COLOR, and all winmm MIDI failure paths — all pass; Ctrl-C-as-keystroke remains a documented manual check, since pty layers cannot emulate keyboard Ctrl-C).
 
 ## Terminal UI
 
