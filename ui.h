@@ -106,10 +106,11 @@ enum {
    the help overlay reads names/ranges from this table. */
 typedef struct {
     const char *name;
-    int min, max;
     void (*set)(int);
-    int named;
-} ParamFlag;
+    int16_t min, max;   /* widest range is --comp-threshold's 30000 */
+    uint8_t named;
+} ParamFlag;            /* packed 32 B -> 24 B/row (077); the range
+                           compare in main.c promotes to long */
 
 extern const ParamFlag PARAM_FLAGS[UI_PARAM_COUNT];
 

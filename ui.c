@@ -57,19 +57,19 @@ void ui_set_version(const char *v) { version_str = v ? v : ""; }
 static void set_mod_depth_i(int v) { voice_set_mod_depth((uint16_t)v); }
 
 const ParamFlag PARAM_FLAGS[UI_PARAM_COUNT] = {
-    /* [UI_PARAM_SCALE]          */ { "--scale",          0,    5,     gen_set_scale,              1 },
-    /* [UI_PARAM_BAR_MS]         */ { "--bar-ms",         760,  7600,  gen_set_bar_ms,             0 },
-    /* [UI_PARAM_GATE]           */ { "--gate",           32,   255,   gen_set_gate,               0 },
-    /* [UI_PARAM_MOD_DEPTH]      */ { "--mod-depth",      100,  8000,  set_mod_depth_i,            0 },
-    /* [UI_PARAM_CUTOFF]         */ { "--cutoff",         30,   180,   voice_set_cutoff,           0 },
-    /* [UI_PARAM_RESONANCE]      */ { "--resonance",      0,    180,   voice_set_resonance,        0 },
-    /* [UI_PARAM_LFO_DEPTH]      */ { "--lfo-depth",      0,    255,   voice_set_lfo_filter_depth, 0 },
-    /* [UI_PARAM_FILTER_MODE]    */ { "--filter-mode",    0,    3,     voice_set_filter_mode,      2 },
-    /* [UI_PARAM_REVERB]         */ { "--reverb",         0,    256,   reverb_set_wet,             0 },
-    /* [UI_PARAM_DELAY]          */ { "--delay",          0,    256,   delay_set_wet,              0 },
-    /* [UI_PARAM_FEEDBACK]       */ { "--feedback",       0,    200,   delay_set_feedback,         0 },
-    /* [UI_PARAM_COMP_THRESHOLD] */ { "--comp-threshold", 8000, 30000, compressor_set_threshold,   0 },
-    /* [UI_PARAM_SWING]          */ { "--swing",          0,    100,   gen_set_swing,              0 },
+    /* [UI_PARAM_SCALE]          */ { "--scale",         gen_set_scale,              0,    5,     1 },
+    /* [UI_PARAM_BAR_MS]         */ { "--bar-ms",        gen_set_bar_ms,             760,  7600,  0 },
+    /* [UI_PARAM_GATE]           */ { "--gate",          gen_set_gate,               32,   255,   0 },
+    /* [UI_PARAM_MOD_DEPTH]      */ { "--mod-depth",     set_mod_depth_i,            100,  8000,  0 },
+    /* [UI_PARAM_CUTOFF]         */ { "--cutoff",        voice_set_cutoff,           30,   180,   0 },
+    /* [UI_PARAM_RESONANCE]      */ { "--resonance",     voice_set_resonance,        0,    180,   0 },
+    /* [UI_PARAM_LFO_DEPTH]      */ { "--lfo-depth",     voice_set_lfo_filter_depth, 0,    255,   0 },
+    /* [UI_PARAM_FILTER_MODE]    */ { "--filter-mode",   voice_set_filter_mode,      0,    3,     2 },
+    /* [UI_PARAM_REVERB]         */ { "--reverb",        reverb_set_wet,             0,    256,   0 },
+    /* [UI_PARAM_DELAY]          */ { "--delay",         delay_set_wet,              0,    256,   0 },
+    /* [UI_PARAM_FEEDBACK]       */ { "--feedback",      delay_set_feedback,         0,    200,   0 },
+    /* [UI_PARAM_COMP_THRESHOLD] */ { "--comp-threshold", compressor_set_threshold,   8000, 30000, 0 },
+    /* [UI_PARAM_SWING]          */ { "--swing",         gen_set_swing,              0,    100,   0 },
 };
 
 /* --- help overlay (v2, 074) + clear --- */
@@ -116,10 +116,10 @@ int ui_param_is_set(int param) {
     return (param_set_mask >> param) & 1u;
 }
 
-static const char *SCALE_NAMES[6] = {
+static const char SCALE_NAMES[6][11] = {
     "dorian", "lydian", "phrygian", "locrian", "harmminor", "mixolydian"
 };
-static const char *FILTER_MODE_NAMES[4] = { "lp", "hp", "bp", "notch" };
+static const char FILTER_MODE_NAMES[4][6] = { "lp", "hp", "bp", "notch" };
 
 const char *ui_scale_name(int idx) {
     return SCALE_NAMES[(idx >= 0 && idx < 6) ? idx : 0];
@@ -428,9 +428,9 @@ static void clamp_line(char *buf, int start, int *p, int budget) {
 }
 
 /* Shared name tables (row + panel + help overlay). */
-static const char *CHORD_NAMES[6] = { "triad", "7th", "sus4", "sus2", "inv1", "inv2" };
-static const char *FILTER_MODES_SHORT[4] = { "LP", "HP", "BP", "NO" };
-static const char *FULL_FILTER_NAMES[4] = { "lowpass", "highpass", "bandpass", "notch" };
+static const char CHORD_NAMES[6][6] = { "triad", "7th", "sus4", "sus2", "inv1", "inv2" };
+static const char FILTER_MODES_SHORT[4][3] = { "LP", "HP", "BP", "NO" };
+static const char FULL_FILTER_NAMES[4][9] = { "lowpass", "highpass", "bandpass", "notch" };
 
 /* Activity glyphs for voices [lo,hi) in role-band colors. Shared by
    the fallback row (full 0..N_VOICES span) and panel L5's per-role
@@ -629,7 +629,7 @@ int ui_build_status_panel(char *buf, unsigned tw) {
 /* Live-key labels per UI_PARAM_* id (ENUM order - gate is index 2,
    mod-depth 3, matching ui.h, NOT the old help card's ordering).
    "" = flag-only parameter (no live key). */
-static const char *PARAM_KEYS[UI_PARAM_COUNT] = {
+static const char PARAM_KEYS[UI_PARAM_COUNT][4] = {
     "s", "+/-", "g/G", "[/]", "c/C", "n/N", "m/M",
     "t", "r/R", "d/D", "f/F", "l/L", ""
 };
