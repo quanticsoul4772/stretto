@@ -379,14 +379,24 @@ test-crossplatform: synth stretto.exe
 verify:
 	@bash tools/verify-bridge.sh
 
-# Capture golden hashes for all multi-seed renders.
+# Capture golden hashes for all multi-seed renders. mktemp -d (not a
+# fixed /tmp name: predictable paths collide across concurrent
+# checkouts and linger); renders are UNSILENCED and checked - the old
+# `>/dev/null 2>&1` swallowed a dead render and hashed whatever was
+# at the fixed path. Output accumulates in the temp dir and only
+# `mv`s over the tracked golden on full success, so a mid-loop
+# failure can never truncate it. Line format `seed_<s>: <hash>` is
+# parsed by tests/test_multi_seed.sh - keep it byte-identical.
 golden-multiseed: synth
 	@mkdir -p golden
-	@for s in 0 1 42 12345; do \
-		./synth --render 4 /tmp/golden_seed_$$s.wav --seed $$s >/dev/null 2>&1; \
-		h=$$(sha256sum /tmp/golden_seed_$$s.wav | awk '{print $$1}'); \
-		echo "seed_$$s: $$h"; \
-	done > golden/regression_multiseed.sha256.txt
+	@d=$$(mktemp -d) || exit 1; trap 'rm -rf "$$d"' EXIT; \
+	for s in 0 1 42 12345; do \
+		./synth --render 4 "$$d/seed_$$s.wav" --seed $$s >/dev/null \
+			|| { echo "golden-multiseed: render failed for seed $$s" >&2; exit 1; }; \
+		h=$$(sha256sum "$$d/seed_$$s.wav" | awk '{print $$1}'); \
+		echo "seed_$$s: $$h" >> "$$d/out.txt"; \
+	done; \
+	mv "$$d/out.txt" golden/regression_multiseed.sha256.txt
 	@echo "golden/regression_multiseed.sha256.txt updated:"
 	@cat golden/regression_multiseed.sha256.txt
 
@@ -531,10 +541,14 @@ test-asan: $(SAN_OBJS)
 		ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 ./$$out || fail=1; \
 	done; exit $$fail
 
+# mktemp, not a fixed /tmp name (same rationale as golden-multiseed);
+# render stays unsilenced and is checked before hashing.
 golden: synth
 	@mkdir -p golden
-	./synth --render 16 /tmp/golden_render.wav --seed 0
-	@sha256sum /tmp/golden_render.wav | awk '{print $$1}' > golden/regression_16s.sha256
+	@f=$$(mktemp) || exit 1; trap 'rm -f "$$f"' EXIT; \
+	./synth --render 16 "$$f" --seed 0 \
+		|| { echo "golden: render failed" >&2; exit 1; }; \
+	sha256sum "$$f" | awk '{print $$1}' > golden/regression_16s.sha256
 	@echo "golden/regression_16s.sha256 updated:"
 	@cat golden/regression_16s.sha256
 
