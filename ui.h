@@ -37,6 +37,15 @@ void ui_draw_oscilloscope(int16_t *buf, uint32_t frames);
    new length. Functional escapes are kept. Public for unit tests. */
 int ui_strip_sgr(char *buf, int len);
 
+/* Status builders (074). Each writes erase-line-prefixed, CRLF-
+   terminated line(s) into buf, clamped to tw-1 VISIBLE columns
+   (SGR bytes don't count), and returns the byte length. The 5-line
+   full-word panel renders when the terminal has >= 20 rows; the
+   compact single row is the small-terminal fallback. Public for
+   PTY-free unit tests (the ui_strip_sgr precedent). */
+int ui_build_status_panel(char *buf, unsigned tw);
+int ui_build_status_row(char *buf, unsigned tw);
+
 /* --- help overlay --- */
 
 void ui_show_help(void);

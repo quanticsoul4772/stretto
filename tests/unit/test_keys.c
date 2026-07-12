@@ -191,6 +191,74 @@ TEST(strip_sgr_truncated_escape_at_end_kept) {
     ASSERT_EQ(n, (int)(sizeof buf - 1));
 }
 
+/* ---- status builders (074) ---- */
+
+/* Assert every \r\n-terminated segment of buf[0..len) is at most
+   max_cols VISIBLE columns: per segment, strip SGR (functional
+   escapes survive - pinned above), then skip the leading \x1b[2K.
+   Returns the number of lines checked. */
+static int count_clamped_lines(char *buf, int len, int max_cols) {
+    int nlines = 0, start = 0;
+    for (int i = 0; i + 1 < len; i++) {
+        if (buf[i] == '\r' && buf[i + 1] == '\n') {
+            char seg[1024];
+            int seglen = i - start;
+            memcpy(seg, buf + start, (size_t)seglen);
+            int n = ui_strip_sgr(seg, seglen);
+            char *s = seg;
+            if (n >= 4 && memcmp(s, "\x1b[2K", 4) == 0) { s += 4; n -= 4; }
+            if (n > max_cols) return -1;
+            nlines++;
+            start = i + 2;
+            i++;
+        }
+    }
+    return nlines;
+}
+
+TEST(status_panel_clamps_at_tw40) {
+    ensure_init();
+    char buf[4096];
+    int len = ui_build_status_panel(buf, 40);
+    ASSERT_TRUE(len > 0);
+    ASSERT_EQ(count_clamped_lines(buf, len, 39), 5);
+}
+
+TEST(status_row_clamps_at_tw40) {
+    ensure_init();
+    char buf[2048];
+    int len = ui_build_status_row(buf, 40);
+    ASSERT_TRUE(len > 0);
+    ASSERT_EQ(count_clamped_lines(buf, len, 39), 1);
+}
+
+TEST(status_panel_tw80_keeps_full_words) {
+    ensure_init();
+    char buf[4096];
+    int len = ui_build_status_panel(buf, 80);
+    int n = ui_strip_sgr(buf, len);
+    buf[n] = '\0';
+    /* Over-truncation isn't caught by length checks alone: the
+       80-col panel must still carry the promised full words. */
+    ASSERT_TRUE(strstr(buf, "stretto") != NULL);
+    ASSERT_TRUE(strstr(buf, "scale ") != NULL);
+    ASSERT_TRUE(strstr(buf, "swing ") != NULL);
+    ASSERT_TRUE(strstr(buf, "lowpass") != NULL || strstr(buf, "highpass") != NULL
+             || strstr(buf, "bandpass") != NULL || strstr(buf, "notch") != NULL);
+    ASSERT_TRUE(strstr(buf, "voices") != NULL);
+}
+
+TEST(status_row_contains_swing_field) {
+    ensure_init();
+    /* Wide budget: Sw: sits last in the row (importance-ordered) and
+       the full row is ~78 visible cols, so measure unclamped. */
+    char buf[2048];
+    int len = ui_build_status_row(buf, 200);
+    int n = ui_strip_sgr(buf, len);
+    buf[n] = '\0';
+    ASSERT_TRUE(strstr(buf, "Sw:") != NULL);
+}
+
 int main(void) {
     return RUN_ALL();
 }

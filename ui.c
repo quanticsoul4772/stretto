@@ -2,6 +2,7 @@
 #include "voice.h"
 #include "gen.h"
 #include "effects.h"
+#include "config.h"   /* SAMPLE_RATE for the ms/bar readout */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -408,9 +409,63 @@ static inline void append_str(char *buf, int *p, const char *s) {
     while (*s) buf[(*p)++] = *s++;
 }
 
-/* Build one status row of synth state into buf, advancing *p.
+/* Clamp one status line (bytes [start, *p)) to `budget` VISIBLE
+   columns: escape sequences count zero columns (each fused color
+   literal carries ~5 invisible bytes - a byte-counted budget would
+   truncate an 80-col line at visible column ~35), and on overflow
+   the line is cut at the last space boundary, never mid-word or
+   mid-escape. One post-pass instead of save/rollback bookkeeping at
+   ~40 field call sites (each inline group cost ~25 B of -Os text;
+   the sum busted the size budget). Only sees our own output, so any
+   CSI run can be skipped uncounted (the sole non-SGR escape is the
+   line-leading erase \x1b[2K). */
+static void clamp_line(char *buf, int start, int *p, int budget) {
+    int cols = 0, cut = -1;
+    int i = start;
+    while (i < *p) {
+        if (buf[i] == '\x1b' && i + 1 < *p && buf[i + 1] == '[') {
+            int e = i + 2;
+            while (e < *p && !(buf[e] >= 0x40 && buf[e] <= 0x7e)) e++;
+            i = e + 1;
+            continue;
+        }
+        if (cols == budget) {
+            *p = (cut >= 0) ? cut : i;
+            return;
+        }
+        if (buf[i] == ' ') cut = i;
+        cols++;
+        i++;
+    }
+}
+
+/* Shared name tables (row + panel + help overlay). */
+static const char *CHORD_NAMES[6] = { "triad", "7th", "sus4", "sus2", "inv1", "inv2" };
+static const char *FILTER_MODES_SHORT[4] = { "LP", "HP", "BP", "NO" };
+static const char *FULL_FILTER_NAMES[4] = { "lowpass", "highpass", "bandpass", "notch" };
+
+/* Activity glyphs for voices [lo,hi) in role-band colors. Shared by
+   the fallback row (full 0..N_VOICES span) and panel L5's per-role
+   bands. */
+static void append_voice_dots(char *buf, int *p, uint32_t mask,
+                              int lo, int hi) {
+    for (int i = lo; i < hi; i++) {
+        const char *role_col =
+            (i < 2) ? COL_RED :
+            (i < 5) ? COL_GREEN :
+            (i < 8) ? COL_BLUE :
+                      COL_YELLOW;
+        append_str(buf, p, role_col);
+        buf[(*p)++] = (mask & (1u << i)) ? '*' : '.';
+    }
+}
+
+/* Build one status row of synth state (small-terminal fallback).
    Field order is stable; consumers (README) reference field labels
-   by name (M, S, V, G, R, D, deg, act, chord, Cr, Sec, Td, F, N, L, T). */
+   by name (M, S, V, G, R, D, deg, act, chord, Cr, Sec, Td, Mo, F, N,
+   L, T, Lm, Sw). Emitted unclamped; the caller's clamp_line pass
+   cuts to the terminal width - pre-074 the row wrapped below ~72
+   columns, scrolling the scope every frame. */
 static void build_status_row(char *buf, int *p) {
     uint32_t voice_mask = voice_pool_active_mask();
 
@@ -421,15 +476,7 @@ static void build_status_row(char *buf, int *p) {
     buf[(*p)++] = "DLPlHM"[gen_get_scale() % 6];
 
     append_str(buf, p, " " COL_MAG "V:");
-    for (int i = 0; i < N_VOICES; i++) {
-        const char *role_col =
-            (i < 2) ? COL_RED :
-            (i < 5) ? COL_GREEN :
-            (i < 8) ? COL_BLUE :
-                      COL_YELLOW;
-        append_str(buf, p, role_col);
-        buf[(*p)++] = (voice_mask & (1u << i)) ? '*' : '.';
-    }
+    append_voice_dots(buf, p, voice_mask, 0, N_VOICES);
 
     append_str(buf, p, " " COL_CYAN "G:" COL_WHITE);
     append_num(buf, p, gen_get_gate());
@@ -455,10 +502,7 @@ static void build_status_row(char *buf, int *p) {
     }
 
     append_str(buf, p, " " COL_WHITE "chord:");
-    {
-        static const char *names[6] = { "triad", "7th", "sus4", "sus2", "inv1", "inv2" };
-        append_str(buf, p, names[gen_get_chord_pattern() % 6]);
-    }
+    append_str(buf, p, CHORD_NAMES[gen_get_chord_pattern() % 6]);
     append_str(buf, p, " " COL_CYAN "Cr:" COL_WHITE);
     append_num(buf, p, gen_get_chord_root());
     append_str(buf, p, " " COL_CYAN "Sec:" COL_WHITE);
@@ -475,15 +519,117 @@ static void build_status_row(char *buf, int *p) {
     append_str(buf, p, " " COL_GREEN "L:" COL_WHITE);
     append_num(buf, p, voice_get_lfo_filter_depth());
     append_str(buf, p, " " COL_MAG "T:" COL_WHITE);
-    {
-        static const char *modes[4] = { "LP", "HP", "BP", "NO" };
-        append_str(buf, p, modes[voice_get_filter_mode() & 3u]);
-    }
+    append_str(buf, p, FILTER_MODES_SHORT[voice_get_filter_mode() & 3u]);
     append_str(buf, p, " " COL_GREEN "Lm:" COL_WHITE);
     append_num(buf, p, compressor_get_threshold());
+    append_str(buf, p, " " COL_CYAN "Sw:" COL_WHITE);
+    append_num(buf, p, gen_get_swing());
+}
 
-    append_str(buf, p, COL_RESET);
-    buf[(*p)++] = '\r'; buf[(*p)++] = '\n';
+int ui_build_status_row(char *buf, unsigned tw) {
+    int p = 0;
+    append_str(buf, &p, "\x1b[2K");
+    build_status_row(buf, &p);
+    clamp_line(buf, 0, &p, (int)tw - 1);
+    append_str(buf, &p, COL_RESET);
+    buf[p++] = '\r'; buf[p++] = '\n';
+    return p;
+}
+
+/* --- rich status panel (074) ------------------------------------
+   Five full-word lines on terminals with PANEL_MIN_ROWS or more
+   rows; the single row above is the small-terminal fallback. Rich
+   layout: 5 lines + (th-6)-row scope; fallback: 1 line + (th-2)-row
+   scope - both total th-1, so screen usage is unchanged. */
+#define PANEL_MIN_ROWS 20
+
+static void panel_line1(char *buf, int *p) {
+    append_str(buf, p, COL_CYAN "stretto" COL_WHITE);
+    if (version_str[0]) {
+        buf[(*p)++] = ' ';
+        append_str(buf, p, version_str);
+    }
+    append_str(buf, p, COL_DIM " | " COL_CYAN "seed " COL_WHITE);
+    append_num(buf, p, (unsigned)gen_get_seed_input());
+    append_str(buf, p, COL_DIM " | " COL_CYAN "bar " COL_WHITE);
+    append_num(buf, p, (unsigned)gen_get_bar());
+    append_str(buf, p, " [");
+    append_str(buf, p, gen_get_section_name());
+    buf[(*p)++] = ']';
+    append_str(buf, p, COL_DIM " | " COL_WHITE);
+    /* Canonical bar-length readout; same expression as keys.c's
+       resume-line --bar-ms value. */
+    append_num(buf, p,
+        (unsigned)((uint64_t)gen_get_step_samples() * 48000u / SAMPLE_RATE));
+    append_str(buf, p, " ms/bar");
+    append_str(buf, p, COL_DIM " | " COL_CYAN "swing " COL_WHITE);
+    append_num(buf, p, gen_get_swing());
+}
+
+static void panel_line2(char *buf, int *p) {
+    append_str(buf, p, COL_YELLOW "scale " COL_WHITE);
+    append_str(buf, p, SCALE_NAMES[gen_get_scale() % 6]);
+    append_str(buf, p, COL_DIM " | " COL_WHITE "chord ");
+    append_str(buf, p, CHORD_NAMES[gen_get_chord_pattern() % 6]);
+    append_str(buf, p, " on degree ");
+    append_num(buf, p, gen_get_chord_root());
+    append_str(buf, p, COL_DIM " | " COL_YELLOW "tension " COL_WHITE);
+    append_num(buf, p, gen_get_tension());
+    append_str(buf, p, COL_DIM " | " COL_MAG "motif " COL_WHITE);
+    append_str(buf, p, gen_motif_replaying() ? "replaying" : "capturing");
+}
+
+static void panel_line3(char *buf, int *p) {
+    append_str(buf, p, COL_CYAN "filter " COL_WHITE);
+    append_str(buf, p, FULL_FILTER_NAMES[voice_get_filter_mode() & 3u]);
+    append_str(buf, p, COL_DIM " | " COL_CYAN "cutoff " COL_WHITE);
+    append_num(buf, p, voice_get_cutoff());
+    append_str(buf, p, COL_DIM " | " COL_YELLOW "resonance " COL_WHITE);
+    append_num(buf, p, voice_get_resonance());
+    append_str(buf, p, COL_DIM " | " COL_GREEN "lfo " COL_WHITE);
+    append_num(buf, p, voice_get_lfo_filter_depth());
+}
+
+static void panel_line4(char *buf, int *p) {
+    append_str(buf, p, COL_GREEN "reverb " COL_WHITE);
+    append_num(buf, p, reverb_get_wet());
+    append_str(buf, p, COL_DIM " | " COL_YELLOW "delay " COL_WHITE);
+    append_num(buf, p, delay_get_wet());
+    buf[(*p)++] = '/';
+    append_num(buf, p, delay_get_feedback());
+    append_str(buf, p, COL_DIM " | " COL_GREEN "compressor " COL_WHITE);
+    append_num(buf, p, compressor_get_threshold());
+    append_str(buf, p, COL_DIM " | " COL_MAG "mod depth " COL_WHITE);
+    append_num(buf, p, voice_get_mod_depth());
+}
+
+static void panel_line5(char *buf, int *p) {
+    uint32_t mask = voice_pool_active_mask();
+    append_str(buf, p, COL_WHITE "voices");
+    append_str(buf, p, " " COL_RED "bass ");
+    append_voice_dots(buf, p, mask, 0, 2);
+    append_str(buf, p, " " COL_GREEN "chord ");
+    append_voice_dots(buf, p, mask, 2, 5);
+    append_str(buf, p, " " COL_BLUE "melody ");
+    append_voice_dots(buf, p, mask, 5, 8);
+    append_str(buf, p, " " COL_YELLOW "drums ");
+    append_voice_dots(buf, p, mask, 8, N_VOICES);
+}
+
+int ui_build_status_panel(char *buf, unsigned tw) {
+    static void (*const line_fns[5])(char *, int *) = {
+        panel_line1, panel_line2, panel_line3, panel_line4, panel_line5
+    };
+    int p = 0;
+    for (int i = 0; i < 5; i++) {
+        int start = p;
+        append_str(buf, &p, "\x1b[2K");
+        line_fns[i](buf, &p);
+        clamp_line(buf, start, &p, (int)tw - 1);
+        append_str(buf, &p, COL_RESET);
+        buf[p++] = '\r'; buf[p++] = '\n';
+    }
+    return p;
 }
 
 /* Render the oscilloscope grid into buf using `frames` of stereo
@@ -570,19 +716,24 @@ void ui_draw_oscilloscope(int16_t *buf, uint32_t frames) {
     ui_term_get_size(&tw, &th);
 
     uint32_t w = tw > 120u ? 120u : tw;
-    uint32_t h = th > 2u   ? (uint32_t)(th - 2u) : 22u;
+    /* Rich panel on tall terminals: 5 lines + (th-6)-row scope;
+       fallback: 1 row + (th-2)-row scope. Both leave one spare row. */
+    int rich = th >= PANEL_MIN_ROWS;
+    uint32_t h = rich ? (uint32_t)(th - 6u)
+                      : (th > 2u ? (uint32_t)(th - 2u) : 22u);
     if (w > frames) w = frames;
 
     /* 24 KB comfortable headroom for worst-case colored output:
-       24 rows * ~720 bytes/row + status row + escapes ~= 18 KB. */
+       24 rows * ~720 bytes/row + status panel + escapes ~= 18 KB. */
     static char out[24576];
     int p = 0;
-    /* Cursor home, hide cursor, clear status row. */
+    /* Cursor home, hide cursor. (Erase-line leads every status line
+       inside the builders.) */
     out[p++] = 0x1b; out[p++] = '['; out[p++] = 'H';
     out[p++] = 0x1b; out[p++] = '['; out[p++] = '?'; out[p++] = '2'; out[p++] = '5'; out[p++] = 'l';
-    out[p++] = 0x1b; out[p++] = '['; out[p++] = '2'; out[p++] = 'K';
 
-    build_status_row(out, &p);
+    p += rich ? ui_build_status_panel(out + p, tw)
+              : ui_build_status_row(out + p, tw);
     build_oscilloscope_grid(out, &p, (int)sizeof(out), buf, frames, w, h);
 
     if (no_color_enabled()) p = ui_strip_sgr(out, p);

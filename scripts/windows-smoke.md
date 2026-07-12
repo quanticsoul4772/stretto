@@ -52,8 +52,8 @@ Covers, each with observable pass/fail and a deadline:
 | 3 | stdout-dash piping | `--render 2 - \| file` byte-identical to file render (Git Bash pipes are binary-safe; PowerShell < 7.4 is NOT — documented in README) |
 | 4 | winmm MIDI, zero-input-device host | `--midi-list-devices` → contract message, exit 0; `--midi` / `--midi N` / `--midi-default` → exact contract errors, exit 1 |
 | 5 | waveOut live smoke | `--no-ui` survives 6 s (device opened, no crash), then is terminated BY THE HARNESS (expected — TerminateProcess, no exit-code assertion) |
-| 6 | Real-console UI (needs pywinpty) | ConPTY session: ANSI escapes + status row render (UI mode engaged, not degrade); `s` then `q` → clean exit 0; resume line contains `--seed` and `--scale lydian` |
-| 7 | NO_COLOR (needs pywinpty) | ConPTY with NO_COLOR=1: status row renders with zero SGR sequences; `q` exits 0 |
+| 6 | Real-console UI (needs pywinpty) | ConPTY session: ANSI escapes + rich status panel render (`stretto` + `scale`, UI mode engaged, not degrade); `s` then `q` → clean exit 0; resume line contains `--seed` and `--scale lydian` |
+| 7 | NO_COLOR (needs pywinpty) | ConPTY with NO_COLOR=1: status panel renders with zero SGR sequences; `q` exits 0 |
 
 ## 3. Known CRT quirk (not a bug)
 
