@@ -2,6 +2,7 @@
 #include "voice.h"
 #include "gen.h"
 #include "effects.h"
+#include "config.h"   /* SAMPLE_RATE for the ms/bar readout */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,33 +36,56 @@ static int win_term_saved = 0;
 static int help_visible = 0;
 static int no_ui_flag   = 0;
 
-/* --- help text + show / clear --- */
+/* Version string shown in the status panel. "" (not NULL) until
+   main() calls the setter: unit-test binaries link ui.o without
+   main.o and must be able to build the panel without crashing.
+   ui.c deliberately does NOT include version.h - the Makefile keeps
+   version.h out of $(HEADERS) so only main.o rebuilds per version
+   bump. */
+static const char *version_str = "";
 
-static const char HELP_TEXT[] =
-    "\x1b[H\x1b[2J"
-    "  stretto keys\r\n"
-    "  ------------\r\n"
-    "  SPACE  force mutation now\r\n"
-    "  +  /  -    tempo  faster / slower\r\n"
-    "  [  /  ]    FM mod_depth  down / up\r\n"
-    "  s          cycle scale  D L P l H M\r\n"
-    "  g  /  G    gate probability  down / up\r\n"
-    "  d  /  D    delay wet mix  down / up\r\n"
-    "  f  /  F    delay feedback  down / up\r\n"
-    "  r  /  R    reverb wet mix  down / up\r\n"
-    "  c  /  C    filter cutoff  down / up\r\n"
-    "  n  /  N    filter resonance  down / up\r\n"
-    "  m  /  M    filter LFO depth  down / up\r\n"
-    "  t          cycle filter mode  LP / HP / BP / notch\r\n"
-    "  l  /  L    compressor threshold  down / up\r\n"
-    "  ?          toggle this help\r\n"
-    "  q          quit\r\n"
-    "\r\n"
-    "  (any key dismisses)\r\n";
+void ui_set_version(const char *v) { version_str = v ? v : ""; }
+
+/* Preset-capture flag table (specs/004-preset-capture): one row per
+   initial-state flag, indexed by its UI_PARAM_* id. Ranges mirror the
+   engine setters' clamps exactly; out-of-range values are usage
+   errors rather than silent clamps. `named`: 1 = scale names, 2 =
+   filter-mode names (numeric always accepted too). Setters consume
+   no PRNG draws, so output stays a pure function of (seed, flags).
+   Lives HERE, not in main.c: unit-test binaries link ui.o without
+   main.o, and the help overlay reads names/ranges from this table. */
+static void set_mod_depth_i(int v) { voice_set_mod_depth((uint16_t)v); }
+
+const ParamFlag PARAM_FLAGS[UI_PARAM_COUNT] = {
+    /* [UI_PARAM_SCALE]          */ { "--scale",          0,    5,     gen_set_scale,              1 },
+    /* [UI_PARAM_BAR_MS]         */ { "--bar-ms",         760,  7600,  gen_set_bar_ms,             0 },
+    /* [UI_PARAM_GATE]           */ { "--gate",           32,   255,   gen_set_gate,               0 },
+    /* [UI_PARAM_MOD_DEPTH]      */ { "--mod-depth",      100,  8000,  set_mod_depth_i,            0 },
+    /* [UI_PARAM_CUTOFF]         */ { "--cutoff",         30,   180,   voice_set_cutoff,           0 },
+    /* [UI_PARAM_RESONANCE]      */ { "--resonance",      0,    180,   voice_set_resonance,        0 },
+    /* [UI_PARAM_LFO_DEPTH]      */ { "--lfo-depth",      0,    255,   voice_set_lfo_filter_depth, 0 },
+    /* [UI_PARAM_FILTER_MODE]    */ { "--filter-mode",    0,    3,     voice_set_filter_mode,      2 },
+    /* [UI_PARAM_REVERB]         */ { "--reverb",         0,    256,   reverb_set_wet,             0 },
+    /* [UI_PARAM_DELAY]          */ { "--delay",          0,    256,   delay_set_wet,              0 },
+    /* [UI_PARAM_FEEDBACK]       */ { "--feedback",       0,    200,   delay_set_feedback,         0 },
+    /* [UI_PARAM_COMP_THRESHOLD] */ { "--comp-threshold", 8000, 30000, compressor_set_threshold,   0 },
+    /* [UI_PARAM_SWING]          */ { "--swing",          0,    100,   gen_set_swing,              0 },
+};
+
+/* --- help overlay (v2, 074) + clear --- */
+
+static int build_help_overlay(char *buf);   /* defined below */
 
 void ui_show_help(void) {
     if (no_ui_flag) return;
-    (void)!write(1, HELP_TEXT, sizeof(HELP_TEXT) - 1);
+    /* Built on demand into BSS (zero file bytes; the old static
+       HELP_TEXT rodata card is gone). Written once per ? toggle, so
+       values are live as of that keypress; the MIDI drain keeps
+       running while help is up (only scope DRAWING pauses), so a
+       CC-changed value goes stale until the next open - accepted. */
+    static char hb[4096];
+    int n = build_help_overlay(hb);
+    (void)!write(1, hb, (size_t)n);
 }
 
 void ui_clear_screen(void) {
@@ -360,9 +384,12 @@ void ui_term_restore_mode(void) {
 #define COL_RED    "\x1b[31m"
 #define COL_WHITE  "\x1b[97m"
 
-/* Append an unsigned decimal value to buf, advancing *p. */
+/* Append an unsigned decimal value to buf, advancing *p. t must
+   hold a full uint32 (10 digits): the panel prints the raw seed,
+   which is clock-derived (~10 digits) in unseeded live runs - the
+   old t[6] was a stack smash waiting for the first big value. */
 static inline void append_num(char *buf, int *p, unsigned v) {
-    char t[6]; int n = 0;
+    char t[10]; int n = 0;
     do { t[n++] = '0' + (char)(v % 10); v /= 10; } while (v);
     while (n > 0) buf[(*p)++] = t[--n];
 }
@@ -372,9 +399,63 @@ static inline void append_str(char *buf, int *p, const char *s) {
     while (*s) buf[(*p)++] = *s++;
 }
 
-/* Build one status row of synth state into buf, advancing *p.
+/* Clamp one status line (bytes [start, *p)) to `budget` VISIBLE
+   columns: escape sequences count zero columns (each fused color
+   literal carries ~5 invisible bytes - a byte-counted budget would
+   truncate an 80-col line at visible column ~35), and on overflow
+   the line is cut at the last space boundary, never mid-word or
+   mid-escape. One post-pass instead of save/rollback bookkeeping at
+   ~40 field call sites (each inline group cost ~25 B of -Os text;
+   the sum busted the size budget). Only sees our own output, so any
+   CSI run can be skipped uncounted (the sole non-SGR escape is the
+   line-leading erase \x1b[2K). */
+static void clamp_line(char *buf, int start, int *p, int budget) {
+    int cols = 0, cut = -1;
+    int i = start;
+    while (i < *p) {
+        if (buf[i] == '\x1b' && i + 1 < *p && buf[i + 1] == '[') {
+            int e = i + 2;
+            while (e < *p && !(buf[e] >= 0x40 && buf[e] <= 0x7e)) e++;
+            i = e + 1;
+            continue;
+        }
+        if (cols == budget) {
+            *p = (cut >= 0) ? cut : i;
+            return;
+        }
+        if (buf[i] == ' ') cut = i;
+        cols++;
+        i++;
+    }
+}
+
+/* Shared name tables (row + panel + help overlay). */
+static const char *CHORD_NAMES[6] = { "triad", "7th", "sus4", "sus2", "inv1", "inv2" };
+static const char *FILTER_MODES_SHORT[4] = { "LP", "HP", "BP", "NO" };
+static const char *FULL_FILTER_NAMES[4] = { "lowpass", "highpass", "bandpass", "notch" };
+
+/* Activity glyphs for voices [lo,hi) in role-band colors. Shared by
+   the fallback row (full 0..N_VOICES span) and panel L5's per-role
+   bands. */
+static void append_voice_dots(char *buf, int *p, uint32_t mask,
+                              int lo, int hi) {
+    for (int i = lo; i < hi; i++) {
+        const char *role_col =
+            (i < 2) ? COL_RED :
+            (i < 5) ? COL_GREEN :
+            (i < 8) ? COL_BLUE :
+                      COL_YELLOW;
+        append_str(buf, p, role_col);
+        buf[(*p)++] = (mask & (1u << i)) ? '*' : '.';
+    }
+}
+
+/* Build one status row of synth state (small-terminal fallback).
    Field order is stable; consumers (README) reference field labels
-   by name (M, S, V, G, R, D, deg, act, chord, Cr, Sec, Td, F, N, L, T). */
+   by name (M, S, V, G, R, D, deg, act, chord, Cr, Sec, Td, Mo, F, N,
+   L, T, Lm, Sw). Emitted unclamped; the caller's clamp_line pass
+   cuts to the terminal width - pre-074 the row wrapped below ~72
+   columns, scrolling the scope every frame. */
 static void build_status_row(char *buf, int *p) {
     uint32_t voice_mask = voice_pool_active_mask();
 
@@ -385,15 +466,7 @@ static void build_status_row(char *buf, int *p) {
     buf[(*p)++] = "DLPlHM"[gen_get_scale() % 6];
 
     append_str(buf, p, " " COL_MAG "V:");
-    for (int i = 0; i < N_VOICES; i++) {
-        const char *role_col =
-            (i < 2) ? COL_RED :
-            (i < 5) ? COL_GREEN :
-            (i < 8) ? COL_BLUE :
-                      COL_YELLOW;
-        append_str(buf, p, role_col);
-        buf[(*p)++] = (voice_mask & (1u << i)) ? '*' : '.';
-    }
+    append_voice_dots(buf, p, voice_mask, 0, N_VOICES);
 
     append_str(buf, p, " " COL_CYAN "G:" COL_WHITE);
     append_num(buf, p, gen_get_gate());
@@ -419,10 +492,7 @@ static void build_status_row(char *buf, int *p) {
     }
 
     append_str(buf, p, " " COL_WHITE "chord:");
-    {
-        static const char *names[6] = { "triad", "7th", "sus4", "sus2", "inv1", "inv2" };
-        append_str(buf, p, names[gen_get_chord_pattern() % 6]);
-    }
+    append_str(buf, p, CHORD_NAMES[gen_get_chord_pattern() % 6]);
     append_str(buf, p, " " COL_CYAN "Cr:" COL_WHITE);
     append_num(buf, p, gen_get_chord_root());
     append_str(buf, p, " " COL_CYAN "Sec:" COL_WHITE);
@@ -439,15 +509,199 @@ static void build_status_row(char *buf, int *p) {
     append_str(buf, p, " " COL_GREEN "L:" COL_WHITE);
     append_num(buf, p, voice_get_lfo_filter_depth());
     append_str(buf, p, " " COL_MAG "T:" COL_WHITE);
-    {
-        static const char *modes[4] = { "LP", "HP", "BP", "NO" };
-        append_str(buf, p, modes[voice_get_filter_mode() & 3u]);
-    }
+    append_str(buf, p, FILTER_MODES_SHORT[voice_get_filter_mode() & 3u]);
     append_str(buf, p, " " COL_GREEN "Lm:" COL_WHITE);
     append_num(buf, p, compressor_get_threshold());
+    append_str(buf, p, " " COL_CYAN "Sw:" COL_WHITE);
+    append_num(buf, p, gen_get_swing());
+}
 
-    append_str(buf, p, COL_RESET);
-    buf[(*p)++] = '\r'; buf[(*p)++] = '\n';
+int ui_build_status_row(char *buf, unsigned tw) {
+    int p = 0;
+    append_str(buf, &p, "\x1b[2K");
+    build_status_row(buf, &p);
+    clamp_line(buf, 0, &p, (int)tw - 1);
+    append_str(buf, &p, COL_RESET);
+    buf[p++] = '\r'; buf[p++] = '\n';
+    return p;
+}
+
+/* --- rich status panel (074) ------------------------------------
+   Five full-word lines on terminals with PANEL_MIN_ROWS or more
+   rows; the single row above is the small-terminal fallback. Rich
+   layout: 5 lines + (th-6)-row scope; fallback: 1 line + (th-2)-row
+   scope - both total th-1, so screen usage is unchanged. */
+#define PANEL_MIN_ROWS 20
+
+static void panel_line1(char *buf, int *p) {
+    append_str(buf, p, COL_CYAN "stretto" COL_WHITE);
+    if (version_str[0]) {
+        buf[(*p)++] = ' ';
+        append_str(buf, p, version_str);
+    }
+    append_str(buf, p, " | " COL_CYAN "seed " COL_WHITE);
+    append_num(buf, p, (unsigned)gen_get_seed_input());
+    append_str(buf, p, " | " COL_CYAN "bar " COL_WHITE);
+    append_num(buf, p, (unsigned)gen_get_bar());
+    append_str(buf, p, " [");
+    append_str(buf, p, gen_get_section_name());
+    buf[(*p)++] = ']';
+    append_str(buf, p, " | " COL_WHITE);
+    /* Canonical bar-length readout; same expression as keys.c's
+       resume-line --bar-ms value. */
+    append_num(buf, p,
+        (unsigned)((uint64_t)gen_get_step_samples() * 48000u / SAMPLE_RATE));
+    append_str(buf, p, " ms/bar");
+    append_str(buf, p, " | " COL_CYAN "swing " COL_WHITE);
+    append_num(buf, p, gen_get_swing());
+}
+
+static void panel_line2(char *buf, int *p) {
+    append_str(buf, p, COL_YELLOW "scale " COL_WHITE);
+    append_str(buf, p, SCALE_NAMES[gen_get_scale() % 6]);
+    append_str(buf, p, " | " COL_WHITE "chord ");
+    append_str(buf, p, CHORD_NAMES[gen_get_chord_pattern() % 6]);
+    append_str(buf, p, " on degree ");
+    append_num(buf, p, gen_get_chord_root());
+    append_str(buf, p, " | " COL_YELLOW "tension " COL_WHITE);
+    append_num(buf, p, gen_get_tension());
+    append_str(buf, p, " | " COL_MAG "motif " COL_WHITE);
+    append_str(buf, p, gen_motif_replaying() ? "replaying" : "capturing");
+}
+
+static void panel_line3(char *buf, int *p) {
+    append_str(buf, p, COL_CYAN "filter " COL_WHITE);
+    append_str(buf, p, FULL_FILTER_NAMES[voice_get_filter_mode() & 3u]);
+    append_str(buf, p, " | " COL_CYAN "cutoff " COL_WHITE);
+    append_num(buf, p, voice_get_cutoff());
+    append_str(buf, p, " | " COL_YELLOW "resonance " COL_WHITE);
+    append_num(buf, p, voice_get_resonance());
+    append_str(buf, p, " | " COL_GREEN "lfo " COL_WHITE);
+    append_num(buf, p, voice_get_lfo_filter_depth());
+}
+
+static void panel_line4(char *buf, int *p) {
+    append_str(buf, p, COL_GREEN "reverb " COL_WHITE);
+    append_num(buf, p, reverb_get_wet());
+    append_str(buf, p, " | " COL_YELLOW "delay " COL_WHITE);
+    append_num(buf, p, delay_get_wet());
+    buf[(*p)++] = '/';
+    append_num(buf, p, delay_get_feedback());
+    append_str(buf, p, " | " COL_GREEN "compressor " COL_WHITE);
+    append_num(buf, p, compressor_get_threshold());
+    append_str(buf, p, " | " COL_MAG "mod depth " COL_WHITE);
+    append_num(buf, p, voice_get_mod_depth());
+}
+
+static void panel_line5(char *buf, int *p) {
+    uint32_t mask = voice_pool_active_mask();
+    append_str(buf, p, COL_WHITE "voices");
+    append_str(buf, p, " " COL_RED "bass ");
+    append_voice_dots(buf, p, mask, 0, 2);
+    append_str(buf, p, " " COL_GREEN "chord ");
+    append_voice_dots(buf, p, mask, 2, 5);
+    append_str(buf, p, " " COL_BLUE "melody ");
+    append_voice_dots(buf, p, mask, 5, 8);
+    append_str(buf, p, " " COL_YELLOW "drums ");
+    append_voice_dots(buf, p, mask, 8, N_VOICES);
+}
+
+int ui_build_status_panel(char *buf, unsigned tw) {
+    static void (*const line_fns[5])(char *, int *) = {
+        panel_line1, panel_line2, panel_line3, panel_line4, panel_line5
+    };
+    int p = 0;
+    for (int i = 0; i < 5; i++) {
+        int start = p;
+        append_str(buf, &p, "\x1b[2K");
+        line_fns[i](buf, &p);
+        clamp_line(buf, start, &p, (int)tw - 1);
+        append_str(buf, &p, COL_RESET);
+        buf[p++] = '\r'; buf[p++] = '\n';
+    }
+    return p;
+}
+
+/* --- help overlay v2 (074): live parameter readout --------------
+   One row per PARAM_FLAGS entry: live key, flag name, CURRENT value,
+   range. Names and ranges come from PARAM_FLAGS (single source with
+   the CLI parser); values from the same getters the resume line
+   uses. Colorless by design - no second NO_COLOR strip site. */
+
+/* Live-key labels per UI_PARAM_* id (ENUM order - gate is index 2,
+   mod-depth 3, matching ui.h, NOT the old help card's ordering).
+   "" = flag-only parameter (no live key). */
+static const char *PARAM_KEYS[UI_PARAM_COUNT] = {
+    "s", "+/-", "g/G", "[/]", "c/C", "n/N", "m/M",
+    "t", "r/R", "d/D", "f/F", "l/L", ""
+};
+
+/* Live value for PARAM_FLAGS[k]; named params return the index (the
+   overlay maps it to a name). bar-ms uses the canonical expression
+   from keys.c's resume-line builder. */
+static unsigned param_current(int k) {
+    switch (k) {
+        case UI_PARAM_SCALE:          return gen_get_scale();
+        case UI_PARAM_BAR_MS:
+            return (unsigned)((uint64_t)gen_get_step_samples() * 48000u / SAMPLE_RATE);
+        case UI_PARAM_GATE:           return gen_get_gate();
+        case UI_PARAM_MOD_DEPTH:      return voice_get_mod_depth();
+        case UI_PARAM_CUTOFF:         return voice_get_cutoff();
+        case UI_PARAM_RESONANCE:      return voice_get_resonance();
+        case UI_PARAM_LFO_DEPTH:      return voice_get_lfo_filter_depth();
+        case UI_PARAM_FILTER_MODE:    return voice_get_filter_mode();
+        case UI_PARAM_REVERB:         return reverb_get_wet();
+        case UI_PARAM_DELAY:          return delay_get_wet();
+        case UI_PARAM_FEEDBACK:       return delay_get_feedback();
+        case UI_PARAM_COMP_THRESHOLD: return compressor_get_threshold();
+        case UI_PARAM_SWING:          return gen_get_swing();
+        default:                      return 0;
+    }
+}
+
+/* Space-pad the current line (started at byte line_start) out to
+   column col. */
+static void pad_to(char *buf, int *p, int line_start, int col) {
+    while (*p - line_start < col) buf[(*p)++] = ' ';
+}
+
+static int build_help_overlay(char *buf) {
+    int p = 0;
+    append_str(buf, &p,
+        "\x1b[H\x1b[2J"
+        "  stretto keys (live values)\r\n"
+        "  ------------\r\n");
+    for (int k = 0; k < UI_PARAM_COUNT; k++) {
+        int ls = p;
+        append_str(buf, &p, "  ");
+        append_str(buf, &p, PARAM_KEYS[k][0] ? PARAM_KEYS[k] : "--");
+        pad_to(buf, &p, ls, 9);
+        append_str(buf, &p, PARAM_FLAGS[k].name + 2);   /* drop "--" */
+        pad_to(buf, &p, ls, 26);
+        if (PARAM_FLAGS[k].named == 1)
+            append_str(buf, &p, ui_scale_name((int)param_current(k)));
+        else if (PARAM_FLAGS[k].named == 2)
+            append_str(buf, &p, ui_filter_mode_name((int)param_current(k)));
+        else
+            append_num(buf, &p, param_current(k));
+        pad_to(buf, &p, ls, 38);
+        buf[p++] = '[';
+        append_num(buf, &p, (unsigned)PARAM_FLAGS[k].min);
+        buf[p++] = '-';
+        append_num(buf, &p, (unsigned)PARAM_FLAGS[k].max);
+        buf[p++] = ']';
+        if (!PARAM_KEYS[k][0])
+            append_str(buf, &p, "  (flag only)");
+        append_str(buf, &p, "\r\n");
+    }
+    append_str(buf, &p,
+        "\r\n"
+        "  SPACE    force mutation now\r\n"
+        "  ?        toggle this help\r\n"
+        "  q        quit\r\n"
+        "\r\n"
+        "  (any key dismisses)\r\n");
+    return p;
 }
 
 /* Render the oscilloscope grid into buf using `frames` of stereo
@@ -534,19 +788,24 @@ void ui_draw_oscilloscope(int16_t *buf, uint32_t frames) {
     ui_term_get_size(&tw, &th);
 
     uint32_t w = tw > 120u ? 120u : tw;
-    uint32_t h = th > 2u   ? (uint32_t)(th - 2u) : 22u;
+    /* Rich panel on tall terminals: 5 lines + (th-6)-row scope;
+       fallback: 1 row + (th-2)-row scope. Both leave one spare row. */
+    int rich = th >= PANEL_MIN_ROWS;
+    uint32_t h = rich ? (uint32_t)(th - 6u)
+                      : (th > 2u ? (uint32_t)(th - 2u) : 22u);
     if (w > frames) w = frames;
 
     /* 24 KB comfortable headroom for worst-case colored output:
-       24 rows * ~720 bytes/row + status row + escapes ~= 18 KB. */
+       24 rows * ~720 bytes/row + status panel + escapes ~= 18 KB. */
     static char out[24576];
     int p = 0;
-    /* Cursor home, hide cursor, clear status row. */
+    /* Cursor home, hide cursor. (Erase-line leads every status line
+       inside the builders.) */
     out[p++] = 0x1b; out[p++] = '['; out[p++] = 'H';
     out[p++] = 0x1b; out[p++] = '['; out[p++] = '?'; out[p++] = '2'; out[p++] = '5'; out[p++] = 'l';
-    out[p++] = 0x1b; out[p++] = '['; out[p++] = '2'; out[p++] = 'K';
 
-    build_status_row(out, &p);
+    p += rich ? ui_build_status_panel(out + p, tw)
+              : ui_build_status_row(out + p, tw);
     build_oscilloscope_grid(out, &p, (int)sizeof(out), buf, frames, w, h);
 
     if (no_color_enabled()) p = ui_strip_sgr(out, p);

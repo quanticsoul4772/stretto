@@ -235,7 +235,7 @@ When the OS disconnects the MIDI source mid-session, the synth does **not** auto
 | `m` / `M` | Filter LFO depth down / up by 8 |
 | `t` | Cycle filter mode (LP → HP → BP → notch) |
 | `l` / `L` | Compressor threshold down / up by 1000 (lowercase L / shift-L; not the digit `1` or capital `I`). Lower threshold = more compression. |
-| `?` | Toggle help overlay |
+| `?` | Toggle help overlay — key map plus each parameter's live value and range |
 | `q` | Quit (restores terminal state) |
 | `Ctrl-C` | Clean shutdown, terminal restored — same for `SIGTERM`, `SIGQUIT` (Ctrl-\), `SIGHUP` |
 
@@ -243,12 +243,26 @@ When the OS disconnects the MIDI source mid-session, the synth does **not** auto
 
 Redirected invocations (`./synth < /dev/null`, `./synth > log`) degrade to headless `--no-ui` mode instead of dying; a present, non-empty `NO_COLOR` environment variable disables the ANSI colors while keeping the monochrome oscilloscope readable.
 
-## Status row
+## Status panel
 
-Colored single-line status at the top of the terminal:
+Terminals with 20 or more rows get a five-line full-word panel above the oscilloscope:
 
 ```
-M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2 Cr:4 Sec:body Td:118 Mo:c F:200 N:100 L:80 T:LP Lm:20000
+stretto 1.4.0 | seed 1783245061 | bar 37 [body] | 2000 ms/bar | swing 0
+scale dorian | chord sus2 on degree 4 | tension 118 | motif capturing
+filter lowpass | cutoff 200 | resonance 100 | lfo 80
+reverb 60 | delay 100/140 | compressor 20000 | mod depth 1500
+voices bass ** chord *.* melody ..* drums *.*
+```
+
+Every status line is clamped to the terminal width at a word boundary (later, less-important fields drop first), so narrow terminals never wrap the line or scroll the scope.
+
+### Small-terminal fallback (fewer than 20 rows)
+
+Shorter terminals keep the compact single-row status:
+
+```
+M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2 Cr:4 Sec:body Td:118 Mo:c F:200 N:100 L:80 T:LP Lm:20000 Sw:0
 ```
 
 | Field | Meaning |
@@ -271,6 +285,7 @@ M:1500 S:D V:*.***...*** G:200 R:60 D:100/140 deg:3 act:#.##.#. chord:sus2 Cr:4 
 | `T` | Filter mode: `LP` low-pass, `HP` high-pass, `BP` band-pass, `NO` notch |
 | `Mo` | Motif memory state: `c` capture (L-system driving + recording), `r` replay (8-phrase ring buffer playing a captured 4-bar phrase, optionally transposed) |
 | `Lm` | Master compressor threshold (8000–30000; brickwall at 32000) |
+| `Sw` | Swing amount (0–100; 0 straight, 100 ≈ triplet shuffle — set via `--swing`, no live key) |
 
 The oscilloscope below paints with a heat-map palette: dim (silence) → blue → cyan → green → yellow → magenta → red (peak).
 
@@ -343,7 +358,7 @@ The spec-kit artifacts (spec, plan, research, tasks, quickstart) live under `spe
 | `density.c` / `.h` | Adaptive density: counter-cyclical gate + reverb biases |
 | `motif.c` / `.h` | Long-term motif memory: 8-phrase ring buffer with periodic replay |
 | `wav.c` / `.h` | `render_wav()` + WAV header |
-| `ui.c` / `.h` | Terminal raw mode, oscilloscope, status row builder, help overlay (cross-platform) |
+| `ui.c` / `.h` | Terminal raw mode, oscilloscope, status panel/row builders, help overlay (cross-platform) |
 | `keys.c` / `.h` | Key dispatcher (`'?'`, `'q'`, tempo, scale, filter, etc.) |
 | `audio_pulse.c` | Linux live-audio backend (PulseAudio `pa_threaded_mainloop` + `pa_stream`) |
 | `audio_winmm.c` | Windows live-audio backend (Win32 `waveOut`, 4-buffer cycle) |

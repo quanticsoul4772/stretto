@@ -159,7 +159,10 @@ def main():
     print("=== 6. real-console UI (ConPTY) ===")
     buf, tail, code = pty_session()
     report("ANSI UI drawn", "\x1b[" in buf)
-    report("status row rendered", "M:" in buf and "S:" in buf)
+    # ConPTY dims are (30, 100) -> the 074 rich panel path. "stretto"
+    # sits in panel L1, "scale" in L2 (each contiguous inside one
+    # literal, so SGR runs can never split the word).
+    report("status panel rendered", "stretto" in buf and "scale" in buf)
     report("q quits clean (exit 0)", code == 0, f"exitstatus={code}")
     report("resume line with touched scale",
            "resume with: --seed" in tail and "--scale lydian" in tail)
@@ -170,7 +173,7 @@ def main():
     buf, tail, code = pty_session(env=env, keys=("q",))
     import re
     sgr = re.findall(r"\x1b\[[0-9;]*m", buf)
-    report("status row without SGR", ("M:" in buf) and len(sgr) == 0,
+    report("status panel without SGR", ("scale" in buf) and len(sgr) == 0,
            f"sgr={len(sgr)}")
     report("q quits clean (exit 0)", code == 0, f"exitstatus={code}")
 

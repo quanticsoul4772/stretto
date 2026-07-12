@@ -37,6 +37,15 @@ void ui_draw_oscilloscope(int16_t *buf, uint32_t frames);
    new length. Functional escapes are kept. Public for unit tests. */
 int ui_strip_sgr(char *buf, int len);
 
+/* Status builders (074). Each writes erase-line-prefixed, CRLF-
+   terminated line(s) into buf, clamped to tw-1 VISIBLE columns
+   (SGR bytes don't count), and returns the byte length. The 5-line
+   full-word panel renders when the terminal has >= 20 rows; the
+   compact single row is the small-terminal fallback. Public for
+   PTY-free unit tests (the ui_strip_sgr precedent). */
+int ui_build_status_panel(char *buf, unsigned tw);
+int ui_build_status_row(char *buf, unsigned tw);
+
 /* --- help overlay --- */
 
 void ui_show_help(void);
@@ -70,6 +79,27 @@ enum {
     UI_PARAM_SWING,          /* 069: first flag-only param (no live key) */
     UI_PARAM_COUNT
 };
+
+/* Preset-capture flag table (specs/004-preset-capture): one row per
+   initial-state flag, indexed by its UI_PARAM_* id. Ranges mirror the
+   engine setters' clamps exactly. `named`: 1 = scale names, 2 =
+   filter-mode names (numeric always accepted too). Defined in ui.c
+   (NOT main.c): every unit-test binary links ui.o without main.o, and
+   the help overlay reads names/ranges from this table. */
+typedef struct {
+    const char *name;
+    int min, max;
+    void (*set)(int);
+    int named;
+} ParamFlag;
+
+extern const ParamFlag PARAM_FLAGS[UI_PARAM_COUNT];
+
+/* Version string for the status panel. main() passes STRETTO_VERSION
+   once at startup; ui.c never includes version.h so only main.o
+   rebuilds when the version changes (version.h is deliberately out of
+   the Makefile's $(HEADERS)). Defaults to "" until set. */
+void ui_set_version(const char *v);
 
 /* Dirty bits track parameters the USER explicitly set (CLI flag or
    live key) - never internal mutate() drift, which --seed already
