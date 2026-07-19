@@ -85,28 +85,43 @@ OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
 # 003 MIDI chain grew synth stripped from ~24 KB (pre-#109 baseline) to
 # 43 880 B (post-#113, measured via `make size` artifact on PR #115). The
 # ~+19 KB cost is the principled cost of cross-platform MIDI input per
-# Principle III + IX + X. 51 200 leaves 14% headroom (7 320 B) over the
+# Principle III + IX + X. 51 200 left 14% headroom (7 320 B) over the
 # post-#113 measurement; future growth should reset the budget rather
 # than defer required functionality.
+# CURRENT (2026-07-19, CI run 29211125164 on c7db9fc): 49 128 B, so the
+# same cap now retains 2 072 B / ~4.0 % -- the 14 % figure above is
+# historical and must not be used as live headroom.
 #
 # PACK_TARGET bumped 12288 -> 30720 (~30 KB) on 2026-07-08 per
 # Constitution v1.2.0 amendment (this PR, 021-upx-remeasure). The actual
-# Linux UPX-packed synth size is 25 460 B per PR #117 `binary-sizes`
-# CI artifact on current `main` -- ~107 % over the prior 12 KB target
-# and ~59 % over the pre-#109 (~16 KB) ARCHITECTURE.md hedge. The 003
-# chain added the proportional ~13 KB UPX-packed growth on top of the
-# 19 KB stripped growth. 30 720 leaves ~21 % headroom (5 260 B) over
-# the post-#117 measurement; the headroom matches STRIP_TARGET's 14 %
-# pattern (slightly wider for UPX ratio variability). PACK_TARGET now
+# Linux UPX-packed synth size was 25 460 B per PR #117 `binary-sizes`
+# CI artifact -- ~107 % over the prior 12 KB target and ~59 % over the
+# pre-#109 (~16 KB) ARCHITECTURE.md hedge. The 003 chain added the
+# proportional ~13 KB UPX-packed growth on top of the 19 KB stripped
+# growth. 30 720 left ~21 % headroom (5 260 B) over the post-#117
+# measurement, matching STRIP_TARGET's 14 % pattern (slightly wider for
+# UPX ratio variability).
+# CURRENT (2026-07-19, CI run 29211125164 on c7db9fc): 30 048 B, so the
+# same cap now retains 672 B / ~2.2 %. The ~21 % derivation above is
+# RETIRED -- it described the post-#117 measurement, not this one, and
+# Constitution v1.2.2 records it as historical. Reason from 30 048 B.
+# Note also that stripped-byte savings do NOT transfer to packed at
+# parity: UPX compresses repetitive text ~3:1 (measured 2026-07-19,
+# 288 B stripped -> 96 B packed), so packed headroom shrinks far more
+# slowly than stripped headroom under the same edit. PACK_TARGET now
 # lives in the Constitution Principle I line explicitly as `≤30 KB
 # UPX-packed Linux binary`, closing the pre-#118 implicit-cap loophole.
 #
 # WIN_PACK_BUDGET introduced 2026-07-08 per Constitution v1.1.0
 # (Principle I line explicitly enumerates the Windows UPX cap; the
 # ci.yml `Binary size budget gate` step previously hardcoded the
-# 49152 B value inline). 48 KB = 49152 B is post-#117 measurement
-# baseline (~38 KB packed actual, last measured PR #117 binary-sizes
-# artifact); ~10 KB headroom under 48 KB. The 3 size-budget
+# 49152 B value inline). 48 KB = 49152 B was the post-#117 measurement
+# baseline (~38 KB packed actual per the PR #117 binary-sizes artifact;
+# ~10 KB headroom then).
+# CURRENT (2026-07-19, CI run 29211125164 on c7db9fc): 43 520 B packed,
+# leaving 5 632 B / ~11.5 % under the 48 KB cap. Windows remains the
+# loosest of the three budgets; Linux packed is the binding one. The 3
+# size-budget
 # variables (STRIP_TARGET / PACK_TARGET / WIN_PACK_BUDGET) are
 # enforced equal to the Constitution Principle I paragraph via
 # tools/spec-budget-check.sh, which runs as a pre-flight in

@@ -4,9 +4,11 @@ A generative music synthesizer. Plays live on Linux (PulseAudio/PipeWire) or Win
 
 | Binary | Size | Budget (CI-gated) |
 |---|---|---|
-| Linux `synth` (stripped; links libpulse + libasound) | ~47 KB | 50 KB |
-| Linux `synth.packed` (UPX) | ~25 KB | 30 KB |
-| Windows `stretto.exe` (stripped + UPX) | ~38 KB | 48 KB |
+| Linux `synth` (stripped; links libpulse + libasound) | ~48 KB | 50 KB |
+| Linux `synth.packed` (UPX) | ~29 KB | 30 KB |
+| Windows `stretto.exe` (stripped + UPX) | ~42.5 KB | 48 KB |
+
+Measured 2026-07-19 (CI run 29211125164 on `c7db9fc`): 49 128 B stripped, 30 048 B packed, 43 520 B Windows packed. The authoritative per-commit numbers are the `binary-sizes` artifact each CI run uploads.
 
 ## Install
 
@@ -65,8 +67,8 @@ Produces `./synth`. Needs `gcc`, `make`, `libpulse-dev`, `libasound2-dev`.
 ### Windows (cross-compile from Linux / WSL)
 
 ```
-make win        # produces stretto.exe (~247 KB, stripped)
-make winpack    # additionally produces stretto.packed.exe (~38 KB, UPX-packed)
+make win        # produces stretto.exe (~253 KB, stripped)
+make winpack    # additionally produces stretto.packed.exe (~42.5 KB, UPX-packed)
 ```
 
 Needs `gcc-mingw-w64-x86-64` and `upx`. The packed `.exe` is a single-file native Windows binary — no runtime dependencies beyond the bundled Windows kernel + multimedia DLLs.
@@ -77,7 +79,7 @@ Needs `gcc-mingw-w64-x86-64` and `upx`. The packed `.exe` is a single-file nativ
 make pack
 ```
 
-Produces `synth.packed` (~25 KB, within the 30 KB cap).
+Produces `synth.packed` (~29 KB, within the 30 KB cap — 672 B of headroom as of 2026-07-19).
 
 ### Install from source
 
