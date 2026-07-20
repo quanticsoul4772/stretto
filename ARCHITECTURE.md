@@ -6,10 +6,10 @@
 
 | Binary | Size |
 |---|---|
-| Linux `synth` (stripped, links libpulse + libasound) | ~48 KB (49 064 B per `make synth` + `strip -s -R .comment`, measured 2026-07-12 after the 077 size reclaim; STRIP_TARGET = 51 200 B) |
-| Linux `synth.packed` (UPX) | ~25 KB (25 460 B per the PR #117 `binary-sizes` CI artifact — historical; grows with the stripped binary); PACK_TARGET = 30 720 B per the Makefile enforces the Constitution v1.2.x cap |
-| Windows `stretto.exe` (stripped) | ~247 KB (252 928 B from `make win`, measured 2026-07-11; stripped — `-s` in `WIN_LDFLAGS` strips at link and the `stretto.exe` rule additionally runs `$(WIN_STRIP) -s -R .comment`) |
-| Windows `stretto.packed.exe` (UPX) | ~38 KB (per the PR #117 `binary-sizes` CI artifact — historical); WIN_PACK_BUDGET = 49 152 B |
+| Linux `synth` (stripped, links libpulse + libasound) | ~48 KB (49 128 B per CI run 29211125164 on `c7db9fc`, measured 2026-07-19; was 49 064 B measured 2026-07-12 after the 077 size reclaim; STRIP_TARGET = 51 200 B, leaving 2 072 B) |
+| Linux `synth.packed` (UPX) | ~29 KB (30 048 B per CI run 29211125164 on `c7db9fc`, measured 2026-07-19; was 25 460 B per the PR #117 artifact — historical, grows with the stripped binary); PACK_TARGET = 30 720 B per the Makefile enforces the Constitution v1.2.x cap, **leaving 672 B — the binding budget** |
+| Windows `stretto.exe` (stripped) | ~253 KB (258 560 B per CI run 29211125164 on `c7db9fc`, measured 2026-07-19; was 252 928 B measured 2026-07-11; stripped — `-s` in `WIN_LDFLAGS` strips at link and the `stretto.exe` rule additionally runs `$(WIN_STRIP) -s -R .comment`) |
+| Windows `stretto.packed.exe` (UPX) | ~42.5 KB (43 520 B per CI run 29211125164 on `c7db9fc`, measured 2026-07-19; was ~38 KB per the PR #117 artifact — historical); WIN_PACK_BUDGET = 49 152 B, leaving 5 632 B |
 
 (Exact packed sizes vary per commit; the authoritative per-commit numbers are the `binary-sizes` artifact each CI run uploads, and the three budgets are gated on every push by `tools/size-budget-gate.sh`.)
 
@@ -681,7 +681,7 @@ Total: 240 unit tests across 16 modules (the MIDI suite covers: US1 scale-degree
 
 The coverage build (`make coverage`) writes every artifact (instrumented `.o`, `.gcno`, `.gcda`, `synth_cov`, `.cov` test binaries) into `build_cov/` so it does not clobber the normal build. `make coverage` and `make test-unit` can be alternated freely without `make clean`. CI's "Coverage gates" step parses the per-file numbers and fails if any drop below the gate.
 
-CI also enforces a Windows packed binary size budget of 48 KB (current ~38 KB post-#117 per the `binary-sizes` CI artifact — Constitution Principle I target is the ≤48 KB UPX-packed Windows invariant). A PR that doubles the binary fails CI immediately.
+CI also enforces a Windows packed binary size budget of 48 KB (current 43 520 B / ~42.5 KB per CI run 29211125164 on `c7db9fc`, measured 2026-07-19 — Constitution Principle I target is the ≤48 KB UPX-packed Windows invariant). A PR that doubles the binary fails CI immediately.
 
 CI (`.github/workflows/ci.yml`) runs every target on push and pull-request to `main`, plus the Windows cross-compile (`make winpack`). Per-file coverage gates apply to the fifteen measured modules at 90–100% (see the coverage table above). The Windows binary and coverage log are uploaded as build artifacts. The runner image is pinned (`ubuntu-24.04`, not `-latest`) and kept identical to the release workflow's: the build-time table generators use host libm (`sinf`/`exp`), so a glibc bump can flip a table entry and change every render hash — releases must run on the exact image CI gates the goldens on.
 
@@ -744,6 +744,6 @@ The Bridge regression test (step 6) + Binary size budget gate (step 16) are the 
 
 ## Build details
 
-Linux flags (`-Os -flto -ffunction-sections -fdata-sections -Wl,--gc-sections`) and `strip -s -R .comment` are standard. `make pack` runs UPX `--ultra-brute` on top for a final ~42% reduction (historical example, per the PR #117 `binary-sizes` artifact: synth 43 944 B → synth.packed 25 460 B = 57.94 % retained = 42.06 % reduction; the prior ~33 % pre-#109 hedge reflected the smaller pre-003-chain baseline where 24 576 × 0.67 ≈ 16 384).
+Linux flags (`-Os -flto -ffunction-sections -fdata-sections -Wl,--gc-sections`) and `strip -s -R .comment` are standard. `make pack` runs UPX `--ultra-brute` on top. **Currently a ~38.8 % reduction** (2026-07-19, CI run 29211125164 on `c7db9fc`: synth 49 128 B → synth.packed 30 048 B = 61.16 % retained). Historical example, per the PR #117 `binary-sizes` artifact: 43 944 B → 25 460 B = 57.94 % retained = 42.06 % reduction; the prior ~33 % pre-#109 hedge reflected the smaller pre-003-chain baseline where 24 576 × 0.67 ≈ 16 384. **The ratio itself drifts and is not a constant to reason from** — it has moved 42.06 % → 38.8 % as the binary grew, and it also varies by UPX version (3.96 retains 60.09 % on the same input where CI's 4.2.2 retains 61.16 %). This is the same effect as the UPX-compresses-text finding in Constitution v1.2.2: packed size does not track stripped size linearly.
 
-Windows cross-compile uses `x86_64-w64-mingw32-gcc` with the same size flags. `make winpack` adds UPX. The packed Windows binary is ~38 KB — well under the 64 KB target from the original PLAN.md and the demoscene "tiny generative synth" tradition.
+Windows cross-compile uses `x86_64-w64-mingw32-gcc` with the same size flags. `make winpack` adds UPX. The packed Windows binary is 43 520 B / ~42.5 KB (2026-07-19, CI run 29211125164 on `c7db9fc`) — under the 64 KB target from the original PLAN.md and the demoscene "tiny generative synth" tradition, and 5 632 B under the enforced 48 KB cap.
