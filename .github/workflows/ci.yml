@@ -294,7 +294,12 @@ jobs:
             [lsystem.c]=94
             [chord_progression.c]=92
             [section.c]=95
-            [density.c]=95
+            # density is Zig as of the 095 port. Measured by kcov, not
+            # gcov, so 95 here is a NEW measurement rather than a
+            # continued one -- kcov counts DWARF source lines where
+            # gcov counted instrumented arcs. Both read 100%: gcov
+            # reported 100.00% of 19, kcov reports 100.00% of 14.
+            [density.zig]=95
             [motif.c]=95
             [mixer.c]=95
             [wav.c]=90
