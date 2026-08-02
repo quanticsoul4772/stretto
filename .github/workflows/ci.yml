@@ -43,6 +43,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc make pkg-config libpulse-dev libasound2-dev
+      # Pinned, not `latest`, for the same reason the runner image is
+      # pinned above: a codegen change in a 0.x compiler can alter the
+      # render hash with no source change, and Principle III's
+      # bit-exactness gate is what would catch it -- after the fact.
+      # A Zig bump is therefore a golden-regeneration-class change and
+      # belongs in its own PR.
+      #
+      # Present before any module is ported: build_san/%.o has a
+      # zig/%.zig rule as of PR #185, and it must be able to fire the
+      # moment COV_SRCS_MEASURED_ZIG stops being empty.
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
       - name: Sanitized tests (ASan + UBSan fatal)
         run: make test-asan
 
@@ -69,6 +83,51 @@ jobs:
             gcc make libpulse-dev libasound2-dev upx-ucl \
             gcc-mingw-w64-x86-64 \
             python3 python3-numpy
+
+      # See the sanitizers job for why this is pinned.
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      # kcov measures coverage for modules implemented in Zig. gcov
+      # cannot instrument Zig at all -- `zig build-obj` rejects
+      # -fprofile-arcs, -ftest-coverage, -fprofile-instr-generate and
+      # -fcoverage-mapping alike -- and kcov needs no instrumentation
+      # because it reads DWARF.
+      #
+      # Built from source, pinned to a commit, because kcov is NOT
+      # packaged for Ubuntu 24.04 (`apt-cache policy kcov` is empty)
+      # and the last release carrying a prebuilt binary is v42 (2023),
+      # which is linked against binutils 2.38 and dies on this runner
+      # with "libopcodes-2.38-system.so: cannot open shared object
+      # file".
+      #
+      # Landing before any module is ported is deliberate: it proves
+      # the recipe on a job that does not yet depend on it, rather than
+      # debugging a from-scratch toolchain build inside the first port
+      # PR.
+      - name: Cache kcov
+        id: kcov-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/kcov
+          key: kcov-3cbc82c-ubuntu-24.04
+
+      - name: Build kcov
+        if: steps.kcov-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y \
+            cmake binutils-dev libcurl4-openssl-dev \
+            libdw-dev libelf-dev zlib1g-dev
+          git clone https://github.com/SimonKagstrom/kcov.git /tmp/kcov
+          git -C /tmp/kcov checkout -q 3cbc82c39a972cd3cc279fa783d9312ca81ff231
+          cmake -S /tmp/kcov -B /tmp/kcov/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/kcov/build -j"$(nproc)"
+          install -D /tmp/kcov/build/src/kcov "$HOME/.local/bin/kcov"
+
+      - name: Put kcov on PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Build Linux synth
         run: make

@@ -41,6 +41,16 @@ jobs:
             gcc-mingw-w64-x86-64 \
             python3 python3-numpy
 
+      # This workflow builds the PUBLISHED artifacts and is not a
+      # required check, so a missing toolchain here would not surface
+      # on any PR -- it would surface at the next tag, with nothing
+      # having caught it earlier. Version pinned identically to
+      # ci.yml's, for the same determinism reason the runner image is.
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
       - name: Build
         run: make
 
