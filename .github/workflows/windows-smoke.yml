@@ -57,6 +57,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc make libpulse-dev libasound2-dev gcc-mingw-w64-x86-64
+
+      # This job carries the only automated check of Principle III's
+      # across-build-targets clause (Linux render hash == Windows
+      # render hash). Once a module is ported, that promise depends on
+      # `zig build-obj` producing identical integer semantics for
+      # -target x86_64-linux-gnu and -target x86_64-windows-gnu -- a
+      # new claim, previously carried by "same gcc source, two gcc
+      # backends". Without Zig here the job cannot build and the check
+      # silently stops running.
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
       - name: Build Linux synth + Windows exe (one tree, shared tables)
         run: |
           make
