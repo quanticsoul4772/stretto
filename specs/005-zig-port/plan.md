@@ -150,14 +150,29 @@ literal string including the U+2264 character:
 dirty `constitution.md` or `Makefile`, and runs inside `make test` and
 `make verify`. Commit before verifying locally.
 
-### Phase 4 — Language-agnostic coverage gate
+### Phase 4 — Language-agnostic coverage gate — **WITHDRAWN**
 
-Re-key `ci.yml:226-242` and `Makefile:462-519` from filename to module
-name. Same fifteen files, same percentages, same thresholds, zero Zig
-in the tree, bit-exact regression untouched — a mechanical refactor
-under Workflow §2. Landing it separately keeps the methodology change
-to a NON-NEGOTIABLE principle's enforcement reviewable against
-unchanged numbers.
+Planned: re-key `ci.yml:226-242` and `Makefile:462-519` from filename to
+module name, with a Makefile-emitted manifest resolving the extension.
+The stated motivation was to keep a port PR from touching `ci.yml`, on
+the grounds that Workflow §2 forbids mixed-purpose PRs.
+
+Withdrawn on evidence from Phase 1, which shipped before it. Phase 1's
+kcov rows are keyed by the real filename (`density.zig: 100.00% of 14`)
+in gcov's exact shape, and the **unmodified** gate parses them — its own
+pipeline returned `100` for `density.zig` while `chord_progression.c`
+still returned `92`. No re-key is required for correctness.
+
+The mixed-purpose argument was also wrong. Flipping a module's own
+threshold from `[density.c]=95` to `[density.zig]=95` is part of porting
+that module, not a second purpose, and the one-line diff is
+self-documenting: the threshold row records the language change right
+next to the per-file rationale comment explaining the number.
+
+The manifest would have added an indirection layer between the gate and
+the filename it actually measures, to solve a problem that does not
+exist. Each port PR flips its own entry instead — seven one-line edits
+over the life of the port.
 
 ### Phase 5 — Build rules, then modules
 
