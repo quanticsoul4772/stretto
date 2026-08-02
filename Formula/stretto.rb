@@ -23,6 +23,12 @@ class Stretto < Formula
   depends_on "alsa-lib"
   depends_on :linux
   depends_on "pulseaudio"
+  # Modules ported from C are compiled by `zig build-obj` and linked by
+  # gcc (Constitution Principle II, v1.3.0). gcc still compiles every .c
+  # and still links every target, so this is an addition, not a swap.
+  # See packaging/aur/PKGBUILD for the determinism caveat on unpinned
+  # Zig in source builds.
+  depends_on "zig" => :build
 
   def install
     # Tarball builds have no .git; STRETTO_VERSION overrides the

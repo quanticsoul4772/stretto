@@ -66,3 +66,8 @@ binary-sizes.txt
 
 # Per-user Claude Code settings (machine-local permissions)
 .claude/settings.local.json
+
+# Zig's local build cache. Both spellings: the name changed across 0.x
+# releases and a tree built by an older toolchain can carry either.
+.zig-cache/
+zig-cache/

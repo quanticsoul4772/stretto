@@ -171,6 +171,54 @@ WIN_LDFLAGS = -Wl,--gc-sections -s -no-pie
 %.win.o: %.c $(HEADERS)
 	$(WIN_CC) $(WIN_CFLAGS) -MMD -MP -MF $*.win.d -c $< -o $@
 
+# --- Zig modules -----------------------------------------------------
+#
+# gcc still compiles every .c and still LINKS every target, so the whole
+# LDFLAGS stack (-z noseparate-code, --hash-style=sysv, --gc-sections,
+# -no-pie) applies unchanged. What does NOT carry over is the compile
+# side: `zig build-obj` inherits nothing from CFLAGS, so the size-
+# relevant flags are restated here per class.
+#
+# ZIG_SIZE_FLAGS mirrors the CFLAGS codegen intent. Measured, not
+# guessed (CI run 30756190233): without -ffunction-sections
+# -fdata-sections the object is one .text blob and -Wl,--gc-sections has
+# nothing to strip, and without -fno-unwind-tables it carries .eh_frame,
+# which `strip -s` does NOT remove. Together those cost 192 B stripped
+# on a 42-line module -- more than the module itself.
+#
+# -fno-PIC/-fno-PIE match CFLAGS' -fno-pic and the -no-pie link. (The
+# instrumented trees deliberately use -fPIC instead: synth_cov and
+# synth_asan link as PIE. See those rules.)
+#
+# $(HEADERS) is an explicit prerequisite because Zig emits no .d files,
+# so ported modules sit outside the -MMD -MP dependency tracking that
+# the two rules above rely on.
+ZIG_SIZE_FLAGS = -OReleaseSmall -ffunction-sections -fdata-sections \
+                 -fno-unwind-tables -fomit-frame-pointer
+
+# -fno-PIC/-fno-PIE is LINUX-ONLY. It matches CFLAGS' -fno-pic and the
+# -no-pie link there, but the Windows target rejects it outright:
+#
+#   error: unable to create module 'density': the selected target
+#          requires position independent code
+#
+# which is not a limitation to work around -- PE/COFF images are
+# relocatable by construction (image base + a relocation table), so
+# there is no non-PIC form to ask for and nothing is lost by omitting
+# it. WIN_CFLAGS carries no -fno-pic either.
+ZIG_LINUX_FLAGS = $(ZIG_SIZE_FLAGS) -fno-PIC -fno-PIE
+
+%.o: zig/%.zig $(HEADERS)
+	zig build-obj $(ZIG_LINUX_FLAGS) -target x86_64-linux-gnu -femit-bin=$@ $<
+
+# WIN_CFLAGS is a different stack from CFLAGS (no -ffast-math, no
+# -fno-plt, -DWIN32_LEAN_AND_MEAN), so this gets its own parity pass
+# rather than reusing the Linux line. WIN_OBJS is derived from
+# COMMON_OBJS, so a module that does not cross-compile breaks `make win`
+# immediately rather than subtly.
+%.win.o: zig/%.zig $(HEADERS)
+	zig build-obj $(ZIG_SIZE_FLAGS) -target x86_64-windows-gnu -femit-bin=$@ $<
+
 stretto.exe: $(WIN_OBJS)
 	$(WIN_CC) $(WIN_CFLAGS) $(WIN_LDFLAGS) $(WIN_OBJS) -lwinmm -o stretto.exe
 	$(WIN_STRIP) -s -R .comment stretto.exe
@@ -249,7 +297,8 @@ clean:
 	       tests/unit/test_mixer tests/unit/test_wav tests/unit/test_keys \
 	       tests/unit/test_resume tests/unit/test_main \
 	       tests/unit/test_ui \
-	       $(GENS) version.h version.h.tmp *.o *.win.o
+	       $(GENS) version.h version.h.tmp *.o *.win.o \
+	       .zig-cache zig-cache
 # NOTE: $(HEADERS) is deliberately NOT cleaned. The generated table
 # headers are tracked files now, so removing them here would leave a
 # dirty tree after `make clean` until the next build regenerated them.
@@ -752,6 +801,18 @@ DEBUG_OBJS   = $(OBJS:.o=.dbg.o)
 
 %.dbg.o: %.c
 	gcc $(DEBUG_FLAGS) -MMD -MP -MF $*.dbg.d -c $< -o $@
+
+# Debug build for Zig modules. -ODebug matches DEBUG_FLAGS' -O0 -g
+# intent and keeps Zig's safety checks on, which is the point of a
+# debug build. -fno-stack-check drops the __zig_probe_stack reference
+# that Zig's Debug panic path emits and a gcc link cannot resolve.
+# synth_debug links without -no-pie, hence -fPIC.
+#
+# `make debug` is not in CI, so without this rule it would break
+# silently and only surface when someone reached for gdb.
+%.dbg.o: zig/%.zig $(HEADERS)
+	zig build-obj -ODebug -fno-stack-check -fPIC \
+	    -target x86_64-linux-gnu -femit-bin=$@ $<
 
 synth_debug: $(DEBUG_OBJS)
 # $(DEBUG_FLAGS) already carries -pthread -latomic, so the explicit

@@ -14,7 +14,17 @@ arch=('x86_64')
 url="https://github.com/quanticsoul4772/stretto"
 license=('MIT')
 depends=('libpulse' 'alsa-lib')
-makedepends=('gcc' 'make')
+# zig: modules ported from C are compiled by `zig build-obj` and linked
+# by gcc (Constitution Principle II, v1.3.0). gcc still compiles every
+# .c and still links every target, so it is not replaced.
+#
+# NOTE ON DETERMINISM: CI pins the Zig version because a codegen change
+# in a 0.x compiler can alter the render hash with no source change,
+# and a distro package cannot pin. check() below runs `make test-unit`,
+# which does NOT include the bit-exact golden -- a source build against
+# a different Zig would pass here and still produce different audio.
+# Anyone who cares about byte-identity should run `make test`.
+makedepends=('gcc' 'make' 'zig')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('26a50398d9d15a56733aee36f585dd2a72d2df0c75fafd8d151c0e6d2dd85c0f')
 
