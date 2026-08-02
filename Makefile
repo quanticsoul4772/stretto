@@ -249,7 +249,11 @@ clean:
 	       tests/unit/test_mixer tests/unit/test_wav tests/unit/test_keys \
 	       tests/unit/test_resume tests/unit/test_main \
 	       tests/unit/test_ui \
-	       $(GENS) $(HEADERS) version.h version.h.tmp *.o *.win.o
+	       $(GENS) version.h version.h.tmp *.o *.win.o
+# NOTE: $(HEADERS) is deliberately NOT cleaned. The generated table
+# headers are tracked files now, so removing them here would leave a
+# dirty tree after `make clean` until the next build regenerated them.
+# The generator binaries $(GENS) are still artifacts and still cleaned.
 
 # Size report: builds every binary whose toolchain is locally available
 # (gcc + libpulse + libasound for synth; upx for *.packed; mingw for
