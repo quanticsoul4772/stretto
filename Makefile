@@ -475,6 +475,22 @@ COV_SRCS_INTERACTIVE = audio_pulse.c audio_midi_linux.c
 # COV_SRCS here only so synth_cov still links.
 COV_SRCS             = $(COV_SRCS_MEASURED) $(COV_SRCS_INTERACTIVE) main.c
 COV_OBJS             = $(addprefix $(BUILD_COV)/,$(COV_SRCS:.c=.o))
+
+# Measured modules implemented in Zig. gcov cannot instrument Zig
+# (zig build-obj rejects -fprofile-arcs, -ftest-coverage,
+# -fprofile-instr-generate and -fcoverage-mapping alike), so these are
+# measured with kcov, which needs no instrumentation and reads DWARF.
+#
+# EMPTY until the first port lands. While empty every Zig recipe below
+# is a no-op, `zig` is never invoked, and `make coverage` output is
+# byte-identical to the C-only build - so this machinery is reviewable
+# against unchanged numbers, and it does not require the CI toolchain
+# work to land first.
+#
+# A ported module moves from COV_SRCS_MEASURED to here, in the same PR
+# that deletes its .c. Its ci.yml threshold moves with it.
+COV_SRCS_MEASURED_ZIG =
+COV_ZIG_OBJS         = $(addprefix $(BUILD_COV)/,$(COV_SRCS_MEASURED_ZIG:.zig=.o))
 # Pure-synth subset of instrumented .o files - what unit tests link.
 COV_TEST_OBJS        = $(addprefix $(BUILD_COV)/,$(OBJS_NO_MAIN))
 
@@ -495,8 +511,50 @@ $(BUILD_COV)/main_testable.o: main.c $(HEADERS) version.h | $(BUILD_COV)
 $(BUILD_COV)/%.o: %.c $(HEADERS) | $(BUILD_COV)
 	gcc $(COV_FLAGS) -c $< -o $@
 
-coverage: $(COV_OBJS) $(BUILD_COV)/main_testable.o
-	gcc $(COV_FLAGS) $(COV_OBJS) -lpulse $(LIBASOUND) -pthread -latomic -o $(BUILD_COV)/synth_cov
+# Coverage-tree objects for modules implemented in Zig.
+#
+# -fllvm is LOAD-BEARING, not a style preference. Zig 0.16 defaults to
+# its self-hosted backend, which embeds each module's full source text
+# into the line table under DW_LNCT_LLVM_source (0x2001) - a vendor
+# content type above DW_LNCT_lo_user. GNU readelf skips the unknown
+# type and carries on; elfutils' libdw rejects the ENTIRE table with
+# "invalid .debug_line section" (errno 26), and kcov reads DWARF
+# through libdw. So under the default backend a ported module reports
+# zero lines and the ci.yml gate takes its explicit FAIL path.
+#
+# Measured, not assumed: libdw 0.190 (Ubuntu 24.04) and 0.193 (current
+# upstream, built from source to check) BOTH reject the self-hosted
+# output; upgrading elfutils does not help. Objects built with -fllvm
+# carry no 0x2001 entries and both versions parse them. In the same
+# binary, precompiled compiler_rt parsed while the module did not,
+# which is what isolated the embedded source as the cause.
+#
+# -fno-stack-check drops the __zig_probe_stack reference that Zig's
+# Debug panic path emits and a gcc link cannot resolve.
+#
+# The release build is deliberately NOT switched to -fllvm: this tree
+# never contributes to it, and the size figures in specs/005-zig-port
+# were measured with the default backend. Same separation as this tree
+# already having -O0 against the release -Os.
+# -fPIC because this tree links BOTH ways: synth_cov is linked with
+# COV_FLAGS, which carries no -no-pie and so gets Ubuntu gcc's default
+# PIE, while the unit-test loop below links -no-pie. A non-PIC object
+# fails the first with "relocation R_X86_64_32S against `.data' can not
+# be used when making a PIE object"; a PIC object satisfies both, since
+# PIC code links into non-PIE executables without complaint.
+$(BUILD_COV)/%.o: zig/%.zig $(HEADERS) | $(BUILD_COV)
+	zig build-obj -ODebug -fllvm -fno-stack-check -fPIC \
+	    -target x86_64-linux-gnu -femit-bin=$@ $<
+
+# $(COV_ZIG_OBJS) is listed separately from $(COV_OBJS) because the
+# latter is derived from $(COV_SRCS), a .c list - a module that moves
+# to Zig leaves that list and would otherwise drop out of the link
+# entirely, surfacing as undefined references from its C callers rather
+# than as anything coverage-shaped. COV_TEST_OBJS needs no such
+# treatment: it comes from OBJS_NO_MAIN, which names .o files and is
+# already language-agnostic.
+coverage: $(COV_OBJS) $(COV_ZIG_OBJS) $(BUILD_COV)/main_testable.o
+	gcc $(COV_FLAGS) $(COV_OBJS) $(COV_ZIG_OBJS) -lpulse $(LIBASOUND) -pthread -latomic -o $(BUILD_COV)/synth_cov
 	@echo "=== render-mode regression ==="
 	# 110 s (~55 bars at 2.00 s/bar) covers INTRO (bars 0-23), BODY (24-47)
 	# and TENSION (48+) so section-gated branches in gen.c - chord
@@ -521,6 +579,43 @@ coverage: $(COV_OBJS) $(BUILD_COV)/main_testable.o
 		awk '/^File/ {sub(/[\x27]/,"",$$2); sub(/[\x27]/,"",$$2); f=$$2} \
 		     /^Lines/ {sub(/Lines executed:/,""); if (f != "") print f": "$$0; f=""}' | \
 		grep "\.c"
+# Zig modules are measured with kcov and printed as a SEPARATE stream,
+# deliberately not routed through the gcov pipeline above - that
+# pipeline ends in `grep "\.c"`, which a .zig row could never pass.
+# Emitting alongside keeps that filter, and the whole gcov path,
+# untouched.
+#
+# Rows are emitted in gcov's exact shape ("<file>: NN.NN% of N")
+# because ci.yml's gate parses by FIELD POSITION: field 2 is the
+# percentage, field 4 the line count it uses to break duplicate-entry
+# ties. tools/kcov-report.py owns that formatting.
+#
+# kcov is run once per unit-test binary and the runs are merged, so a
+# module exercised by several tests accumulates coverage the way gcov
+# already does across the suite. `kcov --merge` writes its result to
+# <outdir>/kcov-merged/coverage.json.
+	@if [ -n "$(COV_SRCS_MEASURED_ZIG)" ]; then \
+		echo "=== per-file line coverage, zig modules (kcov) ==="; \
+		runs=""; \
+		mkdir -p $(BUILD_COV)/kcov; \
+		for t in $(UNIT_TEST_SRCS); do \
+			base=$${t%.c}; out=$(BUILD_COV)/$$base.cov; \
+			[ -x "$$out" ] || continue; \
+			d=$(BUILD_COV)/kcov/$$(basename $$base); \
+			kcov --include-path=$(CURDIR)/zig "$$d" "$$out" >/dev/null 2>&1 || true; \
+			[ -d "$$d" ] && runs="$$runs $$d"; \
+		done; \
+		if [ -n "$$runs" ]; then \
+			kcov --merge $(BUILD_COV)/kcovall $$runs >/dev/null 2>&1 || true; \
+			python3 tools/kcov-report.py \
+				$(BUILD_COV)/kcovall/kcov-merged/coverage.json \
+				$(COV_SRCS_MEASURED_ZIG) \
+				|| { echo "coverage: kcov reporting failed" >&2; exit 1; }; \
+		else \
+			echo "coverage: no kcov runs produced for $(COV_SRCS_MEASURED_ZIG)" >&2; \
+			exit 1; \
+		fi; \
+	fi
 	@echo "(interactive modules audio_pulse.c audio_midi_linux.c excluded - require audio server / ALSA sequencer; main.c measured via main_testable.gcno)"
 
 # --- Sanitizer run (066): ASan + UBSan over the unit suite + a render
@@ -547,6 +642,11 @@ SAN_FLAGS = -O1 -g -Wall -Wextra -Werror \
             -fno-omit-frame-pointer -pthread
 
 SAN_OBJS      = $(addprefix $(BUILD_SAN)/,$(COV_SRCS:.c=.o))
+# Same reason as COV_ZIG_OBJS: SAN_OBJS is derived from the .c list, so
+# a ported module has to be named separately or it silently leaves the
+# sanitizer link. SAN_TEST_OBJS comes from OBJS_NO_MAIN (.o names) and
+# already covers it.
+SAN_ZIG_OBJS  = $(addprefix $(BUILD_SAN)/,$(COV_SRCS_MEASURED_ZIG:.zig=.o))
 SAN_TEST_OBJS = $(addprefix $(BUILD_SAN)/,$(OBJS_NO_MAIN))
 
 $(BUILD_SAN):
@@ -563,8 +663,31 @@ $(BUILD_SAN)/main_testable.o: main.c $(HEADERS) version.h | $(BUILD_SAN)
 $(BUILD_SAN)/%.o: %.c $(HEADERS) | $(BUILD_SAN)
 	gcc $(SAN_FLAGS) -c $< -o $@
 
-test-asan: $(SAN_OBJS) $(BUILD_SAN)/main_testable.o
-	gcc $(SAN_FLAGS) $(SAN_OBJS) -lpulse $(LIBASOUND) -latomic -o $(BUILD_SAN)/synth_asan
+# Sanitizer-tree objects for modules implemented in Zig.
+#
+# gcc cannot instrument a zig build-obj output, so the ported module
+# joins the link UNINSTRUMENTED. That link works: gcc still supplies
+# the ASan/UBSan runtime, interceptors are process-wide, and ASan
+# tolerates partial instrumentation (verified - the C unit test links
+# against a Zig object under -fsanitize=address,undefined
+# -fno-sanitize-recover=all and passes).
+#
+# ReleaseSafe, not ReleaseSmall, and that is the point: at ReleaseSmall
+# Zig disables ALL of its own safety checks, so an uninstrumented
+# object would get no runtime checking at all from either side.
+# ReleaseSafe keeps Zig's integer-overflow and bounds checks, which is
+# the module's replacement for the gcc instrumentation it cannot have.
+# This tree never touches the release binary, so the optimization level
+# carries zero size-budget risk (see the BUILD_SAN comment above).
+# -fPIC for the same reason as the coverage rule: synth_asan links
+# under SAN_FLAGS (default PIE) while the sanitized unit-test loop
+# links -no-pie, and one object has to satisfy both.
+$(BUILD_SAN)/%.o: zig/%.zig $(HEADERS) | $(BUILD_SAN)
+	zig build-obj -OReleaseSafe -fno-stack-check -fPIC \
+	    -target x86_64-linux-gnu -femit-bin=$@ $<
+
+test-asan: $(SAN_OBJS) $(SAN_ZIG_OBJS) $(BUILD_SAN)/main_testable.o
+	gcc $(SAN_FLAGS) $(SAN_OBJS) $(SAN_ZIG_OBJS) -lpulse $(LIBASOUND) -latomic -o $(BUILD_SAN)/synth_asan
 	@echo "=== sanitized render regression (30 s, seed 0) ==="
 	@f=$$(mktemp) && ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 \
 		./$(BUILD_SAN)/synth_asan --render 30 "$$f" --seed 0 >/dev/null \
