@@ -16,11 +16,12 @@ gen_env_table
 gen_note_table
 gen_euclid_table
 gen_wavetable
-sin_table.h
-env_table.h
-note_table.h
-euclid_table.h
-wavetable.h
+# NOTE: the generated headers themselves are NOT ignored -- they are
+# committed. Principle III depends on the table bytes being a fixed
+# source of truth, and CI pins ubuntu-24.04 solely because build-time
+# generation reads host libm. Committing them makes that claim true and
+# turns silent per-host drift into a visible git diff. Only the generator
+# BINARIES stay ignored (above).
 version.h
 version.h.tmp
 
