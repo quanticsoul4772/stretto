@@ -155,11 +155,18 @@ to build** in two required checks.
 - **FR-005**: Signed integer division MUST use `@divTrunc` to match
   C's truncate-toward-zero. `@divFloor` differs for negative
   numerators.
-- **FR-006**: Left shifts that discard a nonzero bit MUST use `<<%`.
-  C wraps by definition; a plain Zig `<<` is illegal behavior, and it
-  is unchecked at ReleaseSmall. This is not hypothetical — the
-  xorshift PRNG at `voice.c:93,95` and `gen.c:49,51,343,345` is
-  exactly this pattern, and `voice.c:355` relies on the wrap.
+- **FR-006**: Left shifts that discard a nonzero bit need **no special
+  operator**. Zig's `<<` on an unsigned type discards high bits exactly
+  as C's does; the illegal case is a shift *amount* at or above the bit
+  width. The sites this requirement was written for — the xorshift PRNG
+  at `voice.c:93,95` and `gen.c:49,51,343,345`, and the FM modulation
+  index at `voice.c:355` which reaches ~1.97e8 before shifting — all
+  translate as plain `<<`.
+
+  *Corrected 2026-08-03 during the `voice` port.* This requirement
+  previously mandated `<<%`. **There is no `<<%` operator in Zig** — it
+  does not parse. Computed shift *amounts* still need care (see
+  `lsystem.c:180`), which is the real hazard in this family.
 - **FR-007**: Integer promotion sites MUST make an explicit
   `@truncate` (wrap) vs `@intCast` (trap) choice, recorded in the PR.
   C widens `int16_t` to `int` automatically and Zig does not; affected

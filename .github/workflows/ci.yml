@@ -289,7 +289,7 @@ jobs:
             [audio_midi.c]=90
             [arena.c]=95
             [effects.zig]=95
-            [voice.c]=95
+            [voice.zig]=95
             [gen.c]=90
             [lsystem.zig]=94
             # chord_progression is Zig as of the 096 port. Unlike

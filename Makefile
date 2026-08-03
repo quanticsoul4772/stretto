@@ -230,7 +230,7 @@ ZIG_SIZE_FLAGS = -OReleaseSmall -ffunction-sections -fdata-sections \
 ZIG_LINUX_FLAGS = $(ZIG_SIZE_FLAGS) -fno-PIC -fno-PIE
 
 %.o: zig/%.zig $(HEADERS)
-	zig build-obj $(ZIG_LINUX_FLAGS) -target x86_64-linux-gnu -femit-bin=$@ $<
+	zig build-obj $(ZIG_LINUX_FLAGS) -I. -target x86_64-linux-gnu -femit-bin=$@ $<
 
 # WIN_CFLAGS is a different stack from CFLAGS (no -ffast-math, no
 # -fno-plt, -DWIN32_LEAN_AND_MEAN), so this gets its own parity pass
@@ -238,7 +238,7 @@ ZIG_LINUX_FLAGS = $(ZIG_SIZE_FLAGS) -fno-PIC -fno-PIE
 # COMMON_OBJS, so a module that does not cross-compile breaks `make win`
 # immediately rather than subtly.
 %.win.o: zig/%.zig $(HEADERS)
-	zig build-obj $(ZIG_SIZE_FLAGS) -target x86_64-windows-gnu -femit-bin=$@ $<
+	zig build-obj $(ZIG_SIZE_FLAGS) -I. -target x86_64-windows-gnu -femit-bin=$@ $<
 
 stretto.exe: $(WIN_OBJS)
 	$(WIN_CC) $(WIN_CFLAGS) $(WIN_LDFLAGS) $(WIN_OBJS) -lwinmm -o stretto.exe
@@ -533,7 +533,7 @@ COV_FLAGS = -O0 -g -Wall -Wextra -fprofile-arcs -ftest-coverage
 #                    remaining ~22 uncovered lines are the TTY-only
 #                    termios bodies + die_sys, documented at the
 #                    ci.yml gate).
-COV_SRCS_MEASURED    = arena.c voice.c gen.c \
+COV_SRCS_MEASURED    = arena.c gen.c \
                        mixer.c wav.c audio_midi.c ui.c keys.c
 COV_SRCS_INTERACTIVE = audio_pulse.c audio_midi_linux.c
 # main.c is MEASURED since 080, but via the main_testable object (the
@@ -559,7 +559,7 @@ COV_OBJS             = $(addprefix $(BUILD_COV)/,$(COV_SRCS:.c=.o))
 # A ported module moves from COV_SRCS_MEASURED to here, in the same PR
 # that deletes its .c. Its ci.yml threshold moves with it.
 COV_SRCS_MEASURED_ZIG = density.zig chord_progression.zig motif.zig \
-                        section.zig lsystem.zig effects.zig
+                        section.zig lsystem.zig effects.zig voice.zig
 COV_ZIG_OBJS         = $(addprefix $(BUILD_COV)/,$(COV_SRCS_MEASURED_ZIG:.zig=.o))
 # Pure-synth subset of instrumented .o files - what unit tests link.
 COV_TEST_OBJS        = $(addprefix $(BUILD_COV)/,$(OBJS_NO_MAIN))
@@ -613,7 +613,7 @@ $(BUILD_COV)/%.o: %.c $(HEADERS) | $(BUILD_COV)
 # be used when making a PIE object"; a PIC object satisfies both, since
 # PIC code links into non-PIE executables without complaint.
 $(BUILD_COV)/%.o: zig/%.zig $(HEADERS) | $(BUILD_COV)
-	zig build-obj -ODebug -fllvm -fno-stack-check -fPIC \
+	zig build-obj -ODebug -fllvm -fno-stack-check -fPIC -I. \
 	    -target x86_64-linux-gnu -femit-bin=$@ $<
 
 # $(COV_ZIG_OBJS) is listed separately from $(COV_OBJS) because the
@@ -753,7 +753,7 @@ $(BUILD_SAN)/%.o: %.c $(HEADERS) | $(BUILD_SAN)
 # under SAN_FLAGS (default PIE) while the sanitized unit-test loop
 # links -no-pie, and one object has to satisfy both.
 $(BUILD_SAN)/%.o: zig/%.zig $(HEADERS) | $(BUILD_SAN)
-	zig build-obj -OReleaseSafe -fno-stack-check -fPIC \
+	zig build-obj -OReleaseSafe -fno-stack-check -fPIC -I. \
 	    -target x86_64-linux-gnu -femit-bin=$@ $<
 
 test-asan: $(SAN_OBJS) $(SAN_ZIG_OBJS) $(BUILD_SAN)/main_testable.o
@@ -832,7 +832,7 @@ DEBUG_OBJS   = $(OBJS:.o=.dbg.o)
 # `make debug` is not in CI, so without this rule it would break
 # silently and only surface when someone reached for gdb.
 %.dbg.o: zig/%.zig $(HEADERS)
-	zig build-obj -ODebug -fno-stack-check -fPIC \
+	zig build-obj -ODebug -fno-stack-check -fPIC -I. \
 	    -target x86_64-linux-gnu -femit-bin=$@ $<
 
 synth_debug: $(DEBUG_OBJS)
