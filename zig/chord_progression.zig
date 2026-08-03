@@ -12,9 +12,10 @@
 //!   * `rng % sum` and `current_root % CHORD_N_DEGREES` are unsigned
 //!     in C, so plain `%` matches; no @rem/@mod distinction applies.
 //!   * No `<<` appears here. Where one does (the xorshift PRNG in
-//!     voice.c / gen.c), the translation is `<<%` -- C wraps by
-//!     definition, and a Zig `<<` that discards a nonzero bit is
-//!     illegal behavior, unchecked at ReleaseSmall.
+//!     voice / gen), plain `<<` is the translation: Zig's `<<` on an
+//!     unsigned type discards high bits exactly as C's does. The real
+//!     hazard in that family is a computed shift AMOUNT at or above
+//!     the bit width, not bits shifted out.
 
 // u8, not usize: `current_root % CHORD_N_DEGREES` must be a same-type
 // binary op. The u8 result then coerces to usize for the array index,

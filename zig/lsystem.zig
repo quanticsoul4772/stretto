@@ -28,7 +28,7 @@
 //!     ever widened.
 //!
 //!   * All other shifts are `1 << deg` with deg wrapped into 0..6
-//!     first, so no shift discards a set bit and `<<%` is not needed.
+//!     first, so every shift amount is provably in range.
 //!
 //!   * `pointer` is i8 and is re-anchored to a snapped 0..6 degree on
 //!     every call, so the +/-2 moves cannot leave i8 range.

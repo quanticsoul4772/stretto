@@ -359,6 +359,68 @@ introduced: an attempt to fix the four sites mechanically corrupted
 `v.*.u.ks.buf[i]` into a type error, which is the benign version of
 that failure.
 
+## Per-module size, CI-measured
+
+FR-013 requires every port PR to report CI-measured stripped, packed
+and page-cliff headroom. **The PR bodies did not** — they carry
+VPS-measured control-vs-ported deltas instead, which the Verification
+section of this spec explicitly calls invalid for absolutes
+("CI only — the VPS cannot produce a valid number"). This table is the
+record that requirement asked for, recovered from each PR's CI run.
+
+| after porting | run | stripped | packed | win packed | cliff |
+|---|---|---|---|---|---|
+| `density` | 30772439915 | 49 168 | 30 068 | 44 032 | 3 364 |
+| `chord_progression` | 30772777909 | 49 168 | 30 116 | 44 032 | 3 364 |
+| `motif` | 30773155847 | 49 424 | 30 268 | 44 032 | 3 108 |
+| `section` | 30775392280 | 49 616 | 30 312 | 44 032 | 2 924 |
+| `lsystem` | 30775952889 | 49 976 | 30 664 | 44 032 | 2 524 |
+| `effects` | 30778928369 | 52 504 | 31 220 | 44 544 | 1 020 |
+| `voice` | 30780233035 | 52 504 | 31 392 | 45 056 | 828 |
+| `gen` | 30780989422 | 52 504 | 31 632 | 45 056 | 484 |
+
+CI-measured stripped deltas, which is what the cost model should be
+read from:
+
+| module | VPS delta (as published in the PR) | **CI delta** |
+|---|---|---|
+| `chord_progression` | +0 | **+0** |
+| `motif` | +256 | **+256** |
+| `section` | +192 | **+192** |
+| `lsystem` | +376 | **+360** |
+| `effects` | +2 576 | **+2 528** |
+| `voice` | +0 | **+0** |
+| `gen` | +0 | **+0** |
+
+The VPS deltas were directionally right and mostly exact; `lsystem` and
+`effects` differ by 16 B and 48 B. **The conclusions in this file stand
+unchanged** — the model, the probe-is-a-floor finding, and the
+gen-costs-nothing-because-it-went-last result are all unaffected. What
+was wrong was the source of the numbers in the merged PR bodies, not
+the numbers' meaning.
+
+`density`'s own delta is not derivable from this table: the run before
+it is on a different commit base. Its VPS-measured +40 stands, against
+the all-C figure of 49 128 recorded above.
+
+## Undefined symbols per module (NFR-001)
+
+Measured on the finished tree. NFR-001 permits libc plus libpulse /
+winmm; every symbol below is libc or an intra-project call.
+
+| module | undefined |
+|---|---|
+| `density`, `chord_progression`, `motif`, `section` | none |
+| `lsystem` | `memcpy` |
+| `effects` | `arena_alloc`, `memset` |
+| `voice` | `arena_alloc`, `sat16` |
+| `gen` | `time` + 35 intra-project calls |
+
+PR #197 stated that `effects.o` shows "only `arena_alloc`". It also
+shows `memset`, from `@memset`. Both are permitted and the C original
+called `memset` too, so nothing about the module changed — the claim
+was simply not read before it was written.
+
 ## What is settled
 
 - Hybrid linking works and is bit-exact.
