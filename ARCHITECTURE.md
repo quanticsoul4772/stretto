@@ -6,10 +6,10 @@
 
 | Binary | Size |
 |---|---|
-| Linux `synth` (stripped, links libpulse + libasound) | ~48 KB (49 128 B per CI run 29211125164 on `c7db9fc`, measured 2026-07-19; was 49 064 B measured 2026-07-12 after the 077 size reclaim; STRIP_TARGET = 51 200 B, leaving 2 072 B) |
-| Linux `synth.packed` (UPX) | ~29 KB (30 048 B per CI run 29211125164 on `c7db9fc`, measured 2026-07-19; was 25 460 B per the PR #117 artifact — historical, grows with the stripped binary); PACK_TARGET = 30 720 B per the Makefile enforces the Constitution v1.2.x cap, **leaving 672 B — the binding budget** |
+| Linux `synth` (stripped, links libpulse + libasound) | ~49 KB (49 976 B per CI run 30775952889 on `099-port-lsystem`, measured 2026-08-03 with five modules in Zig; was 49 128 B all-C per run 29211125164; STRIP_TARGET = 51 200 B, leaving 1 224 B) |
+| Linux `synth.packed` (UPX) | ~30 KB (30 664 B per CI run 30775952889, measured 2026-08-03 with five modules in Zig; was 30 048 B all-C per run 29211125164); PACK_TARGET = 30 720 B per the Makefile enforces the Constitution v1.2.x cap, **leaving 56 B — the binding budget, and now nearly spent** |
 | Windows `stretto.exe` (stripped) | ~253 KB (258 560 B per CI run 29211125164 on `c7db9fc`, measured 2026-07-19; was 252 928 B measured 2026-07-11; stripped — `-s` in `WIN_LDFLAGS` strips at link and the `stretto.exe` rule additionally runs `$(WIN_STRIP) -s -R .comment`) |
-| Windows `stretto.packed.exe` (UPX) | ~42.5 KB (43 520 B per CI run 29211125164 on `c7db9fc`, measured 2026-07-19; was ~38 KB per the PR #117 artifact — historical); WIN_PACK_BUDGET = 49 152 B, leaving 5 632 B |
+| Windows `stretto.packed.exe` (UPX) | ~43 KB (44 032 B per CI run 30775952889, measured 2026-08-03; was 43 520 B all-C); WIN_PACK_BUDGET = 49 152 B, leaving 5 120 B |
 
 (Exact packed sizes vary per commit; the authoritative per-commit numbers are the `binary-sizes` artifact each CI run uploads, and the three budgets are gated on every push by `tools/size-budget-gate.sh`.)
 
@@ -32,7 +32,13 @@ The MIDI input capability ([`specs/003-midi-input/spec.md`](./specs/003-midi-inp
 - `quickstart.md` — listener usage + CLI flags + CC map + Linux/Windows platform notes + `--no-midi` byte-identity invariant
 - `data-model.md` — 5 entities: `midi_event_t`, `midi_input_device_t`, `midi_queue_t`, `cc_map_entry_t` + `CC_MAP[128]`, `voice_pool_*_midi` + Voice `trigger_key`/`trigger_channel` discriminator
 
-The ten architectural principles (I–X) are encoded in `.specify/memory/constitution.md` v1.2.1. Three are NON-NEGOTIABLE: I (Tiny Native Binary — ≤48 KB UPX-packed Windows, ≤30 KB UPX-packed Linux, ≤50 KB stripped Linux; the Linux caps were realigned to measured reality on 2026-07-08 by v1.1.0/v1.2.0 — the prior 24 KB / 12 KB figures were aspirational PLAN.md-era targets the shipped synth never met, and the 003 MIDI-input chain itself cost ~5 KB stripped / ~9.5 KB packed on top of the ~39 KB / ~16 KB pre-#109 baseline, per the v1.2.1 attribution correction), III (Deterministic — see amendment note in [Determinism](#determinism) below), VI (Test Discipline — per-file coverage gates). Amendments to the constitution follow the Governance clause and bump the version line. Prior wording-only amendment: Principle III → v1.0.1 (2026-07-06), which closed the wording gap exposed by `/speckit-analyze` finding D1 (Constitution vs spec SC-002 platform-scope wording).
+The incremental Zig port ([`specs/005-zig-port/spec.md`](./specs/005-zig-port/spec.md)) is the fourth capability surface and the only one that changes how the tree is built rather than what it does:
+
+- `spec.md` — FR-001..FR-013: same C ABI through the unchanged `.h`, byte-identical audio, explicit initializers, `@divTrunc` for signed division, `<<%` for shifts that discard a set bit, explicit promotion choices, both build targets per module. `arena.c` is out of scope with rationale.
+- `plan.md` — Constitution Check (all ten principles PASS as of v1.3.0) + Complexity Tracking for the II / V / VI amendments
+- `research.md` — the measurement record: two wrong prior conclusions kept with their reasoning, the LTO-exit mechanism, the `version.h` measurement hazard, and the revised cost model showing the `-fno-lto` probe is a floor rather than a prediction
+
+The ten architectural principles (I–X) are encoded in `.specify/memory/constitution.md` v1.3.0. Three are NON-NEGOTIABLE: I (Tiny Native Binary — ≤48 KB UPX-packed Windows, ≤30 KB UPX-packed Linux, ≤50 KB stripped Linux; the Linux caps were realigned to measured reality on 2026-07-08 by v1.1.0/v1.2.0 — the prior 24 KB / 12 KB figures were aspirational PLAN.md-era targets the shipped synth never met, and the 003 MIDI-input chain itself cost ~5 KB stripped / ~9.5 KB packed on top of the ~39 KB / ~16 KB pre-#109 baseline, per the v1.2.1 attribution correction), III (Deterministic — see amendment note in [Determinism](#determinism) below), VI (Test Discipline — per-file coverage gates). Amendments to the constitution follow the Governance clause and bump the version line. Prior wording-only amendment: Principle III → v1.0.1 (2026-07-06), which closed the wording gap exposed by `/speckit-analyze` finding D1 (Constitution vs spec SC-002 platform-scope wording).
 
 ## Module layout
 
@@ -94,22 +100,22 @@ gen.c   / .h            sample clock, six scales, Rule-110 + Rule-30
                         static-inline schedulers (schedule_bar_boundary,
                         schedule_drums, schedule_bass, schedule_chord,
                         schedule_melody) plus compute_active_mask.
-lsystem.c / .h          L-system phrase generator for the main melody
+lsystem.zig / .h        L-system phrase generator for the main melody
                         (6-symbol alphabet, 3 hand-tuned characters,
                         3 generations of rewrite into a 256 B buffer)
-chord_progression.c/.h  Markov chain over chord functions; chord root
+chord_progression.zig/.h Markov chain over chord functions; chord root
                         advances every 2 bars
-section.c / .h          Song-section state machine (intro / body /
+section.zig / .h        Song-section state machine (intro / body /
                         tension / resolve), 96-bar cycle, crossfades
                         biases (gate, cutoff, reverb wet, mutation
                         interval) across an 8-bar window centered on
                         each boundary; pins discrete biases (kick
                         pattern, L-system character)
-density.c / .h          Adaptive density: tension = popcount(active)
+density.zig / .h        Adaptive density: tension = popcount(active)
                         * 18 + gate >> 2. Counter-cyclical biases
                         (gate +/-16, reverb wet +/-32) sum on top of
                         section biases at the gen.c call sites
-motif.c   / .h          Long-term motif memory: ring buffer of the
+motif.zig / .h          Long-term motif memory: ring buffer of the
                         last 8 four-bar main-melody phrases. Every
                         ~30 bars with ~25% per-bar probability,
                         replay one (verbatim or +/-2 diatonic
@@ -403,7 +409,7 @@ Each entry is `(degree, octave_offset)` measured **above the current chord root*
 
 ### Chord progressions
 
-`chord_progression.c` holds the current chord function as a single `uint8_t current_root` in [0, 6]. The root advances once every two bars via a Markov chain over chord functions; chord triggers within those two bars share the same root.
+`chord_progression.zig` holds the current chord function as a single `uint8_t current_root` in [0, 6]. The root advances once every two bars via a Markov chain over chord functions; chord triggers within those two bars share the same root.
 
 Two 7×7 weight tables (`uint8_t` each, totaling 98 B of `.rodata`):
 
@@ -416,7 +422,7 @@ Bass also reads `chord_progression_get_root()` so its root/fifth alternation (su
 
 ### L-system melodic phrase generator
 
-`lsystem.c` produces the main melody's degree sequence. Replaces the older Markov walker for that voice; counter-melody still uses Markov so the two lines contrast (phrased vs walked).
+`lsystem.zig` produces the main melody's degree sequence. Replaces the older Markov walker for that voice; counter-melody still uses Markov so the two lines contrast (phrased vs walked).
 
 Alphabet (6 symbols, 1 byte each):
 
@@ -476,7 +482,7 @@ Effect: counter-melody sounds responsive to the main line instead of an independ
 
 ### Long-term motifs
 
-`motif.c` holds an 8-slot ring buffer of 64-degree arrays (`MOTIF_NO_NOTE = 0xFF` for empty positions corresponding to gate-suppressed Euclidean hits). Each phrase is 4 bars × 16 Euclidean slots.
+`motif.zig` holds an 8-slot ring buffer of 64-degree arrays (`MOTIF_NO_NOTE = 0xFF` for empty positions corresponding to gate-suppressed Euclidean hits). Each phrase is 4 bars × 16 Euclidean slots.
 
 State machine ticked per bar by `motif_bar_step(bar, rng)`:
 
@@ -498,7 +504,7 @@ A triangle LFO sweeps the mutation interval between `MUTATE_MIN = 1` bar (busy s
 
 ### Song-section state machine
 
-`section.c` runs a 96-bar cycle of four sections — INTRO (24 bars) → BODY (24) → TENSION (24) → RESOLVE (24) — that biases gate density, filter cutoff, reverb wet, mutation interval, and pins drum-kick pattern, L-system character, chord voice type, chord playback mode, and the voice-family mask. The continuous biases and the discrete pins are a pure function of `bar_count`; the INTRO voice-mask combo is the one PRNG-driven choice (drawn once per cycle), which keeps `--seed N` reproducibility intact.
+`section.zig` runs a 96-bar cycle of four sections — INTRO (24 bars) → BODY (24) → TENSION (24) → RESOLVE (24) — that biases gate density, filter cutoff, reverb wet, mutation interval, and pins drum-kick pattern, L-system character, chord voice type, chord playback mode, and the voice-family mask. The continuous biases and the discrete pins are a pure function of `bar_count`; the INTRO voice-mask combo is the one PRNG-driven choice (drawn once per cycle), which keeps `--seed N` reproducibility intact.
 
 | Bias | INTRO | BODY | TENSION | RESOLVE | Type |
 |---|---|---|---|---|---|
@@ -520,7 +526,7 @@ Status row shows the current section as `Sec:<name>` (intro / body / tens / res)
 
 ### Adaptive density
 
-`density.c` derives a per-bar tension scalar from the current bar-stable active mask and the user gate probability, then biases gate and reverb wet **counter-cyclically** — busy textures pull back a touch, sparse textures fill in a touch. Energy self-balances over bar timescales while staying responsive to the section state machine.
+`density.zig` derives a per-bar tension scalar from the current bar-stable active mask and the user gate probability, then biases gate and reverb wet **counter-cyclically** — busy textures pull back a touch, sparse textures fill in a touch. Energy self-balances over bar timescales while staying responsive to the section state machine.
 
 ```
 tension = popcount(ca_row & 0x7F) * 18 + gate_prob >> 2;   /* 0..189 */
@@ -528,7 +534,7 @@ gate_bias   = (128 - tension) / 8   /* approx +/-16 */
 reverb_bias = (128 - tension) / 4   /* approx +/-32 */
 ```
 
-Composes with `section.c` additively. Both reverb biases sum and are pushed to `effects.c` via `reverb_set_wet_bias`; the gate bias adds to the section + user values at the melody trigger's clamp step. Density is a pure function of the current bar's CA + gate inputs — no PRNG, no persistent state beyond the cached tension. Status row shows the tension as `Td:<n>` (yellow).
+Composes with `section.zig` additively. Both reverb biases sum and are pushed to `effects.c` via `reverb_set_wet_bias`; the gate bias adds to the section + user values at the melody trigger's clamp step. Density is a pure function of the current bar's CA + gate inputs — no PRNG, no persistent state beyond the cached tension. Status row shows the tension as `Td:<n>` (yellow).
 
 ### Mutation
 
@@ -663,11 +669,11 @@ Approximate line coverage:
 | `effects.c` | 100% (test_effects + test_keys) | ≥95% |
 | `voice.c` | 98% | ≥95% |
 | `gen.c` | 99% | ≥90% |
-| `lsystem.c` | 94.8% | ≥94% — proven ceiling: the only uncovered lines are unknown-symbol guards, and a unit test pins them unreachable (mutation writes only SYM_UP..SYM_REST) |
-| `chord_progression.c` | 92.6% | ≥92% — proven ceiling: the only uncovered lines are the degenerate-row guard, and a unit test pins it unreachable (every Markov row has a positive sum) |
-| `section.c` | 100% | ≥95% |
-| `density.c` | 100% | ≥95% |
-| `motif.c` | 100% | ≥95% |
+| `lsystem.zig` | 96.6% | ≥94% — proven ceiling: the only uncovered lines are unknown-symbol guards, and a unit test pins them unreachable (mutation writes only SYM_UP..SYM_REST) |
+| `chord_progression.zig` | 92.6% | ≥92% — proven ceiling: the only uncovered lines are the degenerate-row guard, and a unit test pins it unreachable (every Markov row has a positive sum) |
+| `section.zig` | 100% | ≥95% |
+| `density.zig` | 100% | ≥95% |
+| `motif.zig` | 100% | ≥95% |
 | `mixer.c` | 100% | ≥95% |
 | `wav.c` | 95% | ≥90% |
 | `main.c` | 99.33% (gcov, identical on CI and WSL; argv parse + error paths + dispatch driven by `tests/unit/test_main`'s fork harness over `stretto_main`, `audio_play` stubbed to a sentinel exit; the one uncovered line is the env-symmetric list-devices branch) | ≥99% |
@@ -743,6 +749,23 @@ ci.yml defines two jobs. The `sanitizers` job (066) is a single `make test-asan`
 The Bridge regression test (step 6) + Binary size budget gate (step 16) are the only 2 spec↔build enforcement points, with clear pre-flight / measurement roles.
 
 ## Build details
+
+### Two languages, one build system
+
+GNU Make remains the build system and gcc remains the linker for every target. gcc compiles the C; `zig build-obj` compiles each ported module to an object file. Five object-file classes each have one rule per language: `%.o`, `%.win.o`, `%.dbg.o`, `$(BUILD_COV)/%.o`, `$(BUILD_SAN)/%.o`.
+
+Because gcc still links, the whole `LDFLAGS` stack (`-z noseparate-code`, `--hash-style=sysv`, `--gc-sections`, `-no-pie`) applies unchanged. The compile side does not carry over — `zig build-obj` inherits nothing from `CFLAGS`, so `ZIG_SIZE_FLAGS` restates the codegen intent per class. Omitting `-ffunction-sections -fdata-sections` leaves the object as one `.text` blob with nothing for `--gc-sections` to strip; omitting `-fno-unwind-tables` leaves `.eh_frame`, which `strip -s` does **not** remove. Together those measured 192 B on a 42-line module.
+
+Two per-tree deviations, both load-bearing:
+
+- **`build_cov` uses `-fllvm`.** Zig 0.16 defaults to its self-hosted backend, which embeds each module's source text into the line table under `DW_LNCT_LLVM_source` (0x2001). elfutils' libdw rejects the whole table as `invalid .debug_line`, and kcov reads DWARF through libdw — so under the default backend a ported module reports zero coverage. Confirmed against libdw 0.190 and 0.193; `llvm-dwarfdump --verify` calls the same section valid, so libdw is the outlier.
+- **`build_san` uses `-OReleaseSafe`.** gcc cannot instrument a `zig build-obj` output, so a ported module joins the ASan link uninstrumented. ReleaseSafe keeps Zig's own overflow and bounds checks; ReleaseSmall would disable those too, leaving the module unchecked from both sides. That tree never touches the release binary, so the optimization level carries no size risk.
+
+A ported module leaves gcc's LTO unit, so its callers stop inlining into it. That is the dominant term in the per-module size cost and has nothing to do with Zig — see `specs/005-zig-port/research.md`.
+
+Coverage is measured by gcov for C modules and kcov for Zig modules, both emitting into the same `make coverage` output in the same format, read by one CI gate. The two backends do not produce comparable line counts.
+
+### Flags and packing
 
 Linux flags (`-Os -flto -ffunction-sections -fdata-sections -Wl,--gc-sections`) and `strip -s -R .comment` are standard. `make pack` runs UPX `--ultra-brute` on top. **Currently a ~38.8 % reduction** (2026-07-19, CI run 29211125164 on `c7db9fc`: synth 49 128 B → synth.packed 30 048 B = 61.16 % retained). Historical example, per the PR #117 `binary-sizes` artifact: 43 944 B → 25 460 B = 57.94 % retained = 42.06 % reduction; the prior ~33 % pre-#109 hedge reflected the smaller pre-003-chain baseline where 24 576 × 0.67 ≈ 16 384. **The ratio itself drifts and is not a constant to reason from** — it has moved 42.06 % → 38.8 % as the binary grew, and it also varies by UPX version (3.96 retains 60.09 % on the same input where CI's 4.2.2 retains 61.16 %). This is the same effect as the UPX-compresses-text finding in Constitution v1.2.2: packed size does not track stripped size linearly.
 
