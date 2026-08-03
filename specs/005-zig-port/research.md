@@ -183,6 +183,11 @@ Page-cliff headroom is 3 396 B across all tuned variants; the advisory
 threshold in `tools/size-budget-gate.sh` is 256 B, so no cliff risk at
 this size.
 
+> **This stopped being true.** At completion the headroom is **324 B**
+> against that same 256 B advisory — 68 B of margin, and the binding
+> constraint on the project. "At this size" was doing the load-bearing
+> work in that sentence and the size changed. See "What is settled".
+
 ### On the packed column
 
 Variant 3 lands 4 B *below* the all-C control at identical stripped
