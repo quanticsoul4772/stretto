@@ -9,7 +9,7 @@
 pkgname=stretto
 pkgver=1.3.0
 pkgrel=1
-pkgdesc="Tiny deterministic generative music synthesizer (C99, no malloc, single 128 KB arena)"
+pkgdesc="Tiny deterministic generative music synthesizer (C99 + Zig, no malloc, single 128 KB arena)"
 arch=('x86_64')
 url="https://github.com/quanticsoul4772/stretto"
 license=('MIT')
