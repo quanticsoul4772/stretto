@@ -260,6 +260,7 @@ same commit, `STRETTO_VERSION` pinned:
 | `motif` | not probed | +256 | |
 | `section` | +96 | **+192** | 2× |
 | `lsystem` | **−40** | **+376** | sign flip |
+| `effects` | +448 | **+2 576** | **5.75×** |
 
 M0's "codegen costs zero" was established on `density`: four functions,
 each a load or a subtract-shift. The probe stays exact for modules of
@@ -278,6 +279,20 @@ The combined five-module probe figure (+984 stripped / +280 packed for
 all of `section`, `lsystem`, `effects`, `voice`, `gen`) inherits the
 same floor status. `section` and `lsystem` alone came to +568 stripped
 against a +56 prediction for the pair.
+
+`effects` then came in at **+2 576 against a +448 probe — 5.75×**, and
+larger on its own than the probe's figure for all five modules
+combined. It is the first ported module in the per-sample path and the
+densest arithmetic in the tree: four comb filters and two all-passes
+per channel per sample, a cubic soft-clip widening to i64, and a
+feed-forward compressor with a divide in the gain path. Nothing about
+the ratio is anomalous — it is the same effect as `section` and
+`lsystem`, scaled by how much the module computes.
+
+**Practical consequence**: the probe is useful for ordering modules by
+expected cost and useless for sizing a budget. The v1.4.0 caps were set
+deliberately loose for this reason, and `effects` alone would have
+breached a cap sized from the probe.
 
 ## Open questions
 
