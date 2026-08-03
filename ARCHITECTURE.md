@@ -34,7 +34,7 @@ The MIDI input capability ([`specs/003-midi-input/spec.md`](./specs/003-midi-inp
 
 The incremental Zig port ([`specs/005-zig-port/spec.md`](./specs/005-zig-port/spec.md)) is the fourth capability surface and the only one that changes how the tree is built rather than what it does:
 
-- `spec.md` — FR-001..FR-013: same C ABI through the unchanged `.h`, byte-identical audio, explicit initializers, `@divTrunc` for signed division, `<<%` for shifts that discard a set bit, explicit promotion choices, both build targets per module. `arena.c` is out of scope with rationale.
+- `spec.md` — FR-001..FR-013: same C ABI through the unchanged `.h`, byte-identical audio, explicit initializers, `@divTrunc` for signed division, explicit shift-amount widths, explicit promotion choices, both build targets per module. (FR-006 originally mandated `<<%`; there is no such operator in Zig and it was corrected during the `voice` port. `arena` was originally out of scope; its rationale expired and it was ported at PR #204.)
 - `plan.md` — Constitution Check (all ten principles PASS as of v1.3.0) + Complexity Tracking for the II / V / VI amendments
 - `research.md` — the measurement record: two wrong prior conclusions kept with their reasoning, the LTO-exit mechanism, the `version.h` measurement hazard, and the revised cost model showing the `-fno-lto` probe is a floor rather than a prediction
 
@@ -593,7 +593,7 @@ Without `--seed`, `gen_init` derives the seed from `time(NULL)` at startup, so e
 
 **Consumer (audio thread, both platforms)** — `audio_midi_drain` runs at the top of `render_chunk`. One acquire-load of `q.head` per chunk; the loop then acquire-loads `q.tail`, dispatches one event, and release-stores `tail + 1` — per event, not one bulk store at the end (single-consumer invariant per FR-033 — the audio thread is never blocked on platform I/O; researchers P1 documented that `__atomic_*` is the C11 acquire/release model not `volatile`). Per event: if `q.channel_filter != 0 && ev.channel != q.channel_filter` → silent drop (FR-004 + preflight M1 fix — the filter lives in the audio thread, NOT in the producer callback, so a multi-thread callback race cannot leak disallowed events past the filter). Then dispatch by `type`:
 
-- **Note On** (incl. velocity 0 ⇒ Note Off per FR-011) → `voice_pool_trigger_midi(scaled_note, velocity, channel)` where `scaled_note = SCALES[cur_scale][K%7] + clamp(K/7 - 5, -2, +4) * 12` (octave clamp + preflight H2 fix). Synth voice = `VOICE_FM` (mirroring the live-mode melody handler's per-step FM/KS alternation; fixed at FM for MIDI since external triggers are not on the 16-step Euclidean grid). Velocity carries into the output through the voice's peak-normalization `gain` (env_amp is overwritten every sample by `env_step`, so scaling it directly would be undone): `gain = velocity * 256 / 127`, clamped `[64, 1024]` (minimum-audible floor / `PEAK_GAIN_MAX` 4× ceiling per `voice.c:voice_pool_trigger_midi`).
+- **Note On** (incl. velocity 0 ⇒ Note Off per FR-011) → `voice_pool_trigger_midi(scaled_note, velocity, channel)` where `scaled_note = SCALES[cur_scale][K%7] + clamp(K/7 - 5, -2, +4) * 12` (octave clamp + preflight H2 fix). Synth voice = `VOICE_FM` (mirroring the live-mode melody handler's per-step FM/KS alternation; fixed at FM for MIDI since external triggers are not on the 16-step Euclidean grid). Velocity carries into the output through the voice's peak-normalization `gain` (env_amp is overwritten every sample by `env_step`, so scaling it directly would be undone): `gain = velocity * 256 / 127`, clamped `[64, 1024]` (minimum-audible floor / `PEAK_GAIN_MAX` 4× ceiling per `voice.zig:voice_pool_trigger_midi`).
 - **Note Off** → `voice_pool_release_midi(key, channel)` matching by the `trigger_key` + `trigger_channel` discriminator on each `Voice`. Sets `env_phase = ENV_R; env_time = 0;`; no-op if already `ENV_R` (FR-013) or no match (FR-012 unmatched-key no-op).
 - **CC** → lookup `CC_MAP[ev.key]`. If `target == CC_TARGET_NONE` → silent drop (CC#0, #10, #16, #17, #19 unassigned per Principle VII). CC#64 (sustain, 065) and CC#123 (All Notes Off, 067) use raw value semantics and change voice hold/release state only. Everything else: `delta = ((int)ev.value - 64) * entry.scale` and call the corresponding `adjust_*`. Multiple CCs targeting the same parameter sum additively per FR-022 (`adjust_*` composes over the prior call).
 
@@ -659,27 +659,27 @@ The oscilloscope draws each frame into a 24 KB static buffer (one `write()` sysc
 | `make coverage` | Rebuilds instrumented (`-fprofile-arcs -ftest-coverage`), runs the regression + unit suites, prints per-file line coverage via `gcov`. |
 | `make test-asan` | ASan + UBSan over the unit suite + a 30 s render, in its own `build_san/` tree. UB is FATAL (`-fno-sanitize-recover`) so CI cannot green-light a report-and-continue; LSan is off (no malloc in the synth; alsa-lib's config cache is a known false positive). Runs as its own CI job. |
 
-The framework header `tests/unit/test.h` (149 LOC) provides `TEST(name) {...}` registration via constructor attributes plus assertion macros (`ASSERT_TRUE` / `ASSERT_EQ` / `ASSERT_NE` / `ASSERT_NEAR` / `ASSERT_BETWEEN`). Each `tests/unit/test_*.c` links against `arena.o + voice.o + gen.o` (no `main.o`) and runs as a standalone binary.
+The framework header `tests/unit/test.h` (149 LOC) provides `TEST(name) {...}` registration via constructor attributes plus assertion macros (`ASSERT_TRUE` / `ASSERT_EQ` / `ASSERT_NE` / `ASSERT_NEAR` / `ASSERT_BETWEEN`). Each `tests/unit/test_*.c` links against `arena.o + voice.o + gen.o` (object names are language-agnostic; all three now come from Zig sources) (no `main.o`) and runs as a standalone binary.
 
-Approximate line coverage:
+Line coverage, measured (CI run 30784977189; gcov for C modules, kcov for Zig — the two backends count differently, so the line totals are not comparable across languages):
 
 | File | Coverage | CI gate |
 |---|---|---|
-| `arena.c` | 100% (OOM exit covered via fork) | ≥95% |
-| `effects.c` | 100% (test_effects + test_keys) | ≥95% |
-| `voice.c` | 98% | ≥95% |
-| `gen.c` | 99% | ≥90% |
-| `lsystem.zig` | 96.6% | ≥94% — proven ceiling: the only uncovered lines are unknown-symbol guards, and a unit test pins them unreachable (mutation writes only SYM_UP..SYM_REST) |
-| `chord_progression.zig` | 92.6% | ≥92% — proven ceiling: the only uncovered lines are the degenerate-row guard, and a unit test pins it unreachable (every Markov row has a positive sum) |
-| `section.zig` | 100% | ≥95% |
-| `density.zig` | 100% | ≥95% |
-| `motif.zig` | 100% | ≥95% |
-| `mixer.c` | 100% | ≥95% |
-| `wav.c` | 95% | ≥90% |
-| `main.c` | 99.33% (gcov, identical on CI and WSL; argv parse + error paths + dispatch driven by `tests/unit/test_main`'s fork harness over `stretto_main`, `audio_play` stubbed to a sentinel exit; the one uncovered line is the env-symmetric list-devices branch) | ≥99% |
-| `audio_midi.c` | ~98% (gcov, WSL Ubuntu; CC dispatch + bounds/channel guards + sustain/All-Notes-Off + ring buffer + opt-out + the 50k-event fuzz; 36 unit tests in `tests/unit/test_midi.c`) | ≥90% |
-| `ui.c` | 92.88% (gcov, identical on CI and WSL; draw/write/degrade/signal paths fork-driven by `tests/unit/test_ui.c` — a signal-death child never flushes gcov counters, so the handler lines are carried by a retrieved-handler-on-SIGWINCH fork; the ~26 uncovered lines are TTY-only termios bodies + `die_sys`) | ≥92% |
-| `keys.c` | 100% (fully driven by `test_keys`/`test_resume`) | ≥100% |
+| `arena.zig` | 100% of 12 (kcov; OOM exit covered via fork) | ≥95% |
+| `effects.zig` | 100% of 184 (kcov; test_effects + test_keys) | ≥95% |
+| `voice.zig` | 99.3% of 541 (kcov) | ≥95% |
+| `gen.zig` | 99.5% of 388 (kcov) | ≥90% |
+| `lsystem.zig` | 96.6% of 89 (kcov) | ≥94% — proven ceiling: the only uncovered lines are unknown-symbol guards, and a unit test pins them unreachable (mutation writes only SYM_UP..SYM_REST) |
+| `chord_progression.zig` | 92.6% of 27 (kcov) | ≥92% — proven ceiling: the only uncovered lines are the degenerate-row guard, and a unit test pins it unreachable (every Markov row has a positive sum) |
+| `section.zig` | 100% of 48 (kcov) | ≥95% |
+| `density.zig` | 100% of 14 (kcov) | ≥95% |
+| `motif.zig` | 100% of 60 (kcov) | ≥95% |
+| `mixer.c` | 100% of 12 (gcov) | ≥95% |
+| `wav.c` | 100% of 48 (gcov) | ≥90% |
+| `main.c` | 99.33% of 150 (gcov, identical on CI and WSL; argv parse + error paths + dispatch driven by `tests/unit/test_main`'s fork harness over `stretto_main`, `audio_play` stubbed to a sentinel exit; the one uncovered line is the env-symmetric list-devices branch) | ≥99% |
+| `audio_midi.c` | 93.14% of 102 (gcov; CC dispatch + bounds/channel guards + sustain/All-Notes-Off + ring buffer + opt-out + the 50k-event fuzz; 36 unit tests in `tests/unit/test_midi.c`) | ≥90% |
+| `ui.c` | 92.90% of 366 (gcov, identical on CI and WSL; draw/write/degrade/signal paths fork-driven by `tests/unit/test_ui.c` — a signal-death child never flushes gcov counters, so the handler lines are carried by a retrieved-handler-on-SIGWINCH fork; the ~26 uncovered lines are TTY-only termios bodies + `die_sys`) | ≥92% |
+| `keys.c` | 100% of 83 (gcov; fully driven by `test_keys`/`test_resume`) | ≥100% |
 | `audio_pulse.c`, `audio_midi_linux.c` | — | excluded (require a live audio server / ALSA sequencer — listed in `Makefile` `COV_SRCS_INTERACTIVE`) |
 | `audio_midi_winmm.c` | — | platform-gated (Windows cross-compile only via `x86_64-w64-mingw32-gcc`; the Linux CI runner does not produce `audio_midi_winmm.o`, so it is implicitly excluded from `COV_SRCS_MEASURED` without needing an interactive-source listing) |
 
