@@ -66,7 +66,7 @@ No C++, no external runtime dependencies beyond libc + libpulse (Linux) / winmm 
 
 The runtime-dependency clause binds Zig modules identically and is checked, not assumed: `nm -u` on a produced object must show nothing outside libc/libgcc. Zig's own runtime is not linked in — at the optimization levels the release build uses, a ported leaf module produces no undefined symbols at all.
 
-**Amendment history (v1.3.0, 2026-08-02).** This principle was "C99 Only" through v1.2.2. The Zig port (`specs/005-zig-port`) is incremental and per-module, and the honest end state is a permanent mix rather than a migration: `main.c`, `ui.c`, `keys.c`, `wav.c`, `mixer.c`, `arena.c` and the `audio_*` backends stay C. Cost was measured before this amendment, not asserted after it — a tuned Zig module and the same module compiled as C without LTO produce byte-identical stripped binaries (CI run 30756190233), so the language change costs nothing against Principle I and the per-module cost is leaving gcc's LTO unit.
+**Amendment history (v1.3.0, 2026-08-02).** This principle was "C99 Only" through v1.2.2. The Zig port (`specs/005-zig-port`) is incremental and per-module, and the honest end state is a permanent mix rather than a migration: `main.c`, `ui.c`, `keys.c`, `wav.c`, `mixer.c`, `arena.c` and the `audio_*` backends stay C. *(Superseded for `arena` only: it was ported at PR #204 once its exclusion rationale expired — see the v1.4.2 measurement-refresh block above, which records why. The other seven still stay C. This sentence is left as written because it is what v1.3.0 reasoned from.)* Cost was measured before this amendment, not asserted after it — a tuned Zig module and the same module compiled as C without LTO produce byte-identical stripped binaries (CI run 30756190233), so the language change costs nothing against Principle I and the per-module cost is leaving gcc's LTO unit.
 
 ### III. Deterministic (NON-NEGOTIABLE)
 Given `--seed N`, audio output is byte-identical across runs and across the supported build targets (Linux glibc + Windows winmm, both little-endian x86). The runtime engine is integer-only (int16 / int32 / int64) — no `double` or `float` in any synth / voice / mixer / effects module. The build-time table generators (`gen_*_table.c`) use `pow()` / `sin()` / `double`, but their outputs are rounded with `(int)(x + 0.5)` per the deterministic IEEE-754 round-half-to-even contract and committed to headers, so the source-of-truth bytes for every constant are identical regardless of which platform produced the committed `.h`. The WAV writer emits native-endian RIFF (`fwrite(&uint16/uint32, ...)`); little-endian on both supported targets. No clock reads inside the synth, no untracked PRNG sources, no thread-induced ordering. A bit-exact 16-second SHA-256 regression test gates every PR on Linux; a multi-seed integration test catches drift across seeds. Intentional output changes require regenerating goldens in the same PR. (A Windows-side WAV byte-identity runner is not currently in CI — the cross-platform invariant holds by code construction, not by automated cross-platform test.)
@@ -128,9 +128,17 @@ The synth must sound intentional. Pure randomness is a tool, not a goal. New gen
 ## Additional Constraints
 
 ### Memory model
-Single 128 KB static arena (`arena.c`), 8-byte-aligned bump allocator, no `free`. All audio buffers, voice pool, and reverb/delay state allocate from the arena. Per-module static state (Markov tables, ring buffers, etc.) lives in `.bss` unless it carries a non-zero initializer. No `malloc`, no dynamic resizing. OOM in the arena is a programmer error and exits the process.
+Single 128 KB static arena (`zig/arena.zig`), 8-byte-aligned bump allocator, no `free`. All audio buffers, voice pool, and reverb/delay state allocate from the arena. Per-module static state (Markov tables, ring buffers, etc.) lives in `.bss` unless it carries a non-zero initializer. No `malloc`, no dynamic resizing. OOM in the arena is a programmer error and exits the process. `arena.h` is unchanged and remains the seam; the pool carries an explicit all-zero initializer and 64-byte alignment, because `undefined` would move 128 KB out of `.bss` into `.data`.
 
-`arena.c` stays C (`specs/005-zig-port/spec.md`, Out of Scope): it is a single 128 KB instrumented global, and porting it removes the ASan redzone guarding the writes that `effects.c` and `voice.c` — which remain C and remain instrumented — make into the pool. It is the one module whose port would degrade sanitizer coverage for modules that were not ported, to save 22 lines.
+**The arena exclusion, and why it expired (v1.4.4, 2026-08-03).** This section previously read:
+
+> `arena.c` stays C (`specs/005-zig-port/spec.md`, Out of Scope): it is a single 128 KB instrumented global, and porting it removes the ASan redzone guarding the writes that `effects.c` and `voice.c` — which remain C and remain instrumented — make into the pool. It is the one module whose port would degrade sanitizer coverage for modules that were not ported, to save 22 lines.
+
+Three of those claims are now false. `arena` was ported at PR #204; `effects` and `voice` became Zig at PRs #197 and #199, so neither "remains C" nor "remains instrumented"; and the `specs/005-zig-port/spec.md` Out-of-Scope entry it cites is struck through as superseded.
+
+The rationale was sound when written and expired without being noticed. gcc cannot instrument a `zig build-obj` output, so by the time arena was reached **every module allocating from the pool was already uninstrumented** and the redzone protected nothing it was kept for. Leaving arena as the one C module on the synth side would have been arbitrary rather than principled. What compensates is Principle VI's `build_san` rule: ported modules compile at `-OReleaseSafe` so a module gcc cannot instrument still carries Zig's own overflow and bounds checks.
+
+`specs/005-zig-port/plan.md` recorded this section's `arena.c` reference as "resolved by putting arena out of scope." That resolution was undone by PR #204 and nothing pointed back here.
 
 A file-scope variable in a Zig module carries an **explicit initializer matching the C declaration it replaces**. `undefined` is prohibited: it is 0xAA-poisoned outside ReleaseSmall/ReleaseFast and moves the symbol out of `.bss`. The hazard is silent in both directions — a wrong initial value can pass the golden hash, the multi-seed test, the unit tests and the size gate at once when the first write precedes any consequential read.
 
@@ -170,7 +178,33 @@ Zig emits no `.d` files, so ported modules are outside `-MMD -MP` dependency tra
 - Removing a NON-NEGOTIABLE principle requires explicit user approval in the amendment PR.
 - All `/speckit-specify` and `/speckit-plan` outputs must declare compliance with each principle or document the exception.
 
-**Version**: 1.4.3 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-08-03
+**Version**: 1.4.4 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-08-03
+
+<!--
+v1.4.4 (2026-08-03) — Memory model caught up to PR #204.
+
+PATCH, same basis as v1.4.3: corrected wording, no principle content
+changed. Principle I is UNTOUCHED.
+
+The Memory model section named `arena.c` as the arena implementation
+and carried a paragraph asserting that arena "stays C" because porting
+it would remove the ASan redzone guarding writes from `effects.c` and
+`voice.c`, "which remain C and remain instrumented". All three module
+claims were false: arena went Zig at PR #204, effects at #197, voice
+at #199. The cited spec.md Out-of-Scope entry is struck through as
+superseded.
+
+The rationale was correct when written. It expired at #199 — the
+moment the last instrumented caller of the pool became Zig — and was
+acted on correctly at #204, but this section was never updated to
+match. `specs/005-zig-port/plan.md` had recorded the reference as
+"resolved by putting arena out of scope"; #204 undid that resolution
+and nothing pointed back here.
+
+Also added: a supersession note on the v1.3.0 amendment-history
+paragraph, which lists `arena.c` among the modules that stay C. That
+sentence is left as written, because it is what v1.3.0 reasoned from.
+-->
 
 <!--
 v1.4.3 (2026-08-03) — preamble caught up to Principle II.
