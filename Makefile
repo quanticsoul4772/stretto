@@ -119,13 +119,27 @@ OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
 #   specs/005-zig-port/plan.md Non-Goals), the second of which
 #   recommended abandoning three modules mid-port.
 #
-#   The value is PROVISIONAL and deliberately loose. effects, voice and
-#   gen are unported; the -fno-lto probe floors them at +1 176 B
-#   stripped and observed probe-to-actual ratios (section 2x, lsystem
-#   sign-flipped) put the real figure materially higher. Phase 7 step 3
-#   re-tightens both caps to the finished tree's measurement plus the
-#   project's customary headroom, at which point they resume being a
-#   real constraint instead of a ceiling picked in advance.
+#   The value was PROVISIONAL when set: effects, voice and gen were
+#   unported, the -fno-lto probe floored them at +1 176 B stripped, and
+#   observed probe-to-actual ratios put the real figure higher.
+#
+# SETTLED (v1.4.1, CI run 30781463812, port complete at PR #200):
+#   52 504 B stripped / 31 624 B packed / 45 056 B Windows packed.
+#   Headroom 9.2 % / 10.1 % / 9.1 %.
+#
+#   The caps STAY. v1.4.0 promised a re-tighten to "measurement plus
+#   customary headroom", and that arithmetic settles it the other way:
+#   customary is ~14 % (v1.1.0) and ~21 % (v1.2.0), which on the
+#   measured tree give 58 KB and 37 KB -- LOOSER than what is already
+#   here. The loose guess landed tighter than this project has ever set
+#   a budget. Lowering further would go past its own precedent.
+#
+#   What actually constrains growth now is the PAGE CLIFF, not either
+#   cap: linux_synth_page_cliff_headroom is 484 B against a 256 B
+#   advisory, down from 3 428 B across the port. The code segment pays
+#   file size in whole 4 KB pages, so the next feature that crosses a
+#   boundary costs 4 096 B stripped no matter what these numbers say.
+#   Reason from the cliff first.
 # Note also that stripped-byte savings do NOT transfer to packed at
 # parity: UPX compresses repetitive text ~3:1 (measured 2026-07-19,
 # 288 B stripped -> 96 B packed), so packed headroom shrinks far more

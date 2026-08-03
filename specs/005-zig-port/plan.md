@@ -205,7 +205,7 @@ arc is ten-plus. Stale surface: `ARCHITECTURE.md:9-12` (size table),
 `:16-35` (spec-kit pipeline, needs an 005 entry). Plus `README.md` and
 `CHANGELOG.md`.
 
-### Phase 7 — Realign the budgets, then finish the port
+### Phase 7 — Realign the budgets, then finish the port ✅ **COMPLETE**
 
 `density`, `chord_progression`, `motif`, `section` and `lsystem` are
 Zig as of PR #193. `effects`, `voice` and `gen` remain, and at 30 664 B
@@ -239,10 +239,18 @@ port. v1.1.0 and v1.2.0 both realigned budgets to measured reality, and
    union members directly, `voice.c:667` computes `sizeof(Voice)` for
    `arena_alloc`, and the Zig side sets field offsets.
 
-3. **Re-tighten** — after the last module lands, set the caps to the
-   measured figure plus the customary headroom, so they resume being a
-   real constraint on the finished tree rather than a ceiling picked in
-   advance.
+3. **Re-tighten** — ✅ **settled by v1.4.1; the caps stay.** Running
+   that arithmetic on the finished tree reverses the expectation: the
+   project's customary headroom is ~14 % (v1.1.0) and ~21 % (v1.2.0),
+   which against 52 504 B stripped / 31 624 B packed give 58 KB and
+   37 KB — **looser than the v1.4.0 values already in place.** The
+   deliberately-loose guess landed at 9.2 % and 10.1 %, tighter than
+   this project has ever set a budget. Lowering further would go past
+   its own precedent on a one-release-old measurement.
+
+   What constrains growth now is the **page cliff**, not either cap:
+   484 B of headroom against a 256 B advisory, down from 3 428 B across
+   the port. Reason from that number first.
 
 ## Non-Goals *(stated because two prior plan revisions claimed them)*
 

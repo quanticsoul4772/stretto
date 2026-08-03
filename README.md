@@ -351,9 +351,9 @@ The spec-kit artifacts (spec, plan, research, tasks, quickstart) live under `spe
 | `main.c` | argv parsing + dispatch to render-mode or live-audio |
 | `config.h` | Project-wide audio constants (`SAMPLE_RATE`, `BUFFER_FRAMES`) |
 | `mixer.c` / `.h` | `render_chunk()` — voice mix → reverb → delay → soft saturation |
-| `voice.c` / `.h` | Voice struct (KS / FM / wavetable / additive / super-saw / drum), ADSR, SVF, super-saw glide, role-based pool, peak normalization |
-| `effects.c` / `.h` | Master-bus delay, Schroeder reverb, soft saturation, shared `sat16` |
-| `gen.c` / `.h` | Sample clock, scales, CAs, counter-melody Markov, Euclidean rhythm, drum patterns, mutation, scheduler dispatcher |
+| `voice.zig` / `.h` | Voice struct (KS / FM / wavetable / additive / super-saw / drum), ADSR, SVF, super-saw glide, role-based pool, peak normalization |
+| `effects.zig` / `.h` | Master-bus delay, Schroeder reverb, soft saturation, shared `sat16` |
+| `gen.zig` / `.h` | Sample clock, scales, CAs, counter-melody Markov, Euclidean rhythm, drum patterns, mutation, scheduler dispatcher |
 | `lsystem.zig` / `.h` | L-system melodic phrase generator (main melody) |
 | `chord_progression.zig` / `.h` | Markov chain over chord functions (root advances every 2 bars) |
 | `section.zig` / `.h` | Song-section state machine (intro / body / tension / resolve) over a 96-bar cycle |

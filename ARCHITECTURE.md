@@ -6,8 +6,8 @@
 
 | Binary | Size |
 |---|---|
-| Linux `synth` (stripped, links libpulse + libasound) | ~49 KB (49 976 B per CI run 30775952889 on `099-port-lsystem`, measured 2026-08-03 with five modules in Zig; was 49 128 B all-C per run 29211125164; STRIP_TARGET = 57 344 B as of the v1.4.0 realignment, leaving 7 368 B; was 51 200 B) |
-| Linux `synth.packed` (UPX) | ~30 KB (30 664 B per CI run 30775952889, measured 2026-08-03 with five modules in Zig; was 30 048 B all-C per run 29211125164); PACK_TARGET = 34 816 B per the Makefile enforces the Constitution v1.4.0 cap, leaving 4 152 B; it was 30 720 B, which the five-module tree left 56 B under. **Still the binding budget of the three, and the v1.4.0 values are provisional** — Phase 7 re-tightens both Linux caps to the finished tree's measurement once `effects`, `voice` and `gen` land |
+| Linux `synth` (stripped, links libpulse + libasound) | ~49 KB (52 504 B per CI run 30781463812, measured 2026-08-03 with the port complete; was 49 128 B all-C per run 29211125164; STRIP_TARGET = 57 344 B as of the v1.4.0 realignment, leaving 4 840 B / 9.2 %; was 51 200 B) |
+| Linux `synth.packed` (UPX) | ~30 KB (31 624 B per CI run 30781463812, measured 2026-08-03 with the port complete; was 30 048 B all-C per run 29211125164); PACK_TARGET = 34 816 B per the Makefile enforces the Constitution v1.4.0 cap, leaving 3 192 B / 10.1 %; it was 30 720 B. **Still the binding budget of the three.** v1.4.1 settled the caps at these values — see the amendment for why re-tightening would have gone past the project's own precedent. The page cliff (484 B) now constrains growth more than any cap |
 | Windows `stretto.exe` (stripped) | ~253 KB (258 560 B per CI run 29211125164 on `c7db9fc`, measured 2026-07-19; was 252 928 B measured 2026-07-11; stripped — `-s` in `WIN_LDFLAGS` strips at link and the `stretto.exe` rule additionally runs `$(WIN_STRIP) -s -R .comment`) |
 | Windows `stretto.packed.exe` (UPX) | ~43 KB (44 032 B per CI run 30775952889, measured 2026-08-03; was 43 520 B all-C); WIN_PACK_BUDGET = 49 152 B, leaving 5 120 B |
 
@@ -38,7 +38,7 @@ The incremental Zig port ([`specs/005-zig-port/spec.md`](./specs/005-zig-port/sp
 - `plan.md` — Constitution Check (all ten principles PASS as of v1.3.0) + Complexity Tracking for the II / V / VI amendments
 - `research.md` — the measurement record: two wrong prior conclusions kept with their reasoning, the LTO-exit mechanism, the `version.h` measurement hazard, and the revised cost model showing the `-fno-lto` probe is a floor rather than a prediction
 
-The ten architectural principles (I–X) are encoded in `.specify/memory/constitution.md` v1.4.0. Three are NON-NEGOTIABLE: I (Tiny Native Binary — ≤48 KB UPX-packed Windows, ≤34 KB UPX-packed Linux, ≤56 KB stripped Linux; the Linux caps were raised by v1.4.0 on 2026-08-03 so the 005 Zig port could finish — the first raise of caps that were enforced and met, with the reasoning recorded in the amendment itself; they were previously realigned on 2026-07-08 by v1.1.0/v1.2.0 — the prior 24 KB / 12 KB figures were aspirational PLAN.md-era targets the shipped synth never met, and the 003 MIDI-input chain itself cost ~5 KB stripped / ~9.5 KB packed on top of the ~39 KB / ~16 KB pre-#109 baseline, per the v1.2.1 attribution correction), III (Deterministic — see amendment note in [Determinism](#determinism) below), VI (Test Discipline — per-file coverage gates). Amendments to the constitution follow the Governance clause and bump the version line. Prior wording-only amendment: Principle III → v1.0.1 (2026-07-06), which closed the wording gap exposed by `/speckit-analyze` finding D1 (Constitution vs spec SC-002 platform-scope wording).
+The ten architectural principles (I–X) are encoded in `.specify/memory/constitution.md` v1.4.1. Three are NON-NEGOTIABLE: I (Tiny Native Binary — ≤48 KB UPX-packed Windows, ≤34 KB UPX-packed Linux, ≤56 KB stripped Linux; the Linux caps were raised by v1.4.0 on 2026-08-03 so the 005 Zig port could finish — the first raise of caps that were enforced and met, with the reasoning recorded in the amendment itself; they were previously realigned on 2026-07-08 by v1.1.0/v1.2.0 — the prior 24 KB / 12 KB figures were aspirational PLAN.md-era targets the shipped synth never met, and the 003 MIDI-input chain itself cost ~5 KB stripped / ~9.5 KB packed on top of the ~39 KB / ~16 KB pre-#109 baseline, per the v1.2.1 attribution correction), III (Deterministic — see amendment note in [Determinism](#determinism) below), VI (Test Discipline — per-file coverage gates). Amendments to the constitution follow the Governance clause and bump the version line. Prior wording-only amendment: Principle III → v1.0.1 (2026-07-06), which closed the wording gap exposed by `/speckit-analyze` finding D1 (Constitution vs spec SC-002 platform-scope wording).
 
 ## Module layout
 
@@ -86,14 +86,14 @@ audio_midi_winmm.c     Win32 midiInProc backend (Windows): system
                         messages into the same midi_event_t shape; MIM_CLOSE
                         drives the FR-034 disconnect path; midiInGetNumDevs +
                         midiInGetDevCaps for enumerate_via_midiInGetDevCaps
-voice.c / .h            Voice struct (KS / FM / wavetable / additive /
+voice.zig / .h            Voice struct (KS / FM / wavetable / additive /
                         super-saw / drum), ADSR, SVF, super-saw glide,
                         per-voice peak normalization, role-scoped
                         voice pool of 11 slots
-effects.c / .h          master-bus delay (250 ms stereo), Schroeder
+effects.zig / .h        master-bus delay (250 ms stereo), Schroeder
                         reverb (4 combs + 2 all-passes/channel),
                         soft cubic saturation, sat16 clamp
-gen.c   / .h            sample clock, six scales, Rule-110 + Rule-30
+gen.zig / .h            sample clock, six scales, Rule-110 + Rule-30
                         CAs, counter-melody Markov chain, Bjorklund
                         Euclidean rhythm. gen_step is a ~25-LOC
                         dispatcher that delegates to five per-concern
@@ -114,7 +114,7 @@ section.zig / .h        Song-section state machine (intro / body /
 density.zig / .h        Adaptive density: tension = popcount(active)
                         * 18 + gate >> 2. Counter-cyclical biases
                         (gate +/-16, reverb wet +/-32) sum on top of
-                        section biases at the gen.c call sites
+                        section biases at the gen call sites
 motif.zig / .h          Long-term motif memory: ring buffer of the
                         last 8 four-bar main-melody phrases. Every
                         ~30 bars with ~25% per-bar probability,
@@ -142,13 +142,13 @@ wav.c -> {mixer, arena}
 mixer.c -> {gen, voice, effects, audio_midi}       # audio_midi_drain at top of render_chunk
 keys.c -> {ui, gen, voice, effects}
 ui.c -> {voice, gen, effects}
-gen.c -> {voice, lsystem, chord_progression, section, effects}
-voice.c -> {arena, effects (for sat16), build-time tables}
+gen -> {voice, lsystem, chord_progression, section, effects}
+voice -> {arena, effects (for sat16), build-time tables}
 ```
 
-No reverse calls; no extern declarations across module boundaries; no weak symbols (the old `main_set_reverb_wet_bias` weak-stub workaround was eliminated when the master-bus moved into `effects.c`).
+No reverse calls; no weak symbols; and no cross-module `extern` declarations in C — Zig modules use `export fn`/`extern fn` against their own `.h` under the bounded Principle V exception added in Constitution v1.3.0 (the old `main_set_reverb_wet_bias` weak-stub workaround was eliminated when the master-bus moved into `effects`).
 
-The `gen_*` programs run during `make` and emit C headers (`sin_table.h`, `env_table.h`, `note_table.h`, `euclid_table.h`, `wavetable.h`) that are `#include`d by `voice.c` and `gen.c`. Tables end up in `.rodata` of the final binary; they do not consume arena space. A sixth generated header, `version.h` (`#define STRETTO_VERSION` from `git describe`, consumed only by `main.c` for `--version`), is written by a compare-and-swap Makefile rule: the recipe runs on every `make`, but the file's mtime only changes when the version does, so incremental builds stay no-ops and a version change rebuilds exactly `main.o`.
+The `gen_*` programs run during `make` and emit C headers (`sin_table.h`, `env_table.h`, `note_table.h`, `euclid_table.h`, `wavetable.h`) that are `@cImport`ed by `voice.zig` and `gen.zig`. Tables end up in `.rodata` of the final binary; they do not consume arena space. A sixth generated header, `version.h` (`#define STRETTO_VERSION` from `git describe`, consumed only by `main.c` for `--version`), is written by a compare-and-swap Makefile rule: the recipe runs on every `make`, but the file's mtime only changes when the version does, so incremental builds stay no-ops and a version change rebuilds exactly `main.o`.
 
 ## Audio path
 
@@ -416,7 +416,7 @@ Two 7×7 weight tables (`uint8_t` each, totaling 98 B of `.rodata`):
 - `CHORD_MARKOV_MAJOR` — used for Lydian (`cur_scale=1`) and Mixolydian (`cur_scale=5`). Cadences (V→I, IV→I, vii°→I, ii→V) weighted highest. Diagonal weights are nonzero so the synth can sit on a chord across multiple advances.
 - `CHORD_MARKOV_MINOR` — used for Dorian, Phrygian, Locrian, Harmonic Minor. Modal motion: VII↔i, iv↔i, weaker dominant pull than major-mode tables.
 
-`chord_progression_step(rng, scale)` is called from `gen.c` once at the start of every even bar. It sums the source row, draws `rng % sum`, walks. Module is one-way coupled: gen.c passes `prng()` output and `cur_scale` in; the module never reads gen.c file-scope state.
+`chord_progression_step(rng, scale)` is called from `gen` once at the start of every even bar. It sums the source row, draws `rng % sum`, walks. Module is one-way coupled: gen passes `prng()` output and `cur_scale` in; the module never reads gen's file-scope state.
 
 Bass also reads `chord_progression_get_root()` so its root/fifth alternation (substeps 0, 18, 24, 42) tracks the current chord function rather than always playing scale-degree 0/4.
 
@@ -432,7 +432,7 @@ SYM_DN   move pointer -1   SYM_DN2  move -2 (leap)
 SYM_REP  no move           SYM_REST emit rest (caller skips trigger)
 ```
 
-The grammar is one of three hand-tuned **characters** (stepwise / leaping / sparse). Each character has a 6-rule production table. `lsystem_reset()` expands the axiom for 3 generations using the current character into a 256-byte output buffer. `lsystem_next(active_mask)` reads the next symbol, advances a scale-degree pointer wrapped to [0, 6], snaps to the nearest in-mask degree, and returns it. `LSYSTEM_REST` is returned for the rest symbol; the caller in `gen.c` skips the melody trigger for that Euclidean hit (gives the melody breathing room).
+The grammar is one of three hand-tuned **characters** (stepwise / leaping / sparse). Each character has a 6-rule production table. `lsystem_reset()` expands the axiom for 3 generations using the current character into a 256-byte output buffer. `lsystem_next(active_mask)` reads the next symbol, advances a scale-degree pointer wrapped to [0, 6], snaps to the nearest in-mask degree, and returns it. `LSYSTEM_REST` is returned for the rest symbol; the caller in `gen` skips the melody trigger for that Euclidean hit (gives the melody breathing room).
 
 `lsystem_mutate(rng)` is called by `mutate()` with ~33% probability per event:
 - ~50%: re-roll one rule's RHS in the current character.
@@ -520,7 +520,7 @@ A triangle LFO sweeps the mutation interval between `MUTATE_MIN = 1` bar (busy s
 
 Continuous biases interpolate linearly across an 8-bar window centered on each boundary: the last 4 bars of a section blend toward the next, the first 4 bars finish the blend. At the boundary exactly the value is halfway between adjacent sections. Discrete biases switch instantly. 10-minute renders have audible long-form shape — intro opens sparse (one of 8 curated 1–3-voice combos, chosen per cycle), body fills out, tension feels dense and bright (arpeggiated chords), resolve settles back and drops the drums.
 
-**Voice-family mask.** `section_voice_mask` returns a 7-bit field (kick/snare/hat/bass/chord/melody/counter). BODY and TENSION are `VF_ALL`; RESOLVE clears the three drum bits; INTRO returns one of `INTRO_COMBOS[8]`, selected by `section_set_intro_combo` from a `prng()` draw at each cycle boundary (and once in `gen_init` for the opening). The schedulers in `gen.c` consult the mask before triggering — but **only the trigger calls are gated**, never the PRNG / L-system / Markov / motif state updates, so masking a voice silences it without altering the generative trajectory of the rest of the piece.
+**Voice-family mask.** `section_voice_mask` returns a 7-bit field (kick/snare/hat/bass/chord/melody/counter). BODY and TENSION are `VF_ALL`; RESOLVE clears the three drum bits; INTRO returns one of `INTRO_COMBOS[8]`, selected by `section_set_intro_combo` from a `prng()` draw at each cycle boundary (and once in `gen_init` for the opening). The schedulers in `gen` consult the mask before triggering — but **only the trigger calls are gated**, never the PRNG / L-system / Markov / motif state updates, so masking a voice silences it without altering the generative trajectory of the rest of the piece.
 
 Status row shows the current section as `Sec:<name>` (intro / body / tens / res) so the listener can see boundaries align with the audible changes.
 
@@ -534,7 +534,7 @@ gate_bias   = (128 - tension) / 8   /* approx +/-16 */
 reverb_bias = (128 - tension) / 4   /* approx +/-32 */
 ```
 
-Composes with `section.zig` additively. Both reverb biases sum and are pushed to `effects.c` via `reverb_set_wet_bias`; the gate bias adds to the section + user values at the melody trigger's clamp step. Density is a pure function of the current bar's CA + gate inputs — no PRNG, no persistent state beyond the cached tension. Status row shows the tension as `Td:<n>` (yellow).
+Composes with `section.zig` additively. Both reverb biases sum and are pushed to `effects` via `reverb_set_wet_bias`; the gate bias adds to the section + user values at the melody trigger's clamp step. Density is a pure function of the current bar's CA + gate inputs — no PRNG, no persistent state beyond the cached tension. Status row shows the tension as `Td:<n>` (yellow).
 
 ### Mutation
 
@@ -572,7 +572,7 @@ s = hash32(N ^ 0xDEADBEEFu)
 gen_prng_state = s
 ca_row         = hash32(s)
 ca_harm        = hash32(hash32(s))
-voice.c PRNG (KS noise) = 0xCAFEBABE (fixed)
+voice PRNG (KS noise)   = 0xCAFEBABE (fixed)
 ```
 
 Without `--seed`, `gen_init` derives the seed from `time(NULL)` at startup, so each launch produces a different generative output but every audio sample of any specific run is fully determined by that initial time stamp.

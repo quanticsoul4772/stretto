@@ -7,6 +7,25 @@ Stretto is a tiny native generative ambient music synthesizer in C99. These prin
 ### I. Tiny Native Binary (NON-NEGOTIABLE)
 Hard size budget: ≤48 KB UPX-packed Windows `.exe` (current 43 520 B / ~42.5 KB measured 2026-07-19 per CI run 29211125164 on `c7db9fc`; was recorded as 38 KB post-#117), ≤34 KB UPX-packed Linux binary (raised 30 KB → 34 KB by the v1.4.0 amendment, 2026-08-03, so the 005 Zig port can finish; current 30 664 B measured 2026-08-03 per CI run 30775952889 with five modules in Zig; cap originally added 2026-07-08 per v1.2.0; Makefile `PACK_TARGET = 34816` enforces this cap), ≤56 KB stripped Linux binary (raised 50 KB → 56 KB by the v1.4.0 amendment, 2026-08-03, alongside the packed cap; current 49 976 B measured 2026-08-03 per CI run 30775952889; bumped to 50 KB on 2026-07-08 from a prior ≤24 KB target per v1.1.0; Makefile `STRIP_TARGET = 57344` enforces this cap). CI gates the Windows budget on every PR. Choose minimal-dependency designs; prefer one-file modules over libraries. Features that would push past the budget must justify themselves explicitly or be deferred.
 
+**Measurement refresh — the port is complete (v1.4.1, 2026-08-03).** The 005 Zig port finished at PR #200: `density`, `chord_progression`, `motif`, `section`, `lsystem`, `effects`, `voice` and `gen` are Zig; `arena`, `mixer`, `wav`, `ui`, `keys`, `main` and the audio backends are C by design.
+
+Measured on the finished tree, CI run 30781463812:
+
+| | measured | cap | headroom |
+|---|---|---|---|
+| Linux stripped | 52 504 B | 57 344 B | 4 840 B / **9.2 %** |
+| Linux packed | 31 624 B | 34 816 B | 3 192 B / **10.1 %** |
+| Windows packed | 45 056 B | 49 152 B | 4 096 B / **9.1 %** |
+
+**The caps are UNCHANGED, and this amendment corrects measurements only.** v1.4.0 promised to re-tighten them once the port landed, on the grounds that a ceiling picked in advance is not a constraint. Running that arithmetic settles it the other way:
+
+- The project's customary headroom is **~14 %** (STRIP_TARGET, v1.1.0) and **~21 %** (PACK_TARGET, v1.2.0). Applied to the measured tree those give 58 KB and 37 KB — **looser than the caps already in place.**
+- The v1.4.0 values, chosen deliberately loose without knowing what `effects`, `voice` and `gen` would cost, landed at 9.2 % and 10.1 %. That is tighter than this project has ever set a budget, and it is a real constraint rather than a provisional ceiling.
+
+Lowering them further would tighten past the project's own precedent, on a tree whose measurements are one release old. The v1.4.0 promise is discharged by the numbers, not by an edit.
+
+**What actually constrains growth now is the page cliff, not either cap.** `linux_synth_page_cliff_headroom` is **484 B** against a 256 B advisory — it fell from 3 428 B across the port. The code segment pays file size in whole 4 KB pages, so the next feature that crosses a boundary costs 4 096 B stripped regardless of how much headroom the caps show. Reason from that number first.
+
 **Budget realignment for the Zig port (v1.4.0, 2026-08-03).** Both Linux caps are raised: packed 30 → 34 KB, stripped 50 → 56 KB. Windows is untouched at 48 KB and remains the loosest of the three.
 
 **This is the first raise of a cap that was enforced and currently met.** v1.1.0 and v1.2.0 each realigned *aspirational* targets the shipped synth had never hit, gated as warnings only. That difference is real and the reasoning is recorded rather than assumed:
@@ -137,7 +156,7 @@ Zig emits no `.d` files, so ported modules are outside `-MMD -MP` dependency tra
 - Removing a NON-NEGOTIABLE principle requires explicit user approval in the amendment PR.
 - All `/speckit-specify` and `/speckit-plan` outputs must declare compliance with each principle or document the exception.
 
-**Version**: 1.4.0 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-08-03
+**Version**: 1.4.1 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-08-03
 
 <!--
 v1.3.0 (2026-08-02) — Zig as a second implementation language.
