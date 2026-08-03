@@ -513,7 +513,6 @@ COV_FLAGS = -O0 -g -Wall -Wextra -fprofile-arcs -ftest-coverage
 #                    termios bodies + die_sys, documented at the
 #                    ci.yml gate).
 COV_SRCS_MEASURED    = arena.c effects.c voice.c gen.c lsystem.c \
-                       section.c \
                        mixer.c wav.c audio_midi.c ui.c keys.c
 COV_SRCS_INTERACTIVE = audio_pulse.c audio_midi_linux.c
 # main.c is MEASURED since 080, but via the main_testable object (the
@@ -538,7 +537,8 @@ COV_OBJS             = $(addprefix $(BUILD_COV)/,$(COV_SRCS:.c=.o))
 #
 # A ported module moves from COV_SRCS_MEASURED to here, in the same PR
 # that deletes its .c. Its ci.yml threshold moves with it.
-COV_SRCS_MEASURED_ZIG = density.zig chord_progression.zig motif.zig
+COV_SRCS_MEASURED_ZIG = density.zig chord_progression.zig motif.zig \
+                        section.zig
 COV_ZIG_OBJS         = $(addprefix $(BUILD_COV)/,$(COV_SRCS_MEASURED_ZIG:.zig=.o))
 # Pure-synth subset of instrumented .o files - what unit tests link.
 COV_TEST_OBJS        = $(addprefix $(BUILD_COV)/,$(OBJS_NO_MAIN))
