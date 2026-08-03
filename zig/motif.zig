@@ -16,9 +16,8 @@
 //!   * No `/` on signed operands, so no @divTrunc site.
 //!
 //!   * No `<<` anywhere. The two shifts are `rng >> 8` and `rng >> 16`,
-//!     right shifts by constants well under 32, so the `<<%` hazard
-//!     that applies to the xorshift PRNG in voice.c / gen.c does not
-//!     arise here.
+//!     right shifts by constants well under 32, so the computed-shift-
+//!     amount hazard that applies elsewhere does not arise here.
 //!
 //!   * Integer promotion, the one place it matters: C computes
 //!     `(int)d + (int)replay_transpose` by promoting both to `int`.

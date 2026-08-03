@@ -41,7 +41,8 @@
 //!     `comp_env > comp_threshold` — so truncation and flooring agree
 //!     today; @divTrunc is what C means regardless.
 //!
-//!   * All shifts are right shifts by constants. No `<<%` site.
+//!   * All shifts are right shifts by constants, so no shift-amount
+//!     hazard arises.
 
 /// From arena.h. See the module note on why this is hand-declared.
 extern fn arena_alloc(n: usize) ?*anyopaque;

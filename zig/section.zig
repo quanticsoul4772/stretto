@@ -41,8 +41,8 @@
 //!     bite here -- it is written this way so a future edit that makes
 //!     a numerator negative does not silently change meaning.
 //!
-//!   * No `<<` on a value that could discard a set bit, so the `<<%`
-//!     hazard does not arise. The VF_* masks are comptime shifts of 1.
+//!   * The VF_* masks are comptime shifts of 1, so every shift amount
+//!     is known at compile time.
 
 const SECTION_PERIOD_BARS: u32 = 96; // one full cycle
 const SECTION_LEN_BARS: u32 = 24; // per section
