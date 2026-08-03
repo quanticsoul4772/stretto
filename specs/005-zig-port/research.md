@@ -378,6 +378,7 @@ record that requirement asked for, recovered from each PR's CI run.
 | `effects` | 30778928369 | 52 504 | 31 220 | 44 544 | 1 020 |
 | `voice` | 30780233035 | 52 504 | 31 392 | 45 056 | 828 |
 | `gen` | 30780989422 | 52 504 | 31 632 | 45 056 | 484 |
+| `arena` | 30784977189 | 52 600 | 31 728 | 45 056 | 324 |
 
 CI-measured stripped deltas, which is what the cost model should be
 read from:
@@ -415,11 +416,71 @@ winmm; every symbol below is libc or an intra-project call.
 | `effects` | `arena_alloc`, `memset` |
 | `voice` | `arena_alloc`, `sat16` |
 | `gen` | `time` + 35 intra-project calls |
+| `arena` | `fprintf`, `exit`, and `stderr` (glibc) / `__acrt_iob_func` (mingw) |
 
 PR #197 stated that `effects.o` shows "only `arena_alloc`". It also
 shows `memset`, from `@memset`. Both are permitted and the C original
 called `memset` too, so nothing about the module changed — the claim
 was simply not read before it was written.
+
+
+## FR-007: the promotion choices, per module
+
+FR-007 requires every integer-promotion site to make an explicit
+`@truncate` (wrap) vs `@intCast` (trap) choice **recorded in the PR**.
+Recorded in 2 of 9. The choices themselves are documented at each site
+in the module source; what was missing is the central record. This is
+it.
+
+| module | choices made |
+|---|---|
+| `density` | `@divTrunc` on both bias divisions; `@truncate` narrowing the i32 result to i8, matching gcc's `(int8_t)` cast; `@intCast` on the u16 clamp, provably in range |
+| `chord_progression` | `@intCast` on the loop index → u8, bounded by the 7-element row |
+| `motif` | explicit i32 widening for `(int)d + (int)replay_transpose` (C's `int` width); `@intCast` back to u8 after normalising into 0..6, so it cannot trap; `+%=` on the u32 counter where C's unsigned overflow is defined |
+| `section` | `@truncate` narrowing the weighted average to i8 (matches gcc's out-of-range `(int8_t)` behaviour, though the value provably fits); `@divTrunc` on both crossfade divisions |
+| `lsystem` | `@intCast` on every computed shift amount to the exact `Log2Int` width, so an out-of-range amount is a compile error rather than C's UB; i8 pointer arithmetic bounded by the guards above each site |
+| `effects` | i64 widening before the cube in `softSat` (x³ reaches ~3.5e13); `@intCast` back to i32 after `>> 31`, provably in range; `@divTrunc` on both compressor divisions; `@intCast` on the `c_int` clamp returns |
+| `voice` | `@truncate` on the KS average, the wavetable lerp, the envelope-shaped sample and the envelope amplitude — all matching lossy C casts; `@intCast` for the i64→i32 FM detune, in range; `@bitCast` for every u32↔i32 phase conversion, since those are reinterpretations rather than value casts |
+| `gen` | `@intCast` on every shift amount to its `Log2Int` width (u5 for the CA, u6 for the drum banks, u4 for the Euclidean tests); `@bitCast` on the tick guard's unsigned difference, which is what survives the u32 wrap; `@divTrunc` on the LFO and swing divisions |
+| `arena` | none — `usize` throughout, no narrowing anywhere |
+
+## SC-005: not met
+
+SC-005 requires the Constitution to describe the tree accurately **at
+every merge point**. It did not, for four merges.
+
+`zig/density.zig` and `zig/chord_progression.zig` landed on `main` at
+`70aa775` (PR #183) as M0 probe inputs, while Principle II still read
+"C99 Only". Principle II was amended at `1cf2a0c` (PR #187). PRs #184,
+#185 and #186 merged in between.
+
+Nothing was enforced against it — only Principle I is machine-bridged —
+so no gate could have caught it. The ordering was known and noted at
+the time in `spec.md`'s Current-state section; it was never recorded as
+a criterion failure, which is what this entry does.
+
+## Finding 5: the coupled-module measurement was a proxy, and late
+
+Phase 5 required *"one coupled-module measurement before committing to
+the rest of the order."* What was actually run was the `-fno-lto`
+probe — a **C** proxy for LTO exit, not a Zig measurement — and it ran
+after `density`, `chord_progression` and `motif` had already merged.
+
+The real coupled measurements, which the plan wanted in advance and
+which only exist because the ports were done anyway:
+
+| coupled module | probe said | actual |
+|---|---|---|
+| `effects` | +448 | **+2 528** |
+| `voice` | +192 | **+0** |
+| `gen` | +536 | **+0** |
+
+The proxy was 5.75× low on the one that cost anything and high on both
+that cost nothing. Had it been run as specified — one real coupled
+module, ported and measured, before committing to the order — the
+`effects` figure would have been known before five modules were
+committed to, and the v1.4.0 cap could have been sized from a
+measurement instead of a guess.
 
 ## What is settled
 

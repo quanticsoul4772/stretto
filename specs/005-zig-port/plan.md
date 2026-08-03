@@ -77,7 +77,7 @@ specs/005-zig-port/
 
 ## Phases
 
-### Phase 0 — Correct the record *(this PR)*
+### Phase 0 — Correct the record ✅ **COMPLETE** (PR #184)
 
 `research.md` recorded `CLOSED — NO-GO` on `main`. That is false and is
 replaced with the M0 measurements and the LTO-exit cost model. `spec.md`
@@ -88,7 +88,7 @@ Also recorded here rather than left implicit: PR #183 put Zig source on
 `main` ahead of the Principle II amendment, so Phase 3 is now
 retroactive rather than prospective.
 
-### Phase 1 — Instrumented-build resolution *(blocking)*
+### Phase 1 — Instrumented-build resolution ✅ **COMPLETE** (PR #185)
 
 The first port PR fails to build in two required checks, before any
 gate logic runs:
@@ -113,7 +113,7 @@ being DWARF-based and needing no instrumentation; and the fact that
 `Makefile:519` ends the coverage recipe with `| grep "\.c"`, so a
 `.zig` row cannot reach `coverage.log` until that filter changes.
 
-### Phase 2 — CI toolchain availability
+### Phase 2 — CI toolchain availability ✅ **COMPLETE** (PR #186)
 
 No workflow installs Zig. Four need it: `ci.yml:42-45` (`sanitizers`,
 required), `ci.yml:65-71` (`build-test-coverage`, required),
@@ -128,7 +128,7 @@ Downstream build deps also need Zig: `packaging/aur/PKGBUILD:17`,
 `Formula/stretto.rb:23-25`, and `install.sh:81-83`'s build-from-source
 instruction.
 
-### Phase 3 — Constitution amendment (v1.3.0)
+### Phase 3 — Constitution amendment (v1.3.0) ✅ **COMPLETE** (PR #187)
 
 Principles II and V per the Complexity Tracking table; Principle VI per
 Phase 1's outcome; plus **Memory model** (`:65`, names `arena.c` — now
@@ -174,7 +174,7 @@ the filename it actually measures, to solve a problem that does not
 exist. Each port PR flips its own entry instead — seven one-line edits
 over the life of the port.
 
-### Phase 5 — Build rules, then modules
+### Phase 5 — Build rules, then modules ✅ **COMPLETE** (PRs #188–#193)
 
 Rules first, inert (no `zig/*.zig` is referenced yet, so nothing
 changes and every `make` in CI parses them). Then one module per PR.
@@ -195,7 +195,7 @@ Take one **coupled**-module measurement before committing to the rest
 of the order. Every measurement so far is a leaf, and leaves are the
 cheap case by construction.
 
-### Phase 6 — Docs refresh *(mandatory)*
+### Phase 6 — Docs refresh ✅ **COMPLETE** (PR #194)
 
 Workflow §5 requires a `docs/*` PR after 5+ accumulated changes; this
 arc is ten-plus. Stale surface: `ARCHITECTURE.md:9-12` (size table),
@@ -242,7 +242,7 @@ port. v1.1.0 and v1.2.0 both realigned budgets to measured reality, and
 3. **Re-tighten** — ✅ **settled by v1.4.1; the caps stay.** Running
    that arithmetic on the finished tree reverses the expectation: the
    project's customary headroom is ~14 % (v1.1.0) and ~21 % (v1.2.0),
-   which against 52 504 B stripped / 31 624 B packed give 58 KB and
+   which against the then-measured 52 504 B stripped / 31 624 B packed give 58 KB and
    37 KB — **looser than the v1.4.0 values already in place.** The
    deliberately-loose guess landed at 9.2 % and 10.1 %, tighter than
    this project has ever set a budget. Lowering further would go past
