@@ -5,7 +5,19 @@ Stretto is a tiny native generative ambient music synthesizer in C99. These prin
 ## Core Principles
 
 ### I. Tiny Native Binary (NON-NEGOTIABLE)
-Hard size budget: ≤48 KB UPX-packed Windows `.exe` (current 43 520 B / ~42.5 KB measured 2026-07-19 per CI run 29211125164 on `c7db9fc`; was recorded as 38 KB post-#117), ≤30 KB UPX-packed Linux binary (added 2026-07-08 per v1.2.0 amendment; current 30 048 B / ~29.3 KB measured 2026-07-19 per CI run 29211125164 on `c7db9fc`; was recorded as 25 460 B post-#117; Makefile `PACK_TARGET = 30720` enforces this cap), ≤50 KB stripped Linux binary (bumped 2026-07-08 from prior ≤24 KB target per v1.1.0 amendment; current 49 128 B / ~48 KB measured 2026-07-19 per CI run 29211125164 on `c7db9fc`; was recorded as 43 944 B post-#117, and 43 880 B post-#113 per PR #115). CI gates the Windows budget on every PR. Choose minimal-dependency designs; prefer one-file modules over libraries. Features that would push past the budget must justify themselves explicitly or be deferred.
+Hard size budget: ≤48 KB UPX-packed Windows `.exe` (current 43 520 B / ~42.5 KB measured 2026-07-19 per CI run 29211125164 on `c7db9fc`; was recorded as 38 KB post-#117), ≤34 KB UPX-packed Linux binary (raised 30 KB → 34 KB by the v1.4.0 amendment, 2026-08-03, so the 005 Zig port can finish; current 30 664 B measured 2026-08-03 per CI run 30775952889 with five modules in Zig; cap originally added 2026-07-08 per v1.2.0; Makefile `PACK_TARGET = 34816` enforces this cap), ≤56 KB stripped Linux binary (raised 50 KB → 56 KB by the v1.4.0 amendment, 2026-08-03, alongside the packed cap; current 49 976 B measured 2026-08-03 per CI run 30775952889; bumped to 50 KB on 2026-07-08 from a prior ≤24 KB target per v1.1.0; Makefile `STRIP_TARGET = 57344` enforces this cap). CI gates the Windows budget on every PR. Choose minimal-dependency designs; prefer one-file modules over libraries. Features that would push past the budget must justify themselves explicitly or be deferred.
+
+**Budget realignment for the Zig port (v1.4.0, 2026-08-03).** Both Linux caps are raised: packed 30 → 34 KB, stripped 50 → 56 KB. Windows is untouched at 48 KB and remains the loosest of the three.
+
+**This is the first raise of a cap that was enforced and currently met.** v1.1.0 and v1.2.0 each realigned *aspirational* targets the shipped synth had never hit, gated as warnings only. That difference is real and the reasoning is recorded rather than assumed:
+
+- **The caps constrain the C synth's footprint. They are not a scope decision about porting that synth to another language.** They were derived by measuring what the C build shipped, for a project whose goal was to stay small. `specs/005-zig-port` is a port; its purpose is that the code is in Zig. Reading the budgets as an answer to "how much of the port happens" is a category error, and it produced two wrong calls in that arc — first a GO/NO-GO gate that closed the port outright on a measurement of the wrong strategy, then "the measured packed size decides how far it goes," which recommended abandoning three modules mid-port. Both are withdrawn; see `specs/005-zig-port/plan.md` Non-Goals.
+
+- **The values are PROVISIONAL and deliberately loose.** `effects`, `voice` and `gen` are unported. The `-fno-lto` probe floors them at +1 176 B stripped, and measured probe-to-actual ratios (`section` 2×, `lsystem` sign-flipped from −40 to +376) put the real figure materially higher. Picking a tight cap now would mean amending twice.
+
+- **Phase 7 step 3 re-tightens both caps** to the finished tree's measurement plus the project's customary headroom, once the last module lands. Until then these are a ceiling to work under, not a claim about the shipped binary. The size gate stays enforced throughout — no port PR merges without it.
+
+The port itself carries no size, build-simplification or portability benefit, and never claimed one (`specs/005-zig-port/spec.md`, Non-Goals). The reason is that the codebase should be in Zig.
 
 **Measurement refresh (v1.2.2, 2026-07-19).** The three figures above were stale: `main` grew +5 184 B stripped and +4 588 B packed between the PR #117 artifact and `c7db9fc`, and Principle I was never refreshed. The caps are UNCHANGED — this amendment corrects measurements only and does not weaken a NON-NEGOTIABLE principle. Two consequences follow and are recorded rather than left implicit:
 
@@ -125,7 +137,7 @@ Zig emits no `.d` files, so ported modules are outside `-MMD -MP` dependency tra
 - Removing a NON-NEGOTIABLE principle requires explicit user approval in the amendment PR.
 - All `/speckit-specify` and `/speckit-plan` outputs must declare compliance with each principle or document the exception.
 
-**Version**: 1.3.0 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-08-02
+**Version**: 1.4.0 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-08-03
 
 <!--
 v1.3.0 (2026-08-02) — Zig as a second implementation language.

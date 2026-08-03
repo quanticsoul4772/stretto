@@ -10,7 +10,7 @@
 #   1) happy-path:  current Constitution + Makefile -> exit 0
 #   2) tamper Constitution: ≤48 KB UPX-packed Windows -> ≤49 KB
 #                       -> exit 1, MISMATCH on WIN row
-#   3) tamper Makefile: STRIP_TARGET = 51200 -> 51201
+#   3) tamper Makefile: STRIP_TARGET = 57344 -> 57345
 #                       -> exit 1, MISMATCH on LIN_STR row
 #   4) malformed Makefile: STRIP_TARGET = "abc" (non-integer)
 #                       -> exit 2, FATAL (validation rejection)
@@ -191,14 +191,14 @@ rm -f "${constitution_bak}"
 run_case "after_constitution_restore" "0" "PASS: all 3 budgets aligned" \
     "bash '${script}'" || true
 
-# --- Case 3: tamper Makefile (STRIP_TARGET = 51200 -> 51201) ---
+# --- Case 3: tamper Makefile (STRIP_TARGET = 57344 -> 57345) ---
 # Bumping STRIP_TARGET by 1 byte should make the Makefile imply
-# 51201 B but Constitution's 50 KB * 1024 = 51200 B stays, so the
+# 57345 B but Constitution's 56 KB * 1024 = 57344 B stays, so the
 # bridge's MISMATCH on the LIN_STR row is the expected failure.
 # Output must contain the MISMATCH token.
 echo
-echo "--- Case 3: tamper Makefile STRIP_TARGET = 51200 -> 51201 ---"
-tamper "${makefile}" 's/^STRIP_TARGET    = 51200/STRIP_TARGET    = 51201/' "${makefile_bak}" || true
+echo "--- Case 3: tamper Makefile STRIP_TARGET = 57344 -> 57345 ---"
+tamper "${makefile}" 's/^STRIP_TARGET    = 57344/STRIP_TARGET    = 57345/' "${makefile_bak}" || true
 run_case "tamper_makefile_strip" "1" "MISMATCH" \
     "bash '${script}' 2>&1" || true
 # Restore via cp; remove .bak so the trap doesn't double-restore.
@@ -214,7 +214,7 @@ run_case "after_makefile_restore" "0" "PASS: all 3 budgets aligned" \
 # arithmetic-expression-or-string rejection.
 echo
 echo "--- Case 4: malformed Makefile constant STRIP_TARGET = abc ---"
-tamper "${makefile}" 's/^STRIP_TARGET    = 51200/STRIP_TARGET    = abc/' "${makefile_bak}" || true
+tamper "${makefile}" 's/^STRIP_TARGET    = 57344/STRIP_TARGET    = abc/' "${makefile_bak}" || true
 run_case "malformed_constant_strip" "2" "FATAL" \
     "bash '${script}' 2>&1" || true
 # Restore via cp; remove .bak so the trap doesn't double-restore.
@@ -238,7 +238,7 @@ cp "${constitution}" "${constitution_bak}"
 cp "${makefile}" "${makefile_bak}"
 set +e
 sed -i 's/≤48 KB UPX-packed Windows/≤49 KB UPX-packed Windows/' "${constitution}"
-sed -i 's/^STRIP_TARGET    = 51200/STRIP_TARGET    = 51201/' "${makefile}"
+sed -i 's/^STRIP_TARGET    = 57344/STRIP_TARGET    = 57345/' "${makefile}"
 set -e
 # Pre-check: tampered state should fail
 run_case "tampered_state" "1" "MISMATCH" \
