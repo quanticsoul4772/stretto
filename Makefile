@@ -123,9 +123,10 @@ OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
 #   unported, the -fno-lto probe floored them at +1 176 B stripped, and
 #   observed probe-to-actual ratios put the real figure higher.
 #
-# SETTLED (v1.4.1, CI run 30781463812, port complete at PR #200):
-#   52 504 B stripped / 31 624 B packed / 45 056 B Windows packed.
-#   Headroom 9.2 % / 10.1 % / 9.1 %.
+# SETTLED (v1.4.2, CI run 30784977189, nine modules in Zig):
+#   52 600 B stripped / 31 728 B packed / 45 056 B Windows packed.
+#   Headroom 8.3 % / 9.7 % / 9.1 %. (v1.4.1 recorded the eight-module
+#   figures; arena landed at PR #204 and moved them +96 / +104.)
 #
 #   The caps STAY. v1.4.0 promised a re-tighten to "measurement plus
 #   customary headroom", and that arithmetic settles it the other way:
@@ -135,8 +136,9 @@ OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
 #   a budget. Lowering further would go past its own precedent.
 #
 #   What actually constrains growth now is the PAGE CLIFF, not either
-#   cap: linux_synth_page_cliff_headroom is 484 B against a 256 B
-#   advisory, down from 3 428 B across the port. The code segment pays
+#   cap: linux_synth_page_cliff_headroom is 324 B against a 256 B
+#   advisory, down from 3 428 B across the port -- now within 68 B of
+#   the threshold. The code segment pays
 #   file size in whole 4 KB pages, so the next feature that crosses a
 #   boundary costs 4 096 B stripped no matter what these numbers say.
 #   Reason from the cliff first.
