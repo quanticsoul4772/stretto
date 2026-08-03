@@ -287,7 +287,9 @@ jobs:
             [keys.c]=100
             [main.c]=99
             [audio_midi.c]=90
-            [arena.c]=95
+            # arena is Zig as of the 110 port. kcov reports 100.00% of
+            # 12 where gcov reported 100.00% of 10.
+            [arena.zig]=95
             [effects.zig]=95
             [voice.zig]=95
             # gen is Zig as of the 106 port, the last in-scope module.

@@ -368,7 +368,7 @@ The spec-kit artifacts (spec, plan, research, tasks, quickstart) live under `spe
 | `audio_midi.c` / `.h` | Cross-platform MIDI core: SPSC event ring, scale-degree note mapper, CC→parameter dispatch (`CC_MAP`) |
 | `audio_midi_linux.c` | ALSA sequencer MIDI input backend (wildcard subscribe + device enumeration, reader thread) |
 | `audio_midi_winmm.c` | Windows MIDI input backend (`midiIn*` callback API) |
-| `arena.c` / `.h` | Static 128 KB pool with bump allocator |
+| `arena.zig` / `.h` | Static 128 KB pool with bump allocator |
 | `gen_*_table.c` | Build-time generators for sine / envelope / MIDI note / Bjorklund / wavetable tables |
 | `version.h` (generated) | `#define STRETTO_VERSION` from `git describe` |
 | `Makefile` | `make`, `make win`, `make winpack`, `make pack`, the `test*` targets, `make coverage`, `make debug`, `make golden*`, `make install`, `make verify` |
