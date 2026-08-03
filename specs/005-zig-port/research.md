@@ -237,6 +237,42 @@ moot, since gcc still compiles fifteen of seventeen modules untouched.
 only the build-time generators. It does not; the generators are built
 with a bare `gcc -O2 -Wall -Wextra`.)
 
+## The cost model, revised by the ports themselves
+
+M0 concluded that Zig codegen costs zero and the whole per-module cost
+is LTO exit — which implied that compiling a `.c` with `-fno-lto`
+prices its port without writing any Zig. That probe was run for every
+remaining module before the ports proceeded.
+
+**It is a floor, not a prediction.** Measured against matched controls,
+same commit, `STRETTO_VERSION` pinned:
+
+| module | `-fno-lto` probe | actual | note |
+|---|---|---|---|
+| `density` | +40 | +40 | exact |
+| `chord_progression` | +0 | +0 | exact |
+| `motif` | not probed | +256 | |
+| `section` | +96 | **+192** | 2× |
+| `lsystem` | **−40** | **+376** | sign flip |
+
+M0's "codegen costs zero" was established on `density`: four functions,
+each a load or a subtract-shift. The probe stays exact for modules of
+that shape and degrades as the module computes. `section`'s `lerp_bias`
+does two multiplies, a division and an arithmetic shift; `lsystem`
+expands a grammar through three generations with a nested rewrite loop,
+and LLVM's codegen for that is substantially larger than gcc's — enough
+to invert a predicted saving into a +376 B cost.
+
+**Revised model**: cost = LTO exit + a codegen delta that is ~0 for
+trivial accessors, ~1× the LTO term for arithmetic, and unbounded by
+the probe for control-flow-heavy code. The `-fno-lto` figure is a lower
+bound and should be quoted as one.
+
+The combined five-module probe figure (+984 stripped / +280 packed for
+all of `section`, `lsystem`, `effects`, `voice`, `gen`) inherits the
+same floor status. `section` and `lsystem` alone came to +568 stripped
+against a +56 prediction for the pair.
+
 ## Open questions
 
 1. **What do the coupled modules cost?** Every measurement so far is a

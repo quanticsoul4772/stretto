@@ -291,7 +291,7 @@ jobs:
             [effects.c]=95
             [voice.c]=95
             [gen.c]=90
-            [lsystem.c]=94
+            [lsystem.zig]=94
             # chord_progression is Zig as of the 096 port. Unlike
             # density, kcov and gcov agree here EXACTLY -- both report
             # 92.59% of 27 lines. So 92 carries across unchanged and
