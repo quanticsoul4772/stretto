@@ -16,8 +16,14 @@ When a module moves from C to Zig, what does the binary pay, and does
 the port fit Principle I's budgets?
 
 The packed Linux cap binds at 30 720 B against a measured 30 048 B,
-leaving 672 B (2.2 %) of headroom — the tightest of the three budgets
-and the one that decides the scope of any port.
+leaving 672 B (2.2 %) of headroom — the tightest of the three budgets,
+and therefore the one whose realignment the port forces first.
+
+It does **not** decide the port's scope. An earlier revision of this
+file said it did; that framing is withdrawn (`spec.md` Q3, `plan.md`
+Non-Goals). The caps keep the C synth small and were set by measuring
+what it shipped. They are realigned as the port proceeds, the same way
+v1.1.0 and v1.2.0 realigned them.
 
 ## Two prior answers, both wrong
 

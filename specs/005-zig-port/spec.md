@@ -50,13 +50,25 @@ tooling is strictly larger than today's.
   status check; Zig ships no AddressSanitizer runtime, so the Makefile
   could never be deleted. Given a permanent dual build, `build.zig`
   buys nothing and costs a translation of ten build graphs.
-- **Q3: What decides how far the port goes?** → **The measured packed
-  size, reported per PR, with the decision belonging to the repo
-  owner.** Principle I's caps are set by the Constitution and are
-  amendable via `tools/spec-budget-amend.sh`. This spec does not
-  encode a stopping rule. (An earlier plan revision did, in the form
-  of a self-authored GO/NO-GO gate; it produced a wrong shutdown and
-  is withdrawn.)
+- **Q3: What decides how far the port goes?** → **Nothing. Every
+  in-scope module is ported.** The size budgets do not scope this work
+  and never should have been read as scoping it.
+
+  Principle I's caps exist to keep the *C synth* small — that was the
+  original project's goal, and the caps were set by measuring what it
+  actually shipped. This is a port to Zig. Its purpose is that the
+  code is in Zig. Letting a constraint inherited from the thing being
+  ported decide how much of the port happens is a category error, and
+  two earlier revisions of this document made it: first as a
+  self-authored GO/NO-GO gate that closed the port outright, then as
+  "the measured packed size decides how far it goes," which is the
+  same mistake with the trigger moved.
+
+  **The caps move with the work.** When a port PR would exceed one,
+  the cap is realigned to measured reality in an amendment — exactly
+  what v1.1.0 and v1.2.0 did, and what `tools/spec-budget-amend.sh`
+  exists for. Size is measured and reported on every port PR because
+  the numbers are worth knowing, not because they gate anything.
 - **Q4: Which modules?** → **Leaves first, coupled modules last, and
   the audio backends / UI / entry point never.** See FR-010.
 
@@ -210,8 +222,9 @@ to build** in two required checks.
 
 ## Assumptions
 
-- The repo owner decides how far the port goes and whether any budget
-  moves. This spec measures and reports; it does not gate.
+- The port completes: every in-scope module ends up in Zig. Budgets are
+  realigned to measured reality as the work requires them to be. This
+  spec measures and reports; it does not gate.
 - Zig 0.16.0 is the pinned baseline. A version bump is treated as a
   golden-regeneration-class change requiring its own PR.
 

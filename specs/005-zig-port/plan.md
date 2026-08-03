@@ -59,7 +59,7 @@ per-sample path, where LTO exit could be expensive.
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|--------------------------------------|
-| **II. C99 Only** — Zig source in the tree | The port is the feature. There is no version of it that keeps the tree C99. | *Keeping stretto in C* is the simpler alternative and remains available at every PR boundary — the port is incremental by construction and can stop at any module. It is rejected only insofar as the repo owner wants Zig; this plan asserts no technical necessity, because measurement shows there is none (see Non-Goals). |
+| **II. C99 and Zig** — Zig source in the tree | The port is the feature. There is no version of it that keeps the tree C99. | *Keeping stretto in C* is rejected because the goal is a Zig codebase. The port being incremental is a delivery mechanism — one reviewable PR per module — not an invitation to stop partway. This plan asserts no technical necessity for Zig and never did; the reason is that the codebase should be in Zig, and that is a sufficient reason for the owner of it. |
 | **V. no cross-module `extern`** — Zig `export fn`/`extern fn` | A Zig module cannot `#include` a C header, so its exported signatures are hand-declared against the `.h` rather than checked by a compiler. | `@cImport` avoids hand-declaration but produces distinct incompatible types per importing module, forcing a shared `c.zig` and flattening the per-module `.h` seam that Principle V exists to protect. The trade is real: hand-declaration risks silent ABI drift, `@cImport` guarantees seam loss. Mitigation is a C-side static-assert TU or `zig translate-c` diffed in CI. Forced at `voice` regardless, by the generated tables rather than the struct. |
 | **VI. sanitizer instrumentation + warning gate** | `-fsanitize=address` cannot instrument a `zig build-obj` output, and `-Wall -Wextra -Werror` has no `zig build-obj` equivalent covering the project's rules. | *Keeping a C copy of each ported module solely for coverage* was rejected outright — the gate would measure code that is not in the shipped binary and the copies would drift silently. *Excluding ported modules from the coverage gate* was prepared and proved unnecessary: kcov measures them. Building the Zig object at `-OReleaseSafe` in the `build_san` tree only (that tree never touches the release binary, so zero size risk) recovers overflow and bounds checking, which is strictly more than ASan gave an uninstrumented object. The `-Werror` loss has no mitigation today; a Zig lint step would close it. |
 
@@ -205,6 +205,45 @@ arc is ten-plus. Stale surface: `ARCHITECTURE.md:9-12` (size table),
 `:16-35` (spec-kit pipeline, needs an 005 entry). Plus `README.md` and
 `CHANGELOG.md`.
 
+### Phase 7 — Realign the budgets, then finish the port
+
+`density`, `chord_progression`, `motif`, `section` and `lsystem` are
+Zig as of PR #193. `effects`, `voice` and `gen` remain, and at 30 664 B
+packed against a 30 720 B cap they cannot land without the caps moving.
+
+**The caps move.** They exist to keep the C synth small and were set by
+measuring what it shipped; they are not a scope decision about this
+port. v1.1.0 and v1.2.0 both realigned budgets to measured reality, and
+`tools/spec-budget-amend.sh` exists for exactly this.
+
+1. **Constitution v1.4.0** — raise `STRIP_TARGET` and `PACK_TARGET` to
+   cover the remaining three modules with the project's customary
+   headroom. Sized from measurement, not guessed: the `-fno-lto` probe
+   floors the three at +1 176 B stripped, and observed actual/probe
+   ratios (section 2×, lsystem sign-flipped) put the real figure
+   materially higher.
+
+   Carries the hazards `research.md` records: any Linux UPX raise
+   breaks `tests/test_spec_budget_amend.sh:194-217` Case 2 in a
+   required check, and the ~47-line Makefile rationale block plus the
+   Constitution footer are not touched by the helper.
+
+2. **`effects`, then `voice`, then `gen`** — one PR each, same
+   acceptance as every prior port.
+
+   `voice` forces the `@cImport`-vs-hand-declared-`extern` decision,
+   and by the tables rather than the struct: `voice.c:4-7` includes
+   four generated headers holding ~2 500 `const` entries that cannot be
+   hand-transcribed. Its layout is pinned from three directions —
+   `tests/unit/test_voice.c` declares `Voice v;` on the stack and reads
+   union members directly, `voice.c:667` computes `sizeof(Voice)` for
+   `arena_alloc`, and the Zig side sets field offsets.
+
+3. **Re-tighten** — after the last module lands, set the caps to the
+   measured figure plus the customary headroom, so they resume being a
+   real constraint on the finished tree rather than a ceiling picked in
+   advance.
+
 ## Non-Goals *(stated because two prior plan revisions claimed them)*
 
 - **Toolchain simplification.** Post-port tooling is gcc + MinGW +
@@ -214,14 +253,27 @@ arc is ten-plus. Stale surface: `ARCHITECTURE.md:9-12` (size table),
   arguments both evaporate under hybrid.
 - **A size win.** Measured cost is zero-to-positive, never negative.
 - **`build.zig`.** Deleted from the plan, not deferred.
-- **A stopping rule authored here.** An earlier revision wrote a
-  GO/NO-GO gate into this plan and then executed it, closing the port
-  on a measurement of the wrong strategy. Scope decisions and budget
-  changes belong to the repo owner; `tools/spec-budget-amend.sh` is
-  the supported mechanism for the latter, with the caveat recorded in
-  `research.md` that it is not a one-command operation.
+- **A stopping rule authored here, in any form.** Two revisions have
+  now had one. The first wrote a GO/NO-GO gate into this plan and
+  executed it, closing the port on a measurement of the wrong strategy.
+  The second replaced it with "the measured packed size decides how far
+  the port goes" — the same mistake with the trigger moved, and it
+  produced a recommendation to abandon three modules.
+
+  Both treated a budget inherited from the C synth as a scope decision
+  about the port. It is not one. **Every in-scope module is ported and
+  the caps are realigned as the work requires** (Phase 7). Size is
+  measured on every port PR because the numbers are worth having, not
+  because they decide anything.
 
 ## Amendment history
+
+- **2026-08-03** — Phase 7 added; the size budgets removed as a scope
+  input. The prior text made "the measured packed size" the answer to
+  "what decides how far the port goes," which read as a stopping
+  condition and was acted on as one. The caps constrain the C synth's
+  footprint; they were never a decision about how much of this port
+  happens, and they are realigned as it proceeds.
 
 - **2026-08-02** — Initial. Supersedes an unversioned plan that
   proposed `build.zig` compiling all C via `addCSourceFiles`, measured
