@@ -129,3 +129,17 @@ The two new runtime dependencies (libasound on Linux, winmm-already-linked on Wi
 - **2026-07-08** — Constitution v1.0.x → v1.1.0: Principle I Linux stripped binary budget bumped ≤24 KB → ≤50 KB per PR #116 (019-realign-strip-target). The Makefile `STRIP_TARGET` bumped 24576 → 51200 (~50 KB). The principled cost was the 003 MIDI-input chain's cross-platform ALSA + winmm sequencer workers + SPSC ring + CC dispatch, which measured ~19 KB stripped growth = ~43 KB post-#117 per PR #117 `binary-sizes` artifact = ~7 KB headroom under the 50 KB cap (within the Constitution Principle I 14-21 % headroom pattern, principled acceptable per the rationale of the amendment). This doc's ≤24 KB → ≤50 KB bullet refresh + trailing sentence "48 KB / 50 KB budget" + Constitution Check Principle I row's budget reference refresh are the catchup content. (PR #117's v1.1.0 spec-doc propagation did not refresh on disk for the active 003 spec; PR #124 / this PR closes the catchup.)
 
 - **2026-07-08** — Constitution v1.1.0 → v1.2.0: Principle I Linux UPX-packed binary budget added ≤30 KB per PR #121. The current cap is ≤30 KB per `.specify/memory/constitution.md` Principle I amendment paragraph; Makefile `PACK_TARGET = 30720` enforces post-PR #121; PR #119 added a CI gate (`Binary size budget gate` step in `.github/workflows/ci.yml`) which hard-fails (exit 1) the workflow when `linux_synth_packed` exceeds PACK_TARGET. (Note: this file is the active 003 spec; PR #117's v1.1.0 amendment did not refresh on disk at landing time. The catchup landed in PR #124 / this PR — the ≤50 KB Linux stripped bullet above + the trailing sentence "48 KB / 50 KB budget" + the Constitution Check Principle I row's budget reference refresh are the catchup content; the original v1.1.0 disclosure is preserved here as historical audit trail.)
+
+- **2026-08-03** — Constitution v1.2.2 → v1.3.0: Principle II retitled
+  "C99 Only" → "C99 and Zig" per the 005 Zig port
+  (`specs/005-zig-port/`). This document's Constitution Check row for
+  Principle II reads "Pure C99 source" — accurate when written and
+  preserved as the audit trail. As of PR #204 nine synth modules are
+  Zig, including `voice`, which this chain extended with the
+  `trigger_key` / `trigger_channel` discriminator (D4) and the
+  `voice_pool_*_midi` entry points (D6). Those live in `zig/voice.zig`
+  now; `voice.h` is unchanged, so every claim this plan makes about the
+  Voice struct layout and the MIDI entry points still holds — the
+  `@sizeOf` was verified identical at 1088 B. `audio_midi.c` and both
+  platform backends remain C. Recorded per the v1.1.0 / v1.2.0
+  precedent of appending rather than editing (PR #124).

@@ -163,3 +163,15 @@ The architecture stays well under the binary size budget (37 KB packed vs 48 KB 
 - **2026-07-08** — Constitution v1.0.x → v1.1.0: Principle I Linux stripped binary budget bumped ≤24 KB → ≤50 KB per PR #116 (019-realign-strip-target). The Makefile `STRIP_TARGET` bumped 24576 → 51200 (~50 KB). The principled ~19 KB stripped growth documented in the Constitution v1.1.0 amendment paragraph is attributed to the 003 MIDI-input chain's cross-platform ALSA + winmm sequencer workers + SPSC ring + CC dispatch. The Constraints section's "Stripped Linux binary soft-target 24 KB" wording is preserved AS-IS per the integrity-preserving pattern; the underlying Constitution-and-build-system target is now 50 KB / 51200 bytes. The current cap is ≤50 KB per `.specify/memory/constitution.md` Principle I amendment paragraph. PR #119's `Binary size budget gate` ci.yml step hard-fails (exit 1) the workflow when `linux_synth_stripped` exceeds STRIP_TARGET, so v1.1.0's cap is now machine-enforced at PR-merge time. (PR #117's v1.1.0 spec-doc propagation did not refresh on disk for this 001 baseline plan; PR #124 / this PR closes the catchup by appending this entry to the Amendment-history footer without editing the "soft-target 24 KB" Constraints-line wording.)
 
 - **2026-07-08** — Constitution v1.1.0 → v1.2.0: Principle I Linux UPX-packed binary budget added ≤30 KB per PR #121. The 003 MIDI-input chain's cross-platform MIDI support added the proportional ~13 KB UPX-packed growth on top of the historical pre-#117 Linux stripped `~40 KB with libpulse` measurement noted in the Constraints section above; v1.2.0 codifies the new cap explicitly, closing the implicit-loophole the prior Constitution left through Makefile `PACK_TARGET = 12288` (pre-#121) being half-reality. The current cap is ≤30 KB per `.specify/memory/constitution.md` Principle I amendment paragraph; Makefile `PACK_TARGET = 30720` enforces post-PR #121. (This 001 baseline plan predates the v1.1.0 amendment; the ≤24 KB Linux stripped target above is preserved as the spec-at-time-of-authoring claim per the integrity-preserving pattern.)
+
+- **2026-08-03** — Constitution v1.2.2 → v1.3.0: Principle II retitled
+  "C99 Only" → "C99 and Zig" per the 005 Zig port
+  (`specs/005-zig-port/`). This document's Constitution Check row for
+  Principle II reads "Build is pure `gcc -std=c99`. No C++ symbols." —
+  accurate when written and preserved here as the audit trail. As of
+  PR #204 nine synth modules are Zig compiled by `zig build-obj`; gcc
+  still compiles the remaining C and links every target, so
+  "No build system beyond GNU Make" in that same principle is
+  unchanged. Principle V's no-cross-module-`extern` clause gained a
+  bounded exception in the same amendment. Recorded per the v1.1.0 /
+  v1.2.0 precedent of appending rather than editing (PR #124).
