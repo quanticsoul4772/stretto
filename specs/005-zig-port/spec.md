@@ -180,8 +180,9 @@ to build** in two required checks.
   so a module that does not cross-compile breaks `make win`.
 - **FR-010**: Port order is leaves first:
   `density` → `chord_progression` → `motif` → `section` → `lsystem` →
-  `effects` → `voice` → `gen`, subject to revision once a coupled
-  module has been measured.
+  `effects` → `voice` → `gen` → `arena`, subject to revision once a
+  coupled module has been measured. (`arena` was appended once its
+  exclusion rationale expired — see Out of Scope.)
 - **FR-011**: A ported module MUST remain coverage-gated at a
   documented threshold, and MUST remain in the sanitizer build.
 - **FR-012**: The Zig toolchain version MUST be pinned in CI, for the
@@ -206,12 +207,17 @@ to build** in two required checks.
 - Deleting the Makefile.
 - Porting `main.c`, `ui.c`, `keys.c`, `wav.c`, `mixer.c`, or any
   `audio_*.c`. These stay C permanently.
-- **Porting `arena.c`.** It is a single 128 KB instrumented global;
-  moving it to Zig removes the ASan redzone that protects it, and the
-  writes that redzone catches come from `effects.c` and `voice.c`,
-  which remain C and remain instrumented. Porting arena would degrade
-  sanitizer coverage *for modules that were not ported*, to save
-  22 lines.
+- ~~**Porting `arena.c`.**~~ **Ported after all — the exclusion
+  outlived its reason.** It was excluded because moving arena to Zig
+  removes the ASan redzone gcc puts around `pool`, and the writes that
+  redzone catches came from `effects.c` and `voice.c`, *"which remain C
+  and remain instrumented."*
+
+  Both are Zig now. gcc cannot instrument a `zig build-obj` output, so
+  every module allocating from the pool is already uninstrumented and
+  the redzone protects nothing it used to. Leaving arena as the one C
+  module on the synth side would have been arbitrary rather than
+  principled.
 - comptime generation of the five lookup tables. PR #181 committed
   them; regenerating them in Zig would reopen a reproducibility hole
   that was just closed.

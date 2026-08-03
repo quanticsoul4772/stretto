@@ -122,7 +122,7 @@ motif.zig / .h          Long-term motif memory: ring buffer of the
                         transpose) in place of L-system output for
                         the next 4 bars. Pure function of caller-
                         supplied bar count + PRNG values
-arena.c / .h            static pool[131072], 8-byte-aligned bump allocator
+arena.zig / .h            static pool[131072], 8-byte-aligned bump allocator
 gen_sin_table.c         build-time: 1024-entry int16 sine LUT (peak 24576)
 gen_env_table.c         build-time: 256-entry uint8 exponential env curve
 gen_note_table.c        build-time: 128 MIDI notes -> {phase inc, KS len}
