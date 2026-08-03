@@ -41,8 +41,8 @@ static const char USAGE[] =
 
 static const char HELP_BODY[] =
     "\n"
-    "stretto - a tiny generative music synthesizer (C99, no malloc,\n"
-    "single 128 KB arena). Runs live with an ASCII oscilloscope, or\n"
+    "stretto - a tiny generative music synthesizer (C99 + Zig, no\n"
+    "malloc, single 128 KB arena). Runs live with an oscilloscope, or\n"
     "renders to a 48 kHz stereo 16-bit WAV.\n"
     "\n"
     "  --render <s> <out.wav>  render s seconds (1..3600) to a WAV file;\n"
