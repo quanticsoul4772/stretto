@@ -299,7 +299,10 @@ jobs:
             # points, and the uncovered lines are the degenerate-row
             # guard that unit tests pin as unreachable.
             [chord_progression.zig]=92
-            [section.c]=95
+            # section is Zig as of the 098 port. Measured before the
+            # flip, as with every port: kcov and gcov both report
+            # 100.00%, so 95 carries with full slack.
+            [section.zig]=95
             # density is Zig as of the 095 port. Measured by kcov, not
             # gcov, so 95 here is a NEW measurement rather than a
             # continued one -- kcov counts DWARF source lines where
