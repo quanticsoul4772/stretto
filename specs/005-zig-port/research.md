@@ -305,10 +305,59 @@ breached a cap sized from the probe.
    `COV_SRCS` — a `.c` filename list with only `.c` pattern rules. The
    first port PR does not fail a gate; **it fails to build**, in two
    required checks. See `plan.md` Phase 1.
-3. **`@cImport` or hand-declared `extern`?** Forced at `voice`, and by
-   the tables rather than the struct: `voice.c:4-7` includes four
-   generated headers holding ~2 500 `static const` entries that cannot
-   be hand-transcribed.
+3. ~~**`@cImport` or hand-declared `extern`?**~~ **ANSWERED — `@cImport`,
+   and it is the safer of the two here.** See below.
+
+## `@cImport` at `voice` — resolved
+
+The plan carried this as the one design decision it would not pre-answer:
+hand-declare `voice.h`'s types in Zig and risk silent ABI drift, or
+`@cImport` and lose the per-module `.h` seam Principle V protects.
+
+Measured rather than argued. All four checks on Zig 0.16.0,
+`x86_64-linux-gnu`:
+
+| check | result |
+|---|---|
+| `@cImport` the four generated table headers | compiles; `sin_table`, `env_table`, `note_phase_inc`, `WAVETABLE` all readable |
+| `@cImport("voice.h")` alongside `export fn` definitions of the same functions | compiles — the C prototypes and the Zig definitions do not collide |
+| `@sizeOf(c.Voice)` vs C's `sizeof(Voice)` | **1088 == 1088** |
+| `@sizeOf(c.Stereo)` vs C's `sizeof(Stereo)` | **4 == 4** |
+
+**`@cImport` wins, and the seam objection does not apply.** Principle V's
+concern is that `@cImport` mints a *distinct incompatible type per
+importing module*, which forces a shared `c.zig` and flattens the
+per-module boundary. That needs two Zig modules importing the same
+struct. Here:
+
+- The tables are arrays of primitives (`[1024]i16`, `[256]u8`,
+  `[128]u32`). No struct type crosses a boundary, so there is nothing
+  to be incompatible.
+- `gen.c` never names `Voice` or `Stereo` — verified — it only calls
+  `voice_*` functions. So `voice.zig` is the only Zig module that will
+  ever import `voice.h`.
+
+The alternative is worse on its own terms: hand-declaring a 1088-byte
+struct with a six-arm union pins its layout from three independent
+directions — `tests/unit/test_voice.c` declares `Voice v;` on the stack
+and reads union members directly, `voice.c:667` computes
+`sizeof(Voice)` for `arena_alloc`, and the Zig side would set field
+offsets. `@cImport` derives all of it from the header, so drift is not
+possible rather than merely tested for.
+
+### `zig translate-c` is not usable for this
+
+Tried, since a 1 097-line DSP module is where mechanical translation
+should pay off. `zig translate-c voice.c` exits 0 and emits 5 455 lines
+with 30 exports, but the output **does not compile**: it generates
+`@as(c_int, lvalue) += 1` in four places, which is not valid Zig.
+
+Rejected as a deliverable regardless of that bug — it imports `std`,
+it is unreadable, and Principle VIII asks for code that documents why.
+Patching generated DSP with regex is also how a wrong render hash gets
+introduced: an attempt to fix the four sites mechanically corrupted
+`v.*.u.ks.buf[i]` into a type error, which is the benign version of
+that failure.
 
 ## What is settled
 
