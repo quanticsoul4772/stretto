@@ -11,9 +11,9 @@
 # git checkout.
 #
 # Cases:
-#   1) happy-path amend 1 budget: --lin-str 51 -> exit 0, Constitution
+#   1) happy-path amend 1 budget: --lin-str 57 -> exit 0, Constitution
 #      + Makefile updated, bridge script still passes
-#   2) atomic amend all 3: --win 49 --lin-upx 31 --lin-str 51 -> exit 0,
+#   2) atomic amend all 3: --win 49 --lin-upx 35 --lin-str 57 -> exit 0,
 #      all 3 budgets updated
 #   3) input validation: 0 flags, non-integer, < 1 KB, shrink budget
 #      -> exit 1 + FATAL output
@@ -156,28 +156,28 @@ restore_files() {
 # --- Case 1: happy-path amend 1 budget ---
 # Bump Linux stripped from 50 KB to 51 KB. Verify:
 #  - script exits 0
-#  - Constitution's Principle I paragraph now has "≤51 KB stripped Linux binary"
-#  - Makefile's STRIP_TARGET = 52224 (51 * 1024)
+#  - Constitution's Principle I paragraph now has "≤57 KB stripped Linux binary"
+#  - Makefile's STRIP_TARGET = 58368 (57 * 1024)
 #  - tools/spec-budget-check.sh still passes (post-amend verification)
 echo
-echo "--- Case 1: happy-path amend 1 budget (--lin-str 51) ---"
+echo "--- Case 1: happy-path amend 1 budget (--lin-str 57) ---"
 snapshot_files
 run_case "amend_single_budget" "0" "Verifying via tools/spec-budget-check.sh" \
-    "bash '${script}' --lin-str 51" || true
+    "bash '${script}' --lin-str 57" || true
 # Verify Constitution was updated
-if ! grep -qE '≤51 KB stripped Linux binary' "${constitution}"; then
-    echo "  FAIL: Constitution's Principle I paragraph does not contain '≤51 KB stripped Linux binary' after amend"
+if ! grep -qE '≤57 KB stripped Linux binary' "${constitution}"; then
+    echo "  FAIL: Constitution's Principle I paragraph does not contain '≤57 KB stripped Linux binary' after amend"
     fail_count=$((fail_count + 1))
 else
-    echo "  PASS: Constitution updated (≤51 KB stripped Linux binary present)"
+    echo "  PASS: Constitution updated (≤57 KB stripped Linux binary present)"
     pass_count=$((pass_count + 1))
 fi
 # Verify Makefile was updated
-if ! grep -qE '^STRIP_TARGET[[:space:]]*=[[:space:]]*52224' "${makefile}"; then
-    echo "  FAIL: Makefile's STRIP_TARGET is not 52224 after amend"
+if ! grep -qE '^STRIP_TARGET[[:space:]]*=[[:space:]]*58368' "${makefile}"; then
+    echo "  FAIL: Makefile's STRIP_TARGET is not 58368 after amend"
     fail_count=$((fail_count + 1))
 else
-    echo "  PASS: Makefile updated (STRIP_TARGET = 52224 present)"
+    echo "  PASS: Makefile updated (STRIP_TARGET = 58368 present)"
     pass_count=$((pass_count + 1))
 fi
 # Restore for next case
@@ -191,12 +191,12 @@ restore_files
 #  - all 3 Makefile variables updated
 #  - bridge script still passes
 echo
-echo "--- Case 2: atomic amend all 3 budgets (--win 49 --lin-upx 31 --lin-str 51) ---"
+echo "--- Case 2: atomic amend all 3 budgets (--win 49 --lin-upx 35 --lin-str 57) ---"
 snapshot_files
 run_case "amend_three_budgets" "0" "Verifying via tools/spec-budget-check.sh" \
-    "bash '${script}' --win 49 --lin-upx 31 --lin-str 51" || true
+    "bash '${script}' --win 49 --lin-upx 35 --lin-str 57" || true
 # Verify all 3 Constitution budgets updated
-for pair in "≤49 KB UPX-packed Windows" "≤31 KB UPX-packed Linux binary" "≤51 KB stripped Linux binary"; do
+for pair in "≤49 KB UPX-packed Windows" "≤35 KB UPX-packed Linux binary" "≤57 KB stripped Linux binary"; do
     if ! grep -qF "${pair}" "${constitution}"; then
         echo "  FAIL: Constitution's Principle I paragraph does not contain '${pair}' after amend"
         fail_count=$((fail_count + 1))
@@ -206,7 +206,7 @@ for pair in "≤49 KB UPX-packed Windows" "≤31 KB UPX-packed Linux binary" "�
     fi
 done
 # Verify all 3 Makefile variables updated
-for var_bytes in "WIN_PACK_BUDGET[[:space:]]*=[[:space:]]*50176" "PACK_TARGET[[:space:]]*=[[:space:]]*31744" "STRIP_TARGET[[:space:]]*=[[:space:]]*52224"; do
+for var_bytes in "WIN_PACK_BUDGET[[:space:]]*=[[:space:]]*50176" "PACK_TARGET[[:space:]]*=[[:space:]]*35840" "STRIP_TARGET[[:space:]]*=[[:space:]]*58368"; do
     if ! grep -qE "^${var_bytes}" "${makefile}"; then
         echo "  FAIL: Makefile does not have ${var_bytes} after amend"
         fail_count=$((fail_count + 1))
@@ -230,7 +230,7 @@ run_case "invalid_non_integer" "1" "is not a positive integer" \
     "bash '${script}' --lin-str abc" || true
 # (c) shrink budget: should exit 1 with FATAL (current 50 KB, new 49 KB)
 run_case "invalid_shrink" "1" "can only grow" \
-    "bash '${script}' --lin-str 49" || true
+    "bash '${script}' --lin-str 55" || true
 # Verify Constitution + Makefile are unchanged after all 3 sub-checks
 if grep -qE '≤49 KB stripped Linux binary' "${constitution}"; then
     echo "  FAIL: Constitution was modified by invalid input"
@@ -239,11 +239,11 @@ else
     echo "  PASS: Constitution unchanged after 3 invalid input attempts"
     pass_count=$((pass_count + 1))
 fi
-if ! grep -qE '^STRIP_TARGET[[:space:]]*=[[:space:]]*51200' "${makefile}"; then
+if ! grep -qE '^STRIP_TARGET[[:space:]]*=[[:space:]]*57344' "${makefile}"; then
     echo "  FAIL: Makefile's STRIP_TARGET was modified by invalid input"
     fail_count=$((fail_count + 1))
 else
-    echo "  PASS: Makefile's STRIP_TARGET = 51200 unchanged after 3 invalid input attempts"
+    echo "  PASS: Makefile's STRIP_TARGET = 57344 unchanged after 3 invalid input attempts"
     pass_count=$((pass_count + 1))
 fi
 restore_files
@@ -263,11 +263,11 @@ else
     echo "  PASS: Constitution unchanged after --dry-run"
     pass_count=$((pass_count + 1))
 fi
-if ! grep -qE '^STRIP_TARGET[[:space:]]*=[[:space:]]*51200' "${makefile}"; then
+if ! grep -qE '^STRIP_TARGET[[:space:]]*=[[:space:]]*57344' "${makefile}"; then
     echo "  FAIL: Makefile's STRIP_TARGET was modified by --dry-run"
     fail_count=$((fail_count + 1))
 else
-    echo "  PASS: Makefile's STRIP_TARGET = 51200 unchanged after --dry-run"
+    echo "  PASS: Makefile's STRIP_TARGET = 57344 unchanged after --dry-run"
     pass_count=$((pass_count + 1))
 fi
 restore_files
@@ -279,7 +279,7 @@ restore_files
 echo
 echo "--- Case 5: refuse-to-commit (amend then verify un-staged dirty tree) ---"
 snapshot_files
-bash "${script}" --lin-str 51 >/dev/null 2>&1 || {
+bash "${script}" --lin-str 57 >/dev/null 2>&1 || {
     echo "  FAIL: amend failed unexpectedly"
     fail_count=$((fail_count + 1))
     restore_files
@@ -313,7 +313,7 @@ echo
 echo "--- Case 6: recovery via git checkout ---"
 snapshot_files
 # Run the amend (this succeeds + leaves working tree dirty)
-bash "${script}" --lin-str 51 >/dev/null 2>&1 || true
+bash "${script}" --lin-str 57 >/dev/null 2>&1 || true
 # Drop the .bak files (so the trap doesn't double-restore) and
 # recover via `git checkout --` from HEAD. This is the actual
 # recovery path under test.

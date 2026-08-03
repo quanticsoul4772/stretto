@@ -101,10 +101,31 @@ OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
 # growth. 30 720 left ~21 % headroom (5 260 B) over the post-#117
 # measurement, matching STRIP_TARGET's 14 % pattern (slightly wider for
 # UPX ratio variability).
-# CURRENT (2026-07-19, CI run 29211125164 on c7db9fc): 30 048 B, so the
-# same cap now retains 672 B / ~2.2 %. The ~21 % derivation above is
-# RETIRED -- it described the post-#117 measurement, not this one, and
-# Constitution v1.2.2 records it as historical. Reason from 30 048 B.
+# CURRENT (2026-08-03, CI run 30775952889): 30 664 B with five modules
+# in Zig, against the v1.4.0 cap of 34 816 B. The ~21 % derivation
+# above is RETIRED -- it described the post-#117 measurement, and
+# Constitution v1.2.2 already recorded it as historical.
+#
+# v1.4.0 (2026-08-03) raised this 30 -> 34 KB and STRIP_TARGET 50 -> 56
+# KB to let the 005 Zig port finish. This is the FIRST raise of a cap
+# that was enforced and currently met -- v1.1.0 and v1.2.0 both
+# realigned aspirational targets the shipped synth had never hit -- so
+# the reasoning is recorded rather than assumed:
+#
+#   The caps exist to keep the C synth small and were derived by
+#   measuring what it shipped. They are not a scope decision about
+#   porting that synth to another language. Treating them as one
+#   produced two wrong calls in the 005 arc (see
+#   specs/005-zig-port/plan.md Non-Goals), the second of which
+#   recommended abandoning three modules mid-port.
+#
+#   The value is PROVISIONAL and deliberately loose. effects, voice and
+#   gen are unported; the -fno-lto probe floors them at +1 176 B
+#   stripped and observed probe-to-actual ratios (section 2x, lsystem
+#   sign-flipped) put the real figure materially higher. Phase 7 step 3
+#   re-tightens both caps to the finished tree's measurement plus the
+#   project's customary headroom, at which point they resume being a
+#   real constraint instead of a ceiling picked in advance.
 # Note also that stripped-byte savings do NOT transfer to packed at
 # parity: UPX compresses repetitive text ~3:1 (measured 2026-07-19,
 # 288 B stripped -> 96 B packed), so packed headroom shrinks far more
@@ -127,8 +148,8 @@ OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
 # tools/spec-budget-check.sh, which runs as a pre-flight in
 # .github/workflows/ci.yml BEFORE the inline Binary size budget
 # gate step catches drift vs binary-sizes.txt measurements.
-STRIP_TARGET    = 51200
-PACK_TARGET     = 30720
+STRIP_TARGET    = 57344
+PACK_TARGET     = 34816
 WIN_PACK_BUDGET = 49152
 
 all: synth
