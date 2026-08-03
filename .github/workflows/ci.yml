@@ -288,7 +288,7 @@ jobs:
             [main.c]=99
             [audio_midi.c]=90
             [arena.c]=95
-            [effects.c]=95
+            [effects.zig]=95
             [voice.c]=95
             [gen.c]=90
             [lsystem.zig]=94
