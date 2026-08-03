@@ -4,9 +4,9 @@
 
 **Created**: 2026-08-02
 
-**Last Updated**: 2026-08-02
+**Last Updated**: 2026-08-03
 
-**Status**: Draft
+**Status**: Complete — all nine in-scope modules ported and merged.
 
 **Input**: User description: "I've been playing around with zig and
 wondered if mcplint would be better if written in zig instead" →
@@ -243,10 +243,41 @@ to build** in two required checks.
 
 ## Current state
 
-- `zig/density.zig` and `zig/chord_progression.zig` are on `main`
-  (PR #183) as probe inputs. **Neither is referenced by the
-  `Makefile`**; the build is unaffected by their presence.
-- Their presence means `main` carries Zig source while Principle II
-  reads "C99 Only". Principle II is not machine-enforced — only
-  Principle I is bridged — so nothing fails, but the Constitution is
-  currently inaccurate about the tree. See `plan.md` Phase 0.
+*Rewritten 2026-08-03, at completion. The original text is preserved
+below because it was the record for the whole port and because what it
+got wrong is the point.*
+
+- **All nine in-scope modules are ported and merged**: `density`,
+  `chord_progression`, `motif`, `section`, `lsystem`, `effects`,
+  `voice`, `gen`, `arena`. Every one is referenced by the `Makefile`
+  through the five Zig pattern rules; the corresponding `.c` files are
+  deleted.
+- Every `.h` is unchanged, every unit test passes without
+  modification, and the golden hash is byte-identical throughout —
+  SC-001, SC-002 and SC-003 met.
+- Size at completion, CI-measured on run 30784977189: **52 600 B
+  stripped / 31 728 B packed / 45 056 B Windows packed**, leaving
+  8.3 % / 9.7 % / 9.1 %. The binding constraint is no longer any cap
+  but the **page cliff**: 324 B of headroom against a 256 B advisory.
+- Principle II was amended to "C99 and Zig" at v1.3.0 (PR #187), and
+  the Constitution's *preamble* was caught up at v1.4.3 (PR #211),
+  29 merges later. **SC-005 is not met and cannot become met** — it
+  requires accuracy at every merge point, and those are past. See
+  `research.md`, which records both windows.
+
+### Original text, as written 2026-08-02
+
+> - `zig/density.zig` and `zig/chord_progression.zig` are on `main`
+>   (PR #183) as probe inputs. **Neither is referenced by the
+>   `Makefile`**; the build is unaffected by their presence.
+> - Their presence means `main` carries Zig source while Principle II
+>   reads "C99 Only". Principle II is not machine-enforced — only
+>   Principle I is bridged — so nothing fails, but the Constitution is
+>   currently inaccurate about the tree. See `plan.md` Phase 0.
+
+This section stayed on `main` unchanged through all nine module PRs.
+It says the build is unaffected by Zig and that two modules are
+unreferenced, and by the end both clauses were false in every
+particular. Nothing pointed at it, because each PR updated the record
+it was changing and no PR asked which records its change had
+falsified.

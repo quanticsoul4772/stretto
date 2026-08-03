@@ -12,11 +12,26 @@ linking**: gcc compiles the remaining C exactly as today,
 links everything. GNU Make stays. The `.h` file stays and remains the
 seam.
 
-The size question that governs scope is measured and answered for
-leaves: **Zig codegen costs zero.** A tuned Zig module and the same
-module compiled as C with `-fno-lto` produce byte-identical stripped
-binaries (49 136 both). The entire per-module cost is leaving gcc's
-LTO unit, at +40 B stripped / +12 B packed. See
+**Size does not govern scope.** Every in-scope module is ported and
+the caps are realigned as the work requires; see Non-Goals, which
+states this as a Non-Goal after two revisions of this plan claimed
+otherwise.
+
+What the measurement established is narrower: **Zig codegen costs
+zero.** A tuned Zig module and the same module compiled as C with
+`-fno-lto` produce byte-identical stripped binaries (49 136 both), so
+the per-module cost is leaving gcc's LTO unit — not code quality.
+
+*Corrected 2026-08-03, at completion.* This paragraph previously opened
+"the size question that governs scope", which is the stopping-rule
+framing Non-Goals forbids **in any form**, sitting in the plan's own
+summary where it is the first thing a reader sees. It also gave
+"+40 B stripped / +12 B packed" as *the entire per-module cost*. That
+is the `density` probe number generalised to every module, and it is
+wrong by more than 5×: `effects` measured **+2 576 against a +448
+probe**. Cost is the inlining a module loses *at the moment it
+crosses*, which depends on what is still C on the other side — so it
+is not a per-module constant and cannot be quoted as one. See
 [research.md](./research.md).
 
 Unmeasured: the coupled modules (`effects`, `voice`, `gen`) in the

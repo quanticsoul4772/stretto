@@ -1,6 +1,10 @@
 # Research: Zig Port (005-zig-port)
 
-**Status**: OPEN — measured, viable, scope undetermined
+**Status**: CLOSED — port complete, all nine in-scope modules merged.
+Cost model settled by the last module; see "What is settled".
+("OPEN — measured, viable, scope undetermined" through 2026-08-02. The
+scope was never undetermined by anything but this document: the spec's
+Q3 answer is that nothing decides how far the port goes.)
 
 **Date**: 2026-08-02
 
@@ -444,20 +448,38 @@ it.
 | `gen` | `@intCast` on every shift amount to its `Log2Int` width (u5 for the CA, u6 for the drum banks, u4 for the Euclidean tests); `@bitCast` on the tick guard's unsigned difference, which is what survives the u32 wrap; `@divTrunc` on the LFO and swing divisions |
 | `arena` | none — `usize` throughout, no narrowing anywhere |
 
-## SC-005: not met
+## SC-005: not met, and this entry understated it by a factor of seven
 
 SC-005 requires the Constitution to describe the tree accurately **at
-every merge point**. It did not, for four merges.
+every merge point**. It did not.
 
-`zig/density.zig` and `zig/chord_progression.zig` landed on `main` at
-`70aa775` (PR #183) as M0 probe inputs, while Principle II still read
-"C99 Only". Principle II was amended at `1cf2a0c` (PR #187). PRs #184,
-#185 and #186 merged in between.
+**The Principle II window — four merges.** `zig/density.zig` and
+`zig/chord_progression.zig` landed on `main` at `70aa775` (PR #183) as
+M0 probe inputs, while Principle II still read "C99 Only". Principle II
+was amended at `1cf2a0c` (PR #187). PRs #184, #185 and #186 merged in
+between.
 
-Nothing was enforced against it — only Principle I is machine-bridged —
-so no gate could have caught it. The ordering was known and noted at
-the time in `spec.md`'s Current-state section; it was never recorded as
-a criterion failure, which is what this entry does.
+**The preamble window — twenty-nine merges.** *Added 2026-08-03.* The
+paragraph above was written as if Principle II were the only place the
+Constitution named the implementation language. It is not. The
+document's opening sentence read "a tiny native generative ambient
+music synthesizer **in C99**" from `70aa775` until the v1.4.3
+amendment at PR #211 — 29 merges, spanning the entire port including
+all nine module PRs and the audit that produced this file.
+
+`1cf2a0c` did not close SC-005; it closed one of two places and left
+the governing document contradicting itself on line 3 versus line 64.
+Every later "the record is now accurate" claim in this arc was made
+while that contradiction was live, including the one this section
+originally made.
+
+Nothing was enforced against either window — only Principle I is
+machine-bridged — so no gate could have caught them. The Principle II
+ordering was at least known and noted at the time in `spec.md`'s
+Current-state section. The preamble was not known, and was not found by
+any of the four sweeps that declared the "C99" claim eliminated; it
+surfaced only when a later sweep enumerated the amended file itself
+rather than the documents downstream of it.
 
 ## Finding 5: the coupled-module measurement was a proxy, and late
 
@@ -489,7 +511,16 @@ measurement instead of a guess.
 - The Zig rule must restate the `CFLAGS` codegen stack; it inherits
   nothing.
 - Cost tracks inlining received, not source size.
-- No cliff risk at current size.
+- ~~No cliff risk at current size.~~ **False as of completion, and it
+  was the wrong thing to settle.** Page-cliff headroom finished at
+  **324 B against a 256 B advisory** — within 68 B of the threshold,
+  down from 3 428 B at the start of the arc. The cliff is now the
+  binding constraint on the whole project, ahead of all three caps
+  (which finished at 8.3 % / 9.7 % / 9.1 % headroom). A feature that
+  crosses a 4 KB boundary costs 4 096 B stripped no matter what the
+  caps report. This bullet was written early, when the statement was
+  true, and was never revisited as the arc consumed the margin it
+  asserted.
 
 ## What survives from the earlier revision
 
