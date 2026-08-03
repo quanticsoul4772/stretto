@@ -1,5 +1,17 @@
 # Changelog
 
+## Recent: five modules ported to Zig, hybrid build (087-100)
+
+density, chord_progression, motif, section and lsystem are now Zig. Each `.h` is unchanged and every unit test passes without modification; the golden hash is byte-identical throughout. gcc still compiles the remaining C and links every target, so GNU Make stays the build system - the port is per-module objects, not a toolchain migration.
+
+- **The first two attempts at the size question were wrong and are kept on record.** Attempt 1 compiled all seventeen `.c` with `zig cc` (12% over cap, zero lines of Zig in it) and was written up as a NO-GO on the port. Attempt 2 measured the right strategy but attributed the cost to Zig codegen when the mechanism is a ported module leaving gcc's LTO unit. `specs/005-zig-port/research.md` carries both, with reasoning, so the failure mode is not repeatable.
+- **Cost model**: cost = LTO exit + a codegen delta that is ~0 for trivial accessors and grows with how much a module computes. The `-fno-lto` probe prices only the first term and is a floor - it was exact for density (+40) and chord_progression (+0), 2x low for section (+96 predicted / +192 actual), and sign-flipped for lsystem (-40 predicted / +376 actual).
+- **Infrastructure**: five object-file classes gained a Zig rule each. `build_cov` needs `-fllvm` because Zig's self-hosted backend emits `DW_LNCT_LLVM_source` (0x2001), which elfutils' libdw rejects outright - so kcov reports nothing under the default backend. `build_san` builds at `-OReleaseSafe` so a module that gcc cannot instrument still carries Zig's own overflow and bounds checks.
+- **Coverage** moved to kcov for Zig modules, gcov unchanged for C, one CI gate reading both. Line counts are not comparable across backends, so each ported threshold was re-measured before it was flipped.
+- **Constitution v1.3.0**: Principle II retitled "C99 and Zig"; Principle V's cross-module `extern` clause gained a bounded exception for `export fn`/`extern fn` against the module's own `.h`, with the loss of compile-time signature checking named; Principle VI records that ported modules lose gcc sanitizer instrumentation and the `-Werror` gate. Principle I untouched - the budgets did not move.
+- **Size**: 49 976 B stripped / 30 664 B packed (CI run 30775952889). Against PACK_TARGET = 30 720 that leaves **56 B**. effects, voice and gen remain C; on the measured trend they do not fit under the current cap.
+- `arena.c` is deliberately out of scope: porting it would remove the ASan redzone guarding writes that effects.c and voice.c - still C, still instrumented - make into the pool.
+
 ## Recent: v1.5.0 release readiness - tagging is now a 5-minute decision (083)
 
 66 commits since v1.4.0 (which contains work only through arc 060) are unreleased, including audible/user-visible work: sustain gate semantics, CC#123, --swing, pitch bend, the rich TUI, Ctrl-Z resume, the arrow-key fix, and the completions/demo-WAV distribution. The pipeline and installer have been release-ready since 068; this arc ships the missing human layer - NOTHING is tagged or published:

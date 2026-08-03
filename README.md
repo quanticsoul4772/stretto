@@ -354,11 +354,11 @@ The spec-kit artifacts (spec, plan, research, tasks, quickstart) live under `spe
 | `voice.c` / `.h` | Voice struct (KS / FM / wavetable / additive / super-saw / drum), ADSR, SVF, super-saw glide, role-based pool, peak normalization |
 | `effects.c` / `.h` | Master-bus delay, Schroeder reverb, soft saturation, shared `sat16` |
 | `gen.c` / `.h` | Sample clock, scales, CAs, counter-melody Markov, Euclidean rhythm, drum patterns, mutation, scheduler dispatcher |
-| `lsystem.c` / `.h` | L-system melodic phrase generator (main melody) |
-| `chord_progression.c` / `.h` | Markov chain over chord functions (root advances every 2 bars) |
-| `section.c` / `.h` | Song-section state machine (intro / body / tension / resolve) over a 96-bar cycle |
-| `density.c` / `.h` | Adaptive density: counter-cyclical gate + reverb biases |
-| `motif.c` / `.h` | Long-term motif memory: 8-phrase ring buffer with periodic replay |
+| `lsystem.zig` / `.h` | L-system melodic phrase generator (main melody) |
+| `chord_progression.zig` / `.h` | Markov chain over chord functions (root advances every 2 bars) |
+| `section.zig` / `.h` | Song-section state machine (intro / body / tension / resolve) over a 96-bar cycle |
+| `density.zig` / `.h` | Adaptive density: counter-cyclical gate + reverb biases |
+| `motif.zig` / `.h` | Long-term motif memory: 8-phrase ring buffer with periodic replay |
 | `wav.c` / `.h` | `render_wav()` + WAV header |
 | `ui.c` / `.h` | Terminal raw mode, oscilloscope, status panel/row builders, help overlay (cross-platform) |
 | `keys.c` / `.h` | Key dispatcher (`'?'`, `'q'`, tempo, scale, filter, etc.) |
