@@ -164,3 +164,36 @@ Listener adjusts the compressor's threshold in real time via keyboard and hears 
 ## Workflow Note
 
 This is the **first spec written retroactively**. The compressor was implemented from a plan file (`~/.claude/plans/indexed-yawning-pearl.md`) without first creating a spec, then this spec was authored after merge to document what shipped and close the workflow gap. Going forward, new features should produce `specs/NNN-*/spec.md` before implementation per the spec-kit workflow.
+
+## Amendment history
+
+- **2026-08-03** — Constitution v1.2.2 → v1.3.0: Principle II retitled
+  "C99 Only" → "C99 and Zig" per the 005 Zig port
+  (`specs/005-zig-port/`). This document's Constitution Check row for
+  Principle II reads "Pure C99; no new dependencies." — accurate when
+  written and preserved here as the audit trail.
+
+  This spec's subject module is now Zig. `effects.c` was ported to
+  `zig/effects.zig` at PR #197; `effects.h` is unchanged and remains
+  the seam, so every interface claim this spec makes still holds. The
+  four `effects.c` references above (SC-006, SC-007, and the
+  Principle V and VI rows) name a file that no longer exists — they are
+  preserved as the spec-at-time-of-authoring record per the
+  integrity-preserving pattern used by the 001 and 003 footers.
+
+  Two consequences worth stating rather than leaving implicit:
+  `tests/unit/test_effects.c` is still C and still passes unmodified,
+  which was the acceptance condition for every port PR; and SC-007's
+  "100% of 151 lines" was a gcov measurement of `effects.c`. Coverage
+  for this module is now produced by kcov against `zig/effects.zig`
+  under the `[effects.zig]=95` threshold key in `ci.yml`. kcov counts
+  DWARF source lines and gcov counts instrumented arcs, so the
+  percentages are not comparable to the recorded 100% and the older
+  figure should not be read as a regression if the current number is
+  lower.
+
+  (PR #114 propagated this footer to `specs/001-.../plan.md` and
+  `specs/003-.../plan.md`, which is where Constitution Check tables
+  usually live. This spec carries its Constitution Check inline and was
+  missed because that sweep enumerated `plan.md` files rather than
+  files containing a Principle II row.)

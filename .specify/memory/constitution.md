@@ -1,6 +1,6 @@
 # stretto Constitution
 
-Stretto is a tiny native generative ambient music synthesizer in C99. These principles encode the architectural and process commitments the project has already enforced through ~80 PRs; subsequent specs, plans, and tasks must comply.
+Stretto is a tiny native generative ambient music synthesizer in C99 and Zig. These principles encode the architectural and process commitments the project has already enforced through ~80 PRs; subsequent specs, plans, and tasks must comply.
 
 ## Core Principles
 
@@ -170,7 +170,28 @@ Zig emits no `.d` files, so ported modules are outside `-MMD -MP` dependency tra
 - Removing a NON-NEGOTIABLE principle requires explicit user approval in the amendment PR.
 - All `/speckit-specify` and `/speckit-plan` outputs must declare compliance with each principle or document the exception.
 
-**Version**: 1.4.2 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-08-03
+**Version**: 1.4.3 | **Ratified**: 2026-05-23 | **Last Amended**: 2026-08-03
+
+<!--
+v1.4.3 (2026-08-03) — preamble caught up to Principle II.
+
+PATCH, per the v1.2.1/v1.2.2 precedent: corrected wording only, no
+principle content changed. The opening sentence of this document still
+read "a synthesizer in C99" while Principle II — amended at v1.3.0,
+seven versions of this footer ago — reads "C99 and Zig". The governing
+document contradicted itself on its own first line.
+
+v1.3.0 retitled the principle and rewrote its body, and every
+downstream propagation (README, stretto.1, PKGBUILD, --help) was
+treated as the work. The preamble was not a propagation target because
+nobody enumerated the containing file. Principle I is UNTOUCHED and
+this edit cannot reach it: the three budget regexes in
+tools/spec-budget-check.sh key on '≤N KB UPX-packed ...' literals that
+appear nowhere in the preamble sentence.
+
+SC-005 of specs/005-zig-port ("the Constitution accurately describes
+the tree at every merge point") is what this closes for the preamble.
+-->
 
 <!--
 v1.3.0 (2026-08-02) — Zig as a second implementation language.
