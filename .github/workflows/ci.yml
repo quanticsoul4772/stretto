@@ -306,7 +306,11 @@ jobs:
             # gcov counted instrumented arcs. Both read 100%: gcov
             # reported 100.00% of 19, kcov reports 100.00% of 14.
             [density.zig]=95
-            [motif.c]=95
+            # motif is Zig as of the 097 port. kcov reports 100.00% of
+            # 60 where gcov reported 100.00% of 62 -- both 100%, so 95
+            # carries with its full slack. The 2-line difference is the
+            # usual arcs-vs-source-lines gap, not lost coverage.
+            [motif.zig]=95
             [mixer.c]=95
             [wav.c]=90
           )
