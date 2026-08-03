@@ -199,3 +199,28 @@ Listener runs `synth --midi-list-devices` to see a numbered list of available MI
 | VIII. Document Why, Not What | ✅ expected | This spec documents the informed guess + the rationale; the WHAT lives in the implementation PR. |
 | IX. Cross-Platform From Day One | ✅ expected | ALSA sequencer on Linux + Win32 MIDI on Windows, same internal representation. |
 | X. Generative > Random | n/a | MIDI is an input control surface, not a generative feature. |
+
+## Amendment history
+
+- **2026-08-03** — Constitution v1.2.2 → v1.3.0: Principle II retitled
+  "C99 Only" → "C99 and Zig" per the 005 Zig port
+  (`specs/005-zig-port/`). This document's Constitution Check row for
+  Principle II reads "Pure C99; libasound on Linux, winmm on Windows."
+  — accurate when written and preserved here as the audit trail.
+
+  This chain's own modules are unaffected. `audio_midi.c` and its
+  platform backends are C and stay C permanently: the 005 spec's Out of
+  Scope section excludes every `audio_*.c` from the port, so the
+  Principle V row above ("`audio_midi.c` / `audio_midi.h` + platform
+  backends") remains literally true.
+
+  What did move is `voice`, which this chain extended with the
+  `trigger_key` / `trigger_channel` discriminator and the
+  `voice_pool_*_midi` entry points. Those live in `zig/voice.zig` as of
+  PR #199. `voice.h` is unchanged, so the MIDI routing claims in this
+  spec still describe the shipped behaviour.
+
+  (The same entry was applied to this chain's `plan.md` by PR #114.
+  This `spec.md` carries its own Constitution Check table and was
+  missed because that sweep enumerated `plan.md` files rather than
+  files containing a Principle II row.)
