@@ -752,7 +752,13 @@ The Bridge regression test (step 6) + Binary size budget gate (step 16) are the 
 
 ### Two languages, one build system
 
-GNU Make remains the build system and gcc remains the linker for every target. gcc compiles the C; `zig build-obj` compiles each ported module to an object file. Five object-file classes each have one rule per language: `%.o`, `%.win.o`, `%.dbg.o`, `$(BUILD_COV)/%.o`, `$(BUILD_SAN)/%.o`.
+GNU Make remains the build system and gcc remains the linker for every target. gcc compiles the C; `zig build-obj` compiles the ported modules to object files. Five object-file classes each have one rule per language: `%.o`, `%.win.o`, `%.dbg.o`, `$(BUILD_COV)/%.o`, `$(BUILD_SAN)/%.o`.
+
+**How many Zig objects depends on the class (PR #215).** The release, Windows and debug links take **one** object, `synth_zig.o`, built from `zig/synth_zig.zig` — a root that `@import`s all nine modules so they share a single optimization unit. Nine separate `zig build-obj` invocations meant nine separate optimization units, and Zig cannot inline across those any more than gcc can inline across a plain ELF boundary. Merging measured **−144 B of `.text`** (25 394 → 25 250) with the render hash and all 108 exported symbols unchanged.
+
+The coverage and sanitizer classes still build the nine separately, and `OBJS_NO_MAIN` still names them, because `ci.yml` keys per-file coverage thresholds off those nine filenames and `COV_TEST_OBJS`/`SAN_TEST_OBJS` prefix that list with their build directory. Neither tree contributes to the release binary, so nine objects there costs nothing.
+
+Since Zig emits no `.d` files, `ZIG_MODULE_SRCS` is an explicit prerequisite on the merged object — without it, editing `zig/voice.zig` would not rebuild `synth_zig.o`.
 
 Because gcc still links, the whole `LDFLAGS` stack (`-z noseparate-code`, `--hash-style=sysv`, `--gc-sections`, `-no-pie`) applies unchanged. The compile side does not carry over — `zig build-obj` inherits nothing from `CFLAGS`, so `ZIG_SIZE_FLAGS` restates the codegen intent per class. Omitting `-ffunction-sections -fdata-sections` leaves the object as one `.text` blob with nothing for `--gc-sections` to strip; omitting `-fno-unwind-tables` leaves `.eh_frame`, which `strip -s` does **not** remove. Together those measured 192 B on a 42-line module.
 

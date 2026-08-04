@@ -25,6 +25,15 @@ exactly as today, `zig build-obj` compiles each ported module to an
 object file, and gcc links everything. The module's `.h` file stays
 unchanged and remains the seam.
 
+*Granularity changed after completion (PR #215).* The release, Windows
+and debug links now take **one** Zig object built from a root that
+`@import`s all nine modules, because nine separate `zig build-obj`
+invocations were nine separate optimization units — worth −144 B of
+`.text`. Coverage and sanitizer builds still compile the nine
+separately so the per-file coverage gate keeps working. Hybrid linking
+itself is unchanged: gcc still compiles every `.c` and still links
+every target, and the `.h` seam is untouched.
+
 This is deliberately not a rewrite. There is no `build.zig`, no
 comptime table generation, no cross-compilation consolidation, and no
 end state in which the project is "a Zig project." Those were all
