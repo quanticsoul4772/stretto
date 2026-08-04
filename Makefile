@@ -62,8 +62,14 @@ HEADERS = sin_table.h env_table.h note_table.h euclid_table.h wavetable.h
 GENS    = gen_sin_table gen_env_table gen_note_table gen_euclid_table gen_wavetable
 # Shared synth + UI + WAV + mixer + key dispatch.
 # audio backend is platform-specific; see OBJS / WIN_OBJS below.
-COMMON_OBJS = arena.o effects.o voice.o gen.o lsystem.o \
-              chord_progression.o section.o density.o motif.o \
+# synth_zig.o is the nine ported modules as ONE object. Each was its
+# own `zig build-obj` invocation and therefore its own optimization
+# unit, so Zig could not inline across them any more than gcc can
+# inline across a plain ELF boundary. Merging measured -144 B of
+# .text (25 394 -> 25 250) with the render hash unchanged. Coverage
+# and sanitizer builds still compile the nine separately; see
+# COV_SRCS_MEASURED_ZIG.
+COMMON_OBJS = synth_zig.o \
               mixer.o wav.o ui.o keys.o main.o
 
 OBJS     = $(COMMON_OBJS) audio_pulse.o audio_midi.o audio_midi_linux.o
@@ -75,6 +81,12 @@ WIN_OBJS = $(COMMON_OBJS:.o=.win.o) audio_winmm.win.o audio_midi.win.o audio_mid
 # the terminal output side quiet. Also includes mixer.o and wav.o
 # so test_mixer and test_wav can exercise the master-bus chain
 # and the WAV writer directly.
+# Deliberately NOT synth_zig.o. COV_TEST_OBJS and SAN_TEST_OBJS both
+# prefix this list with their build dir, and neither instrumented
+# tree builds a merged object -- COV_SRCS_MEASURED_ZIG names the
+# nine so ci.yml can key per-file coverage thresholds off those
+# filenames. Only the release, Windows and debug links take the
+# merged unit, via COMMON_OBJS.
 OBJS_NO_MAIN = arena.o effects.o voice.o gen.o lsystem.o \
                chord_progression.o section.o density.o motif.o \
                mixer.o wav.o ui.o keys.o \
@@ -244,6 +256,16 @@ ZIG_SIZE_FLAGS = -OReleaseSmall -ffunction-sections -fdata-sections \
 # there is no non-PIC form to ask for and nothing is lost by omitting
 # it. WIN_CFLAGS carries no -fno-pic either.
 ZIG_LINUX_FLAGS = $(ZIG_SIZE_FLAGS) -fno-PIC -fno-PIE
+
+# Every module the merged unit imports. Zig emits no .d files, so the
+# pattern rules below cannot discover these -- without this line,
+# editing zig/voice.zig would not rebuild synth_zig.o. Same reason
+# $(HEADERS) is an explicit prerequisite on the rules themselves.
+ZIG_MODULE_SRCS = zig/arena.zig zig/effects.zig zig/voice.zig \
+                  zig/gen.zig zig/lsystem.zig zig/chord_progression.zig \
+                  zig/section.zig zig/density.zig zig/motif.zig
+
+synth_zig.o synth_zig.win.o synth_zig.dbg.o: $(ZIG_MODULE_SRCS)
 
 %.o: zig/%.zig $(HEADERS)
 	zig build-obj $(ZIG_LINUX_FLAGS) -I. -target x86_64-linux-gnu -femit-bin=$@ $<
