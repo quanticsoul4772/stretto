@@ -12,6 +12,12 @@ linking**: gcc compiles the remaining C exactly as today,
 links everything. GNU Make stays. The `.h` file stays and remains the
 seam.
 
+*One-object-per-module was the delivery granularity, not a
+requirement.* PR #215 merged the nine into a single translation unit
+for the release, Windows and debug links (−144 B of `.text`); the
+instrumented trees still build them separately. See `spec.md` and
+`ARCHITECTURE.md`, "Two languages, one build system".
+
 **Size does not govern scope.** Every in-scope module is ported and
 the caps are realigned as the work requires; see Non-Goals, which
 states this as a Non-Goal after two revisions of this plan claimed
